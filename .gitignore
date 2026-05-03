@@ -17,6 +17,8 @@ to_do.md
 # Lightroom catalog (personal data, large binary)
 lightroom/*.lrcat
 lightroom/*.lrcat-journal
+lightroom/*.lrcat-shm
+lightroom/*.lrcat-wal
 
 # Python
 __pycache__/
