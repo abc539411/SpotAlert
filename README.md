@@ -86,7 +86,7 @@ SpotAlert can read your Adobe Lightroom catalog to enrich notifications and look
 
 To enable this feature, place your `.lrcat` file in the `lightroom/` folder. SpotAlert opens it read-only and never modifies it.
 
-Aircraft metadata (registration, airline, aircraft type, airport) must be tagged in Lightroom using the [AircraftMetadata Lightroom Plugin](https://github.com/aviationphoto/AircraftMetadata-Lightroom-Plugin) by [aviationphoto](https://github.com/aviationphoto). SpotAlert does not use any of that plugin's code — it reads the metadata fields the plugin creates directly from the catalog's SQLite database.
+Aircraft metadata (registration, airline, aircraft type, airport) must be tagged in Lightroom using the [AircraftMetadata Lightroom Plugin](https://github.com/aviationphoto/AircraftMetadata-Lightroom-Plugin) by [aviationphoto](https://github.com/aviationphoto). 
 
 ---
 
@@ -203,4 +203,4 @@ This project is released under the [MIT License](LICENSE).
 
 **adsb.fi open data** — Military aircraft data is sourced from [opendata.adsb.fi](https://opendata.adsb.fi). This data is provided for **personal, non-commercial use only**. See [adsb.fi](https://adsb.fi) for their full terms of use.
 
-**AircraftMetadata Lightroom Plugin** — Aircraft metadata fields read from the Lightroom catalog (registration, airline, aircraft type, airport) are created by the [AircraftMetadata Lightroom Plugin](https://github.com/aviationphoto/AircraftMetadata-Lightroom-Plugin) by [aviationphoto](https://github.com/aviationphoto). SpotAlert does not use any code from that plugin — it reads the metadata fields it creates directly from the catalog's SQLite database.
+**AircraftMetadata Lightroom Plugin** — Aircraft metadata fields read from the Lightroom catalog (registration, airline, aircraft type, airport) are created by the [AircraftMetadata Lightroom Plugin](https://github.com/aviationphoto/AircraftMetadata-Lightroom-Plugin) by [aviationphoto](https://github.com/aviationphoto). 
