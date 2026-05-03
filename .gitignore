@@ -14,6 +14,10 @@ deploy_deck.py
 # Personal planning notes
 to_do.md
 
+# Lightroom catalog (personal data, large binary)
+lightroom/*.lrcat
+lightroom/*.lrcat-journal
+
 # Python
 __pycache__/
 *.pyc

@@ -105,6 +105,8 @@ def format_notification(
     airport_tz: str,
     airport_lat: float,
     airport_lon: float,
+    catalog=None,
+    cfg_store=None,
 ) -> str:
     lines = [f"<b>{notification_type}</b>"]
 
@@ -121,6 +123,31 @@ def format_notification(
     aircraft = (flight.get("aircraft") or {})
     lines.append(f"  Aircraft: {_safe_get(aircraft, 'model', 'text')} ({_safe_get(aircraft, 'model', 'code')})")
     lines.append(f"  Registration: {_safe_get(aircraft, 'registration')}")
+
+    if catalog is not None:
+        spotted = catalog.get_last_spotted(registration)
+        if spotted:
+            dt, apt = spotted
+            apt_str = f" at {apt}" if apt else ""
+            lines.append(f"  Last Spotted: {dt.strftime('%d %b %Y')}{apt_str}")
+        else:
+            lines.append("  Last Spotted: Not yet photographed")
+
+    last_seen_ts = cfg_store.get_last_seen(registration) if cfg_store is not None else None
+    if last_seen_ts:
+        now_ts = int(datetime.now().timestamp())
+        days_ago = (now_ts - last_seen_ts) // 86400
+        tz = pytz.timezone(airport_tz)
+        seen_date = datetime.fromtimestamp(last_seen_ts).astimezone(tz).strftime("%d %b %Y")
+        if days_ago == 0:
+            seen_str = f"{seen_date} (today)"
+        elif days_ago == 1:
+            seen_str = f"{seen_date} (yesterday)"
+        elif days_ago <= 7:
+            seen_str = f"{seen_date} ({days_ago} days ago)"
+        else:
+            seen_str = seen_date
+        lines.append(f"  Last Seen at {airport_iata}: {seen_str}")
 
     airline = (flight.get("airline") or {})
     airline_name = airline.get("name") or "N/A"
@@ -467,6 +494,9 @@ async def run_check(context: ContextTypes.DEFAULT_TYPE) -> None:
                     context, cfg, chat_id, flight, registration, notification_type, on_notified
                 )
 
+        if current_arrivals:
+            cfg.store.bulk_update_sightings(list(current_arrivals.keys()), int(datetime.now().timestamp()))
+
     except Exception as exc:
         log.error("Unexpected error in run_check: %s", exc, exc_info=True)
 
@@ -497,6 +527,8 @@ async def _send_notification(
     message = format_notification(
         flight, registration, notification_type, rego_details,
         cfg.airport_iata, cfg.airport_tz, cfg.airport_lat, cfg.airport_lon,
+        catalog=cfg.catalog,
+        cfg_store=cfg.store,
     )
 
     now_ts = int(datetime.now().timestamp())

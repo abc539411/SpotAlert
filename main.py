@@ -19,6 +19,7 @@ from military import check_military
 from bot import register_handlers
 from settings import register_settings_handlers
 from summary import register_summary_handlers
+from lightroom import find_catalog
 
 log = logging.getLogger(__name__)
 
@@ -83,6 +84,7 @@ class AppConfig:
     # Dependencies — excluded from repr/comparison
     fr_api: object = field(repr=False)
     store: object = field(repr=False)
+    catalog: object = field(repr=False, default=None)
 
 
 def _fetch_airport(fr_api: FlightRadar24API, code: str, retries: int = 3) -> dict:
@@ -119,7 +121,7 @@ def _sl(store: SqliteStore, env: Env, key: str) -> list:
     return [v.strip() for v in raw.split(",") if v.strip()] if raw else []
 
 
-def build_config(env: Env, fr_api: FlightRadar24API, store: SqliteStore) -> AppConfig:
+def build_config(env: Env, fr_api: FlightRadar24API, store: SqliteStore, catalog=None) -> AppConfig:
     airport_code = _s(store, env, "AIRPORT_CODE")
     airport = _fetch_airport(fr_api, airport_code)
 
@@ -164,7 +166,14 @@ def build_config(env: Env, fr_api: FlightRadar24API, store: SqliteStore) -> AppC
         military_renotify_hours=_si(store, env, "MILITARY_RENOTIFY_HOURS", default="4"),
         fr_api=fr_api,
         store=store,
+        catalog=catalog,
     )
+
+
+async def _backup_db(context) -> None:
+    cfg: AppConfig = context.bot_data["cfg"]
+    path = cfg.store.backup()
+    log.info("DB backup saved: %s", path)
 
 
 def main() -> None:
@@ -196,7 +205,8 @@ def main() -> None:
     store = SqliteStore(os.path.join(filters_dir, "spotalert.db"), config_file=config_file)
     store.migrate_from_csv_folder(filters_dir)
 
-    cfg = build_config(env, fr_api, store)
+    catalog = find_catalog()
+    cfg = build_config(env, fr_api, store, catalog)
     log.info(
         "Monitoring %s (%s) — checking every %s min",
         cfg.airport_name, cfg.airport_iata,
@@ -220,6 +230,10 @@ def main() -> None:
     app.job_queue.run_repeating(
         check_military, interval=cfg.military_check_interval, first=15,
         name="military_check",
+    )
+    app.job_queue.run_repeating(
+        _backup_db, interval=86400, first=60,
+        name="daily_backup",
     )
     app.run_polling(drop_pending_updates=True)
 

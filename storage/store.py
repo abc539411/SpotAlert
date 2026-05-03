@@ -123,6 +123,12 @@ class SqliteStore:
                     last_notified_ts INTEGER NOT NULL
                 )
             """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS sighting_history (
+                    registration TEXT PRIMARY KEY,
+                    last_seen_ts INTEGER NOT NULL
+                )
+            """)
 
             # Persists settings changed via the Telegram bot so they survive restarts.
             # On startup, these values take precedence over config.env.
@@ -565,6 +571,71 @@ class SqliteStore:
                 "DELETE FROM notification_record WHERE arrival_ts > 0 AND arrival_ts < ?",
                 (now_ts - 86400,),
             )
+
+    # ------------------------------------------------------------------
+    # Sighting history (every registration seen in arrivals feed)
+    # ------------------------------------------------------------------
+
+    def bulk_update_sightings(self, registrations: List[str], now_ts: int) -> None:
+        """Record the current timestamp as last-seen for every registration in the list.
+
+        Called once per check cycle with all registrations visible in the arrivals feed.
+        Uses a single transaction so ~200 rows write as one batch.
+        """
+        with self._connect() as conn:
+            conn.executemany(
+                "INSERT OR REPLACE INTO sighting_history(registration, last_seen_ts) VALUES (?, ?)",
+                [(r.strip(), now_ts) for r in registrations if r.strip()],
+            )
+
+    def get_last_seen(self, registration: str) -> Optional[int]:
+        """Return the Unix timestamp of the last time this registration appeared in arrivals, or None."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT last_seen_ts FROM sighting_history WHERE registration = ?",
+                (registration.strip(),),
+            ).fetchone()
+            return int(row["last_seen_ts"]) if row else None
+
+    # ------------------------------------------------------------------
+    # Backup
+    # ------------------------------------------------------------------
+
+    def backup(self, keep: int = 7) -> str:
+        """Copy the live DB to a timestamped file in a backups/ subfolder.
+
+        Uses SQLite's native backup API so it's safe while the DB is open.
+        Prunes the oldest files once more than `keep` backups exist.
+        Returns the path of the newly created backup file.
+        """
+        import datetime
+        backup_dir = os.path.join(os.path.dirname(self.db_path), "backups")
+        os.makedirs(backup_dir, exist_ok=True)
+
+        ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        stem = os.path.splitext(os.path.basename(self.db_path))[0]
+        dest_path = os.path.join(backup_dir, f"{stem}_{ts}.db")
+
+        src = sqlite3.connect(self.db_path)
+        dst = sqlite3.connect(dest_path)
+        try:
+            src.backup(dst)
+        finally:
+            dst.close()
+            src.close()
+
+        # Prune oldest backups beyond keep count
+        existing = sorted(
+            f for f in os.listdir(backup_dir)
+            if f.startswith(stem) and f.endswith(".db")
+        )
+        for old in existing[:-keep]:
+            try:
+                os.remove(os.path.join(backup_dir, old))
+            except OSError:
+                pass
+
+        return dest_path
 
     # ------------------------------------------------------------------
     # Internal helpers
