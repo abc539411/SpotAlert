@@ -24,7 +24,7 @@ log = logging.getLogger(__name__)
 FILTER_CHOICE, OP_CHOICE, ADD_ENTRY, ADD_ENTRY_FROM_NOTIFICATION, DELETE_ENTRY, SELECT_AIRLINE_TYPE = range(6)
 
 _FILTER_KEYBOARD = ReplyKeyboardMarkup(
-    [["Exclusion List", "Rego Watchlist"], ["Type Watchlist", "Airline/Operator Watchlist"]],
+    [["Exclusion List", "Rego Watchlist"], ["Type Watchlist", "Airline/Operator Watchlist"], ["Done"]],
     resize_keyboard=True, one_time_keyboard=True,
 )
 
@@ -99,6 +99,9 @@ async def start_filter_management(update: Update, context: ContextTypes.DEFAULT_
 
 async def handle_filter_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     selected = update.message.text
+    if selected == "Done":
+        await update.message.reply_text("Closed.", reply_markup=_REMOVE_KEYBOARD)
+        return ConversationHandler.END
     if selected not in _VALID_FILTER_NAMES:
         await update.message.reply_text("Please select a filter from the keyboard.")
         return FILTER_CHOICE
@@ -333,16 +336,16 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "<b>Status</b>",
         "",
         "<b>Host</b>",
-        f"  Hostname:   {platform.node()}",
-        f"  OS:         {platform.system()} {platform.release()}",
-        f"  Arch:       {platform.machine()}",
-        f"  Python:     {platform.python_version()}",
+        f"  Hostname: {platform.node()}",
+        f"  OS: {platform.system()} {platform.release()}",
+        f"  Arch: {platform.machine()}",
+        f"  Python: {platform.python_version()}",
         "",
         "<b>Bot</b>",
-        f"  Uptime:         {uptime}",
-        f"  Monitoring:     {cfg.airport_name} ({cfg.airport_iata})",
-        f"  Next Arrivals:  {next_job('arrivals_check')} (local)",
-        f"  Next Military:  {next_job('military_check')} (local)",
+        f"  Uptime: {uptime}",
+        f"  Monitoring: {cfg.airport_name} ({cfg.airport_iata})",
+        f"  Next Arrivals: {next_job('arrivals_check')} (local)",
+        f"  Next Military: {next_job('military_check')} (local)",
     ]
     await update.message.reply_html("\n".join(lines))
 

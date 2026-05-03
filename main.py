@@ -9,7 +9,9 @@ import time
 from dataclasses import dataclass, field
 from typing import List
 
+import pytz
 from environs import Env
+from telegram import BotCommand
 from telegram.ext import Application
 
 from flightradar24api import FlightRadar24API
@@ -20,6 +22,9 @@ from bot import register_handlers
 from settings import register_settings_handlers
 from summary import register_summary_handlers
 from lightroom import find_catalog
+from lookup import register_lookup_handler
+from stats import register_stats_handlers
+from spot_recommendation import register_spot_rec_handlers, run_eod_recommendation
 
 log = logging.getLogger(__name__)
 
@@ -81,9 +86,20 @@ class AppConfig:
     military_max_alt_ft: int
     military_renotify_hours: int
 
+    # Spot recommendation
+    spot_rec_enabled: bool = False
+    spot_rec_day_type: str = "Any"       # "Any" or "WeekendPublicHoliday"
+    spot_rec_travel_mins: int = 30
+    spot_rec_session_hours: int = 5
+    spot_rec_threshold: int = 3
+    spot_rec_eod_hour: int = 20
+    spot_rec_weather_gate: bool = True
+    spot_rec_lighting_gate: bool = True
+    spot_rec_max_spotted_times: int = 0   # 0 = disabled
+
     # Dependencies — excluded from repr/comparison
-    fr_api: object = field(repr=False)
-    store: object = field(repr=False)
+    fr_api: object = field(repr=False, default=None)
+    store: object = field(repr=False, default=None)
     catalog: object = field(repr=False, default=None)
 
 
@@ -164,6 +180,15 @@ def build_config(env: Env, fr_api: FlightRadar24API, store: SqliteStore, catalog
         military_radius_nm=_si(store, env, "MILITARY_RADIUS_NM", default="50"),
         military_max_alt_ft=_si(store, env, "MILITARY_MAX_ALT_FT", default="5000"),
         military_renotify_hours=_si(store, env, "MILITARY_RENOTIFY_HOURS", default="4"),
+        spot_rec_enabled=_s(store, env, "SPOT_REC_ENABLED", default="false").lower() == "true",
+        spot_rec_day_type=_s(store, env, "SPOT_REC_DAY_TYPE", default="Any"),
+        spot_rec_travel_mins=_si(store, env, "SPOT_REC_TRAVEL_MINS", default="30"),
+        spot_rec_session_hours=_si(store, env, "SPOT_REC_SESSION_HOURS", default="5"),
+        spot_rec_threshold=_si(store, env, "SPOT_REC_THRESHOLD", default="3"),
+        spot_rec_eod_hour=_si(store, env, "SPOT_REC_EOD_HOUR", default="20"),
+        spot_rec_weather_gate=_s(store, env, "SPOT_REC_WEATHER_GATE", default="true").lower() == "true",
+        spot_rec_lighting_gate=_s(store, env, "SPOT_REC_LIGHTING_GATE", default="true").lower() == "true",
+        spot_rec_max_spotted_times=_si(store, env, "SPOT_REC_MAX_SPOTTED_TIMES", default="0"),
         fr_api=fr_api,
         store=store,
         catalog=catalog,
@@ -213,8 +238,18 @@ def main() -> None:
         env.str("CHECK_INTERVAL_MINUTES"),
     )
 
+    async def _set_commands(application: Application) -> None:
+        await application.bot.set_my_commands([
+            BotCommand("spot",     "Check if recommended to go spotting today or tomorrow"),
+            BotCommand("summary",  "View notified flights by day & period"),
+            BotCommand("stats",    "View spotting stats and notification totals"),
+            BotCommand("filters",  "Manage watchlists & exclusion list"),
+            BotCommand("settings", "Configure filter intervals, days & windows"),
+            BotCommand("status",   "Show bot status and next check times"),
+        ])
+
     token = env.str("TELEGRAM_BOT_TOKEN")
-    app = Application.builder().token(token).build()
+    app = Application.builder().token(token).post_init(_set_commands).build()
     from datetime import datetime, timezone
     app.bot_data["cfg"] = cfg
     app.bot_data["start_time"] = datetime.now(timezone.utc)
@@ -222,6 +257,9 @@ def main() -> None:
     register_handlers(app)
     register_settings_handlers(app)
     register_summary_handlers(app)
+    register_lookup_handler(app)
+    register_stats_handlers(app)
+    register_spot_rec_handlers(app)
     # Named so settings.py can reschedule it when the interval changes
     app.job_queue.run_repeating(
         run_check, interval=cfg.check_interval, first=10,
@@ -235,6 +273,15 @@ def main() -> None:
         _backup_db, interval=86400, first=60,
         name="daily_backup",
     )
+    if cfg.spot_rec_enabled:
+        import datetime as _dt
+        eod_time = _dt.time(
+            hour=cfg.spot_rec_eod_hour, minute=0,
+            tzinfo=pytz.timezone(cfg.airport_tz),
+        )
+        app.job_queue.run_daily(run_eod_recommendation, time=eod_time, name="eod_rec")
+        log.info("Spot recommendation enabled — EOD check at %02d:00 local", cfg.spot_rec_eod_hour)
+
     app.run_polling(drop_pending_updates=True)
 
 

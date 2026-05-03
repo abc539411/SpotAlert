@@ -404,6 +404,15 @@ class SqliteStore:
             )
             return is_rare
 
+    def get_rare_plane_last_seen(self, airline: str, aircraft_type: str) -> Optional[int]:
+        """Return last_seen_ts for a rare plane combo, or None if never seen."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT last_seen_ts FROM rare_plane_history WHERE airline = ? AND aircraft_type = ?",
+                (airline.strip(), aircraft_type.strip()),
+            ).fetchone()
+            return int(row["last_seen_ts"]) if row else None
+
     def mark_rare_plane_notified(self, airline: str, aircraft_type: str, now_ts: int) -> None:
         with self._connect() as conn:
             conn.execute(
@@ -576,16 +585,42 @@ class SqliteStore:
     # Sighting history (every registration seen in arrivals feed)
     # ------------------------------------------------------------------
 
-    def bulk_update_sightings(self, registrations: List[str], now_ts: int) -> None:
-        """Record the current timestamp as last-seen for every registration in the list.
+    def get_notification_stats(self) -> dict:
+        """Return counts of notifications sent across all filter types."""
+        with self._connect() as conn:
+            return {
+                "special_liveries": conn.execute(
+                    "SELECT COUNT(*) FROM special_livery_history WHERE last_notified_ts > 0"
+                ).fetchone()[0],
+                "military": conn.execute(
+                    "SELECT COUNT(*) FROM military_history WHERE last_notified_ts > 0"
+                ).fetchone()[0],
+                "rego_hits": conn.execute(
+                    "SELECT COUNT(*) FROM rego_watchlist WHERE last_notified_ts > 0"
+                ).fetchone()[0],
+                "type_hits": conn.execute(
+                    "SELECT COUNT(*) FROM type_watchlist WHERE last_notified_ts > 0"
+                ).fetchone()[0],
+                "airline_hits": conn.execute(
+                    "SELECT COUNT(*) FROM airline_watchlist WHERE last_notified_ts > 0"
+                ).fetchone()[0],
+            }
 
-        Called once per check cycle with all registrations visible in the arrivals feed.
-        Uses a single transaction so ~200 rows write as one batch.
+    def bulk_update_sightings(self, sightings: dict) -> None:
+        """Record actual arrival timestamps for planes that have landed.
+
+        sightings: {registration: real_arrival_ts}
+        Only updates a record if the new timestamp is more recent than the stored one,
+        so repeat checks for the same flight never overwrite with stale data.
         """
         with self._connect() as conn:
             conn.executemany(
-                "INSERT OR REPLACE INTO sighting_history(registration, last_seen_ts) VALUES (?, ?)",
-                [(r.strip(), now_ts) for r in registrations if r.strip()],
+                """
+                INSERT INTO sighting_history(registration, last_seen_ts) VALUES (?, ?)
+                ON CONFLICT(registration) DO UPDATE
+                SET last_seen_ts = MAX(last_seen_ts, excluded.last_seen_ts)
+                """,
+                [(r.strip(), ts) for r, ts in sightings.items() if r.strip()],
             )
 
     def get_last_seen(self, registration: str) -> Optional[int]:

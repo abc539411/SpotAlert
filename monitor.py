@@ -122,14 +122,23 @@ def format_notification(
 
     aircraft = (flight.get("aircraft") or {})
     lines.append(f"  Aircraft: {_safe_get(aircraft, 'model', 'text')} ({_safe_get(aircraft, 'model', 'code')})")
+
+    airline = (flight.get("airline") or {})
+    airline_name = airline.get("name") or "N/A"
+    airline_iata = _safe_get(airline, "code", "iata")
+    airline_icao = _safe_get(airline, "code", "icao")
+    lines.append(f"  Airline: {airline_name} ({airline_iata}/{airline_icao})")
+
     lines.append(f"  Registration: {_safe_get(aircraft, 'registration')}")
+    lines.append("")
 
     if catalog is not None:
         spotted = catalog.get_last_spotted(registration)
         if spotted:
-            dt, apt = spotted
+            dt, apt, count = spotted
             apt_str = f" at {apt}" if apt else ""
-            lines.append(f"  Last Spotted: {dt.strftime('%d %b %Y')}{apt_str}")
+            times_str = f"({count} time{'s' if count != 1 else ''})"
+            lines.append(f"  Last Spotted: {dt.strftime('%d %b %Y')}{apt_str} {times_str}")
         else:
             lines.append("  Last Spotted: Not yet photographed")
 
@@ -148,12 +157,6 @@ def format_notification(
         else:
             seen_str = seen_date
         lines.append(f"  Last Seen at {airport_iata}: {seen_str}")
-
-    airline = (flight.get("airline") or {})
-    airline_name = airline.get("name") or "N/A"
-    airline_iata = _safe_get(airline, "code", "iata")
-    airline_icao = _safe_get(airline, "code", "icao")
-    lines.append(f"  Airline: {airline_name} ({airline_iata}/{airline_icao})")
 
     lines += ["", "<b>Arrival:</b>"]
     lines.append(f"  Period: {get_arrival_period(flight, airport_tz, airport_lat, airport_lon)}")
@@ -468,6 +471,8 @@ async def run_check(context: ContextTypes.DEFAULT_TYPE) -> None:
     arrivals_by_flight_number: dict = {}    # flight_number → (registration, flight dict)
 
     try:
+        # Pass 1: collect all arrivals from every page
+        all_arriving_flights = []
         for page in cfg.fetch_pages:
             try:
                 data = cfg.fr_api.get_airport_details(code=cfg.airport_code, page=page)
@@ -485,22 +490,34 @@ async def run_check(context: ContextTypes.DEFAULT_TYPE) -> None:
                     fn = str(_safe_get(flight, "identification", "number", "default", default=""))
                     if fn and fn not in arrivals_by_flight_number:
                         arrivals_by_flight_number[fn] = (registration, flight)
+                all_arriving_flights.append(arriving_flight)
 
-                match = _first_matching_filter(arriving_flight, cfg)
-                if match is None:
-                    continue
-                flight, registration, notification_type, on_notified = match
-                await _send_notification(
-                    context, cfg, chat_id, flight, registration, notification_type, on_notified
-                )
+        # Record actual arrivals — only planes that have landed, using their real arrival time
+        landed = {
+            reg: int(_safe_get(flight, "time", "real", "arrival"))
+            for reg, flight in current_arrivals.items()
+            if isinstance(_safe_get(flight, "time", "real", "arrival", default=None), (int, float))
+        }
+        if landed:
+            cfg.store.bulk_update_sightings(landed)
 
-        if current_arrivals:
-            cfg.store.bulk_update_sightings(list(current_arrivals.keys()), int(datetime.now().timestamp()))
+        # Pass 2: run filters and send notifications
+        for arriving_flight in all_arriving_flights:
+            match = _first_matching_filter(arriving_flight, cfg)
+            if match is None:
+                continue
+            flight, registration, notification_type, on_notified = match
+            await _send_notification(
+                context, cfg, chat_id, flight, registration, notification_type, on_notified
+            )
 
     except Exception as exc:
         log.error("Unexpected error in run_check: %s", exc, exc_info=True)
 
     await check_follow_ups(context, cfg, chat_id, current_arrivals, arrivals_by_flight_number)
+
+    from spot_recommendation import check_rolling_recommendation
+    await check_rolling_recommendation(context, cfg, chat_id)
 
 
 async def _send_notification(
@@ -727,10 +744,10 @@ async def _send_aircraft_swap_notice(
 
     lines = [
         f"<b>Aircraft Changed — {notification_type}</b>",
-        f"  Flight:    {flight_number or 'N/A'}",
-        f"  Was:       {old_rego}",
-        f"  Now:       {new_rego}  ({ac_name} / {ac_type})",
-        f"  Arrival:   {arrival_str} (local)",
+        f"  Flight: {flight_number or 'N/A'}",
+        f"  Was: {old_rego}",
+        f"  Now: {new_rego} ({ac_name} / {ac_type})",
+        f"  Arrival: {arrival_str} (local)",
     ]
     interesting = _classify_new_aircraft(new_flight, new_rego, cfg)
     if interesting:

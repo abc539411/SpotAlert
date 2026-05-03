@@ -29,23 +29,54 @@ log = logging.getLogger(__name__)
     ENTER_VALUE,
     MILITARY_SUBMENU,
     SUMMARY_SUBMENU,
-) = range(10, 16)
+    FILTER_CATEGORY_SUBMENU,
+    SPOT_REC_SUBMENU,
+) = range(10, 18)
 
 _REMOVE_KB = ReplyKeyboardRemove()
 
 _VALID_DAYS = {"Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"}
 
-# Top-level category keyboard
+# Top-level category keyboard — grouped to keep it manageable
 _CATEGORY_KB = ReplyKeyboardMarkup(
     [
-        ["Airport & Polling"],
-        ["Special Livery", "Rare Plane"],
-        ["Rego Watchlist", "Type Watchlist"],
-        ["Airline/Operator Watchlist"],
+        ["Monitoring", "Filters"],
         ["Military", "Summary"],
+        ["Spot Recommendation"],
         ["Done"],
     ],
     resize_keyboard=True,
+)
+
+# Filter category keyboard (lists individual filters)
+_FILTER_CATEGORY_KB = ReplyKeyboardMarkup(
+    [
+        ["Special Livery", "Rare Plane"],
+        ["Rego Watchlist", "Type Watchlist"],
+        ["Airline/Op Watchlist"],
+        ["Back"],
+    ],
+    resize_keyboard=True,
+)
+
+# Spot recommendation sub-keyboard
+_SPOT_REC_KB = ReplyKeyboardMarkup(
+    [
+        ["Enabled", "Day Type"],
+        ["Travel Time", "Session Length", "Threshold"],
+        ["EOD Hour", "Weather Gate", "Lighting Gate"],
+        ["Max Spotted Times"],
+        ["Back"],
+    ],
+    resize_keyboard=True,
+)
+
+_ON_OFF_KB = ReplyKeyboardMarkup(
+    [["On", "Off"], ["Cancel"]], resize_keyboard=True,
+)
+
+_DAY_TYPE_KB = ReplyKeyboardMarkup(
+    [["Any", "Weekends & Holidays"], ["Cancel"]], resize_keyboard=True,
 )
 
 # Military sub-keyboard
@@ -168,31 +199,42 @@ def _window_label(window: str) -> str:
 
 
 def _overview(cfg) -> str:
+    reminder = f"{cfg.reminder_hours}h" if cfg.reminder_hours > 0 else "disabled"
     lines = [
         "<b>Current Settings</b>",
         "",
-        f"<b>Airport:</b>          {cfg.airport_name} ({cfg.airport_iata}/{cfg.airport_icao})",
-        f"<b>Check Interval:</b>   {cfg.check_interval // 60} min",
-        f"<b>Reminder:</b>         {cfg.reminder_hours}h" if cfg.reminder_hours > 0 else "<b>Reminder:</b>         disabled",
+        f"<b>Monitoring:</b> {cfg.airport_name} ({cfg.airport_iata}) · {cfg.check_interval // 60} min · reminder {reminder}",
         "",
-        "<b>Filter Settings</b>  <i>(interval · active days · arrival window)</i>",
-        f"  Special Livery:   {cfg.livery_interval_hours}h renotify · {_days_label(cfg.livery_days)} · {_window_label(cfg.livery_time_filter)}",
-        f"  Rare Plane:       {cfg.rare_plane_min_absence_days}d absence · {_days_label(cfg.rare_plane_days)} · {_window_label(cfg.rare_plane_time_filter)}",
-        f"  Rego Watchlist:        {cfg.rego_interval_hours}h · {_days_label(cfg.rego_days)} · {_window_label(cfg.rego_time_filter)}",
-        f"  Type Watchlist:        {cfg.type_interval_hours}h · {_days_label(cfg.type_days)} · {_window_label(cfg.type_time_filter)}",
-        f"  Airline/Op Watchlist:  {cfg.airline_interval_hours}h · {_days_label(cfg.airline_days)} · {_window_label(cfg.airline_time_filter)}",
+        "<b>Filters</b> <i>(interval · days · window)</i>",
+        f"  Special Livery: {cfg.livery_interval_hours}h · {_days_label(cfg.livery_days)} · {_window_label(cfg.livery_time_filter)}",
+        f"  Rare Plane: {cfg.rare_plane_min_absence_days}d · {_days_label(cfg.rare_plane_days)} · {_window_label(cfg.rare_plane_time_filter)}",
+        f"  Rego Watchlist: {cfg.rego_interval_hours}h · {_days_label(cfg.rego_days)} · {_window_label(cfg.rego_time_filter)}",
+        f"  Type Watchlist: {cfg.type_interval_hours}h · {_days_label(cfg.type_days)} · {_window_label(cfg.type_time_filter)}",
+        f"  Airline/Op: {cfg.airline_interval_hours}h · {_days_label(cfg.airline_days)} · {_window_label(cfg.airline_time_filter)}",
         "",
-        "<b>Military</b>  <i>(adsb.fi)</i>",
-        f"  Check Interval:  {cfg.military_check_interval // 60} min",
-        f"  Search Radius:   {cfg.military_radius_nm} nm",
-        f"  Max Altitude:    {cfg.military_max_alt_ft} ft",
-        f"  Re-notify:       {cfg.military_renotify_hours}h",
+        f"<b>Military:</b> {cfg.military_check_interval // 60} min · {cfg.military_radius_nm} nm · {cfg.military_max_alt_ft} ft · renotify {cfg.military_renotify_hours}h",
         "",
-        "<b>Summary Periods</b>",
-        f"  Morning:    {cfg.summary_morning_pre_sunrise_hours}h pre-sunrise → {cfg.summary_morning_end_hour}:00",
-        f"  Afternoon:  {cfg.summary_afternoon_start_hour}:00 → {cfg.summary_afternoon_post_sunset_hours}h post-sunset",
+        f"<b>Summary:</b> Morning {cfg.summary_morning_pre_sunrise_hours}h pre-sunrise→{cfg.summary_morning_end_hour}:00 · Afternoon {cfg.summary_afternoon_start_hour}:00→{cfg.summary_afternoon_post_sunset_hours}h post-sunset",
+        "",
+        f"<b>Spot Rec:</b> {'enabled' if cfg.spot_rec_enabled else 'disabled'}",
     ]
     return "\n".join(lines)
+
+
+def _spot_rec_detail(cfg) -> str:
+    max_s = str(cfg.spot_rec_max_spotted_times) if cfg.spot_rec_max_spotted_times > 0 else "off"
+    return (
+        "<b>Spot Recommendation</b>\n\n"
+        f"  Enabled: {'Yes' if cfg.spot_rec_enabled else 'No'}\n"
+        f"  Day Type: {cfg.spot_rec_day_type}\n"
+        f"  Travel Time: {cfg.spot_rec_travel_mins} min\n"
+        f"  Session Length: {cfg.spot_rec_session_hours}h\n"
+        f"  Threshold: {cfg.spot_rec_threshold} planes\n"
+        f"  EOD Check: {cfg.spot_rec_eod_hour:02d}:00 local\n"
+        f"  Weather Gate: {'On' if cfg.spot_rec_weather_gate else 'Off'}\n"
+        f"  Lighting Gate: {'On' if cfg.spot_rec_lighting_gate else 'Off'}\n"
+        f"  Max Spotted Times: {max_s}"
+    )
 
 
 def _filter_detail(cfg, category: str) -> str:
@@ -203,9 +245,9 @@ def _filter_detail(cfg, category: str) -> str:
     interval_label = m.get("interval_label", "Re-notify Interval")
     return (
         f"<b>{category}</b>\n\n"
-        f"  {interval_label}:   {interval} {m['interval_unit']}\n"
-        f"  Active Days:         {_days_label(days)}\n"
-        f"  Arrival Window:      {_window_label(window)}"
+        f"  {interval_label}: {interval} {m['interval_unit']}\n"
+        f"  Active Days: {_days_label(days)}\n"
+        f"  Arrival Window: {_window_label(window)}"
     )
 
 
@@ -227,23 +269,21 @@ async def handle_category_select(update: Update, context: ContextTypes.DEFAULT_T
         await update.message.reply_text("Settings closed.", reply_markup=_REMOVE_KB)
         return ConversationHandler.END
 
-    if choice == "Airport & Polling":
+    if choice == "Monitoring":
         reminder = f"{cfg.reminder_hours}h" if cfg.reminder_hours > 0 else "disabled"
         text = (
-            f"<b>Airport &amp; Polling</b>\n\n"
-            f"  Airport:          {cfg.airport_name} ({cfg.airport_iata}/{cfg.airport_icao})\n"
-            f"  Check Interval:   {cfg.check_interval // 60} min\n"
-            f"  Reminder:         {reminder}\n"
-            f"  Next Check:       {_next_check_str(context, cfg)} (local)"
+            f"<b>Monitoring</b>\n\n"
+            f"  Airport: {cfg.airport_name} ({cfg.airport_iata}/{cfg.airport_icao})\n"
+            f"  Check Interval: {cfg.check_interval // 60} min\n"
+            f"  Reminder: {reminder}\n"
+            f"  Next Check: {_next_check_str(context, cfg)} (local)"
         )
         await update.message.reply_html(text, reply_markup=_AIRPORT_KB)
         return AIRPORT_SUBMENU
 
-    if choice in _FILTER_META:
-        context.user_data["settings_category"] = choice
-        kb = _RARE_PLANE_FILTER_KB if choice == "Rare Plane" else _FILTER_KB
-        await update.message.reply_html(_filter_detail(cfg, choice), reply_markup=kb)
-        return FILTER_SUBMENU
+    if choice == "Filters":
+        await update.message.reply_text("Choose a filter:", reply_markup=_FILTER_CATEGORY_KB)
+        return FILTER_CATEGORY_SUBMENU
 
     if choice == "Military":
         context.user_data["settings_category"] = "Military"
@@ -255,8 +295,35 @@ async def handle_category_select(update: Update, context: ContextTypes.DEFAULT_T
         await update.message.reply_html(_summary_period_detail(cfg), reply_markup=_SUMMARY_KB)
         return SUMMARY_SUBMENU
 
+    if choice == "Spot Recommendation":
+        context.user_data["settings_category"] = "Spot Recommendation"
+        await update.message.reply_html(_spot_rec_detail(cfg), reply_markup=_SPOT_REC_KB)
+        return SPOT_REC_SUBMENU
+
     await update.message.reply_text("Please choose a category from the keyboard.")
     return CATEGORY_SELECT
+
+
+async def handle_filter_category_submenu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    choice = update.message.text
+    cfg = context.bot_data["cfg"]
+
+    if choice == "Back":
+        await update.message.reply_html(_overview(cfg), reply_markup=_CATEGORY_KB)
+        return CATEGORY_SELECT
+
+    # Normalise "Airline/Op Watchlist" button back to full name
+    if choice == "Airline/Op Watchlist":
+        choice = "Airline/Operator Watchlist"
+
+    if choice in _FILTER_META:
+        context.user_data["settings_category"] = choice
+        kb = _RARE_PLANE_FILTER_KB if choice == "Rare Plane" else _FILTER_KB
+        await update.message.reply_html(_filter_detail(cfg, choice), reply_markup=kb)
+        return FILTER_SUBMENU
+
+    await update.message.reply_text("Please choose from the keyboard.")
+    return FILTER_CATEGORY_SUBMENU
 
 
 async def handle_airport_submenu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -320,8 +387,8 @@ async def handle_filter_submenu(update: Update, context: ContextTypes.DEFAULT_TY
     category = context.user_data.get("settings_category")
 
     if choice == "Back":
-        await update.message.reply_html(_overview(cfg), reply_markup=_CATEGORY_KB)
-        return CATEGORY_SELECT
+        await update.message.reply_text("Choose a filter:", reply_markup=_FILTER_CATEGORY_KB)
+        return FILTER_CATEGORY_SUBMENU
 
     if choice not in {"Re-notify Interval", "Min Absence", "Active Days", "Arrival Window"}:
         await update.message.reply_text("Please choose from the keyboard.")
@@ -363,10 +430,10 @@ async def handle_filter_submenu(update: Update, context: ContextTypes.DEFAULT_TY
 def _summary_period_detail(cfg) -> str:
     return (
         "<b>Summary Periods</b>\n\n"
-        f"  Morning Start:    {cfg.summary_morning_pre_sunrise_hours}h before sunrise\n"
-        f"  Morning End:      {cfg.summary_morning_end_hour}:00\n"
-        f"  Afternoon Start:  {cfg.summary_afternoon_start_hour}:00\n"
-        f"  Afternoon End:    {cfg.summary_afternoon_post_sunset_hours}h after sunset"
+        f"  Morning Start: {cfg.summary_morning_pre_sunrise_hours}h before sunrise\n"
+        f"  Morning End: {cfg.summary_morning_end_hour}:00\n"
+        f"  Afternoon Start: {cfg.summary_afternoon_start_hour}:00\n"
+        f"  Afternoon End: {cfg.summary_afternoon_post_sunset_hours}h after sunset"
     )
 
 
@@ -414,11 +481,11 @@ async def handle_summary_submenu(update: Update, context: ContextTypes.DEFAULT_T
 
 def _military_detail(cfg) -> str:
     return (
-        "<b>Military</b>  <i>(adsb.fi — no API key needed)</i>\n\n"
-        f"  Check Interval:  {cfg.military_check_interval // 60} min\n"
-        f"  Search Radius:   {cfg.military_radius_nm} nm\n"
-        f"  Max Altitude:    {cfg.military_max_alt_ft} ft\n"
-        f"  Re-notify:       {cfg.military_renotify_hours}h"
+        "<b>Military</b> <i>(adsb.fi — no API key needed)</i>\n\n"
+        f"  Check Interval: {cfg.military_check_interval // 60} min\n"
+        f"  Search Radius: {cfg.military_radius_nm} nm\n"
+        f"  Max Altitude: {cfg.military_max_alt_ft} ft\n"
+        f"  Re-notify: {cfg.military_renotify_hours}h"
     )
 
 
@@ -472,6 +539,10 @@ async def handle_enter_value(update: Update, context: ContextTypes.DEFAULT_TYPE)
     category = context.user_data.get("settings_category")
     cfg      = context.bot_data["cfg"]
     store    = cfg.store
+
+    # Route spot rec fields to dedicated handler
+    if category == "Spot Recommendation":
+        return await _handle_spot_rec_value(update, context, raw, cfg, store)
 
     # ----------------------------------------------------------------
     # Airport code
@@ -745,6 +816,199 @@ async def handle_enter_value(update: Update, context: ContextTypes.DEFAULT_TYPE)
     return ConversationHandler.END
 
 
+# ------------------------------------------------------------------
+# Spot Recommendation submenu
+# ------------------------------------------------------------------
+
+_SPOT_REC_FIELDS = {
+    "Enabled", "Day Type", "Travel Time", "Session Length",
+    "Threshold", "EOD Hour", "Weather Gate", "Lighting Gate", "Max Spotted Times",
+}
+
+
+async def handle_spot_rec_submenu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    choice = update.message.text
+    cfg = context.bot_data["cfg"]
+
+    if choice == "Back":
+        await update.message.reply_html(_overview(cfg), reply_markup=_CATEGORY_KB)
+        return CATEGORY_SELECT
+
+    if choice not in _SPOT_REC_FIELDS:
+        await update.message.reply_text("Please choose from the keyboard.")
+        return SPOT_REC_SUBMENU
+
+    context.user_data["settings_field"] = choice
+    context.user_data["settings_category"] = "Spot Recommendation"
+
+    if choice == "Enabled":
+        current = "On" if cfg.spot_rec_enabled else "Off"
+        await update.message.reply_text(
+            f"Current: {current}\n\nEnable or disable the spot recommendation feature?",
+            reply_markup=_ON_OFF_KB,
+        )
+    elif choice == "Day Type":
+        await update.message.reply_text(
+            f"Current: {cfg.spot_rec_day_type}\n\nChoose which days to recommend spotting:",
+            reply_markup=_DAY_TYPE_KB,
+        )
+    elif choice == "Travel Time":
+        await update.message.reply_text(
+            f"Current: {cfg.spot_rec_travel_mins} min\n\nEnter travel time to the airport in minutes:",
+            reply_markup=_REMOVE_KB,
+        )
+    elif choice == "Session Length":
+        await update.message.reply_text(
+            f"Current: {cfg.spot_rec_session_hours}h\n\nEnter typical spotting session length in hours:",
+            reply_markup=_REMOVE_KB,
+        )
+    elif choice == "Threshold":
+        await update.message.reply_text(
+            f"Current: {cfg.spot_rec_threshold}\n\nMinimum interesting arrivals needed to recommend:",
+            reply_markup=_REMOVE_KB,
+        )
+    elif choice == "EOD Hour":
+        await update.message.reply_text(
+            f"Current: {cfg.spot_rec_eod_hour:02d}:00\n\nHour (0–23) to send the end-of-day recommendation:",
+            reply_markup=_REMOVE_KB,
+        )
+    elif choice == "Weather Gate":
+        current = "On" if cfg.spot_rec_weather_gate else "Off"
+        await update.message.reply_text(
+            f"Current: {current}\n\nBlock recommendations during severe weather?",
+            reply_markup=_ON_OFF_KB,
+        )
+    elif choice == "Lighting Gate":
+        current = "On" if cfg.spot_rec_lighting_gate else "Off"
+        await update.message.reply_text(
+            f"Current: {current}\n\nExclude flights arriving after sunset?",
+            reply_markup=_ON_OFF_KB,
+        )
+    elif choice == "Max Spotted Times":
+        current = str(cfg.spot_rec_max_spotted_times) if cfg.spot_rec_max_spotted_times > 0 else "off"
+        await update.message.reply_text(
+            f"Current: {current}\n\n"
+            "If a plane has been photographed at the airport this many times or more, "
+            "it won't count as interesting. Enter a number (0 to disable):",
+            reply_markup=_REMOVE_KB,
+        )
+
+    return ENTER_VALUE
+
+
+async def _handle_spot_rec_value(update: Update, context: ContextTypes.DEFAULT_TYPE, raw: str, cfg, store) -> int:
+    """Handle ENTER_VALUE responses for spot rec fields."""
+    field = context.user_data.get("settings_field")
+
+    if field == "Enabled":
+        if raw.lower() == "cancel":
+            await update.message.reply_html(_spot_rec_detail(cfg), reply_markup=_SPOT_REC_KB)
+            return SPOT_REC_SUBMENU
+        val = raw.lower() in ("on", "yes", "true")
+        cfg.spot_rec_enabled = val
+        store.save_setting("SPOT_REC_ENABLED", "true" if val else "false")
+        # Schedule or remove EOD job
+        jobs = context.application.job_queue.get_jobs_by_name("eod_rec")
+        if val and not jobs:
+            import datetime as _dt
+            from spot_recommendation import run_eod_recommendation
+            eod_time = _dt.time(cfg.spot_rec_eod_hour, 0, tzinfo=pytz.timezone(cfg.airport_tz))
+            context.application.job_queue.run_daily(run_eod_recommendation, time=eod_time, name="eod_rec")
+        elif not val:
+            for job in jobs:
+                job.schedule_removal()
+
+    elif field == "Day Type":
+        if raw.lower() == "cancel":
+            await update.message.reply_html(_spot_rec_detail(cfg), reply_markup=_SPOT_REC_KB)
+            return SPOT_REC_SUBMENU
+        val = "WeekendPublicHoliday" if "weekend" in raw.lower() or "holiday" in raw.lower() else "Any"
+        cfg.spot_rec_day_type = val
+        store.save_setting("SPOT_REC_DAY_TYPE", val)
+
+    elif field == "Travel Time":
+        try:
+            val = int(raw)
+            if val < 0:
+                raise ValueError
+        except ValueError:
+            await update.message.reply_text("Please enter a non-negative number of minutes.")
+            return ENTER_VALUE
+        cfg.spot_rec_travel_mins = val
+        store.save_setting("SPOT_REC_TRAVEL_MINS", str(val))
+
+    elif field == "Session Length":
+        try:
+            val = int(raw)
+            if val < 1:
+                raise ValueError
+        except ValueError:
+            await update.message.reply_text("Please enter a positive number of hours.")
+            return ENTER_VALUE
+        cfg.spot_rec_session_hours = val
+        store.save_setting("SPOT_REC_SESSION_HOURS", str(val))
+
+    elif field == "Threshold":
+        try:
+            val = int(raw)
+            if val < 1:
+                raise ValueError
+        except ValueError:
+            await update.message.reply_text("Please enter a positive whole number.")
+            return ENTER_VALUE
+        cfg.spot_rec_threshold = val
+        store.save_setting("SPOT_REC_THRESHOLD", str(val))
+
+    elif field == "EOD Hour":
+        try:
+            val = int(raw)
+            if not 0 <= val <= 23:
+                raise ValueError
+        except ValueError:
+            await update.message.reply_text("Please enter a whole number between 0 and 23.")
+            return ENTER_VALUE
+        cfg.spot_rec_eod_hour = val
+        store.save_setting("SPOT_REC_EOD_HOUR", str(val))
+        # Reschedule EOD job
+        for job in context.application.job_queue.get_jobs_by_name("eod_rec"):
+            job.schedule_removal()
+        if cfg.spot_rec_enabled:
+            import datetime as _dt
+            from spot_recommendation import run_eod_recommendation
+            eod_time = _dt.time(val, 0, tzinfo=pytz.timezone(cfg.airport_tz))
+            context.application.job_queue.run_daily(run_eod_recommendation, time=eod_time, name="eod_rec")
+
+    elif field == "Weather Gate":
+        if raw.lower() == "cancel":
+            await update.message.reply_html(_spot_rec_detail(cfg), reply_markup=_SPOT_REC_KB)
+            return SPOT_REC_SUBMENU
+        val = raw.lower() == "on"
+        cfg.spot_rec_weather_gate = val
+        store.save_setting("SPOT_REC_WEATHER_GATE", "true" if val else "false")
+
+    elif field == "Lighting Gate":
+        if raw.lower() == "cancel":
+            await update.message.reply_html(_spot_rec_detail(cfg), reply_markup=_SPOT_REC_KB)
+            return SPOT_REC_SUBMENU
+        val = raw.lower() == "on"
+        cfg.spot_rec_lighting_gate = val
+        store.save_setting("SPOT_REC_LIGHTING_GATE", "true" if val else "false")
+
+    elif field == "Max Spotted Times":
+        try:
+            val = int(raw)
+            if val < 0:
+                raise ValueError
+        except ValueError:
+            await update.message.reply_text("Please enter 0 (disabled) or a positive number.")
+            return ENTER_VALUE
+        cfg.spot_rec_max_spotted_times = val
+        store.save_setting("SPOT_REC_MAX_SPOTTED_TIMES", str(val))
+
+    await update.message.reply_html(f"Updated.\n\n{_spot_rec_detail(cfg)}", reply_markup=_SPOT_REC_KB)
+    return SPOT_REC_SUBMENU
+
+
 async def cancel_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text("Settings closed.", reply_markup=_REMOVE_KB)
     return ConversationHandler.END
@@ -775,6 +1039,12 @@ def register_settings_handlers(app: Application) -> None:
             ],
             SUMMARY_SUBMENU: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_summary_submenu)
+            ],
+            FILTER_CATEGORY_SUBMENU: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_filter_category_submenu)
+            ],
+            SPOT_REC_SUBMENU: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_spot_rec_submenu)
             ],
         },
         fallbacks=[CommandHandler("cancel", cancel_settings)],

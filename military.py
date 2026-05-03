@@ -55,11 +55,11 @@ def _format_notification(ac: dict, airport_iata: str, dist_nm: float) -> str:
     return "\n".join([
         "<b>Military Aircraft Approaching</b>",
         f"  Registration: <b>{registration}</b>",
-        f"  Callsign:     {callsign}",
-        f"  Type:         {ac_type}",
-        f"  Altitude:     {alt} ft",
-        f"  Speed:        {speed} kts",
-        f"  Distance:     {dist_nm:.0f} nm from {airport_iata}",
+        f"  Callsign: {callsign}",
+        f"  Type: {ac_type}",
+        f"  Altitude: {alt} ft",
+        f"  Speed: {speed} kts",
+        f"  Distance: {dist_nm:.0f} nm from {airport_iata}",
     ])
 
 
