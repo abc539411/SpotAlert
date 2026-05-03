@@ -146,4 +146,6 @@ This project is released under the [MIT License](LICENSE).
 
 Modifications made for this project: replaced `requests` with `cloudscraper` to bypass Cloudflare bot protection on `api.flightradar24.com`. No custom headers are passed — any headers break the Cloudflare bypass and result in 403 errors.
 
+**FlightRadar24 data** — This project accesses FlightRadar24's unofficial API. FlightRadar24's [Terms of Service](https://www.flightradar24.com/terms-and-conditions) restrict use of their data to **personal, non-commercial purposes only**. Do not use this project in any commercial context without obtaining a proper data licence from [FlightRadar24](https://www.flightradar24.com).
+
 **adsb.fi open data** — Military aircraft data is sourced from [opendata.adsb.fi](https://opendata.adsb.fi). This data is provided for **personal, non-commercial use only**. See [adsb.fi](https://adsb.fi) for their full terms of use. If you intend to use this project commercially, you must arrange separate licensing with adsb.fi.
