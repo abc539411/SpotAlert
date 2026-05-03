@@ -1,0 +1,7 @@
+brotli
+requests
+cloudscraper
+pytz
+environs
+astral
+python-telegram-bot[job-queue]==22.7

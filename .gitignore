@@ -1,0 +1,20 @@
+# Secrets and personal config — never commit these
+config/config.env
+config/filters/
+
+# Logs
+logs/
+
+# Deployment scripts (may contain credentials)
+deploy_deck.py
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
