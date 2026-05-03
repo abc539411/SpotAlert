@@ -21,11 +21,16 @@ from storage import SqliteStore
 log = logging.getLogger(__name__)
 
 # Conversation state IDs
-FILTER_CHOICE, OP_CHOICE, ADD_ENTRY, ADD_ENTRY_FROM_NOTIFICATION, DELETE_ENTRY = range(5)
+FILTER_CHOICE, OP_CHOICE, ADD_ENTRY, ADD_ENTRY_FROM_NOTIFICATION, DELETE_ENTRY, SELECT_AIRLINE_TYPE = range(6)
 
 _FILTER_KEYBOARD = ReplyKeyboardMarkup(
-    [["Exclusion List", "Rego Watchlist", "Type Watchlist"]],
+    [["Exclusion List", "Rego Watchlist"], ["Type Watchlist", "Airline/Operator Watchlist"]],
     resize_keyboard=True, one_time_keyboard=True,
+)
+
+_AIRLINE_TYPE_KB = ReplyKeyboardMarkup(
+    [["Airline", "Operator"], ["Cancel"]],
+    resize_keyboard=True,
 )
 _OP_KEYBOARD = ReplyKeyboardMarkup(
     [["Add Entry", "Delete Entry", "Exit"]],
@@ -37,7 +42,7 @@ _OP_KEYBOARD_EMPTY = ReplyKeyboardMarkup(
 )
 _REMOVE_KEYBOARD = ReplyKeyboardRemove()
 
-_VALID_FILTER_NAMES = {"Exclusion List", "Rego Watchlist", "Type Watchlist"}
+_VALID_FILTER_NAMES = {"Exclusion List", "Rego Watchlist", "Type Watchlist", "Airline/Operator Watchlist"}
 
 
 def _get_store(context: ContextTypes.DEFAULT_TYPE) -> SqliteStore:
@@ -120,6 +125,8 @@ async def prompt_add_entry(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             "Enter registration (e.g. VH-OEJ) — airline will be looked up automatically.\n"
             "Or paste a notification message to auto-fill."
         )
+    elif selected == "Airline/Operator Watchlist":
+        prompt = "Enter the ICAO code, optionally followed by a name (e.g. QFA,Qantas)."
     else:  # Exclusion List
         prompt = (
             "Enter registration (e.g. VH-OEJ).\n"
@@ -150,6 +157,21 @@ async def receive_add_entry(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             return ADD_ENTRY_FROM_NOTIFICATION
         await update.message.reply_text("Could not parse the notification. Please enter manually.")
         return ADD_ENTRY
+
+    # Airline/Operator Watchlist — single-line, then ask airline vs operator
+    if selected == "Airline/Operator Watchlist":
+        fields = [f.strip() for f in text.split(",")]
+        icao_code = fields[0].upper()
+        name = fields[1] if len(fields) >= 2 else ""
+        if not icao_code:
+            await update.message.reply_text("Please enter an ICAO code.")
+            return ADD_ENTRY
+        context.user_data["parsed_entry"] = {"icao_code": icao_code, "name": name}
+        await update.message.reply_text(
+            f"Adding {icao_code}{f' ({name})' if name else ''}\n\nIs this an Airline or Operator?",
+            reply_markup=_AIRLINE_TYPE_KB,
+        )
+        return SELECT_AIRLINE_TYPE
 
     # Single-line manual entry
     registration = text.split(",")[0].strip().upper()
@@ -204,6 +226,25 @@ async def receive_add_entry_from_notification(
         store.add_type_watch(airline, aircraft_type)
 
     return await _complete_with_updated_list(update, context, selected)
+
+
+async def receive_airline_type(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    choice = update.message.text.strip()
+    if choice == "Cancel":
+        await update.message.reply_text("Cancelled.", reply_markup=_REMOVE_KEYBOARD)
+        return ConversationHandler.END
+
+    if choice not in ("Airline", "Operator"):
+        await update.message.reply_text("Please choose Airline or Operator.", reply_markup=_AIRLINE_TYPE_KB)
+        return SELECT_AIRLINE_TYPE
+
+    parsed = context.user_data.get("parsed_entry", {})
+    icao_code = parsed.get("icao_code", "")
+    name      = parsed.get("name", "")
+    entry_type = choice.lower()
+
+    _get_store(context).add_airline_watch(icao_code, entry_type, name)
+    return await _complete_with_updated_list(update, context, "Airline/Operator Watchlist")
 
 
 async def prompt_delete_entry(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -330,6 +371,9 @@ def register_handlers(app: Application) -> None:
             ],
             DELETE_ENTRY: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, receive_delete_entry)
+            ],
+            SELECT_AIRLINE_TYPE: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_airline_type)
             ],
         },
         fallbacks=[CommandHandler("cancel", cancel_conversation)],

@@ -41,6 +41,7 @@ _CATEGORY_KB = ReplyKeyboardMarkup(
         ["Airport & Polling"],
         ["Special Livery", "Rare Plane"],
         ["Rego Watchlist", "Type Watchlist"],
+        ["Airline/Operator Watchlist"],
         ["Military", "Summary"],
         ["Done"],
     ],
@@ -55,7 +56,7 @@ _MILITARY_KB = ReplyKeyboardMarkup(
 
 # Airport & Polling sub-keyboard
 _AIRPORT_KB = ReplyKeyboardMarkup(
-    [["Airport Code", "Check Interval"], ["Force Check Now"], ["Back"]],
+    [["Airport Code", "Check Interval"], ["Reminder Hours"], ["Force Check Now"], ["Back"]],
     resize_keyboard=True,
 )
 
@@ -122,6 +123,15 @@ _FILTER_META = {
         "db_window":     "TYPE_WATCHLIST_ARRIVAL_WINDOW",
         "interval_unit": "hours",
     },
+    "Airline/Operator Watchlist": {
+        "cfg_interval":  "airline_interval_hours",
+        "cfg_days":      "airline_days",
+        "cfg_window":    "airline_time_filter",
+        "db_interval":   "AIRLINE_WATCHLIST_RENOTIFY_HOURS",
+        "db_days":       "AIRLINE_WATCHLIST_ACTIVE_DAYS",
+        "db_window":     "AIRLINE_WATCHLIST_ARRIVAL_WINDOW",
+        "interval_unit": "hours",
+    },
 }
 
 # Normalise arrival window user input → internal value
@@ -163,12 +173,14 @@ def _overview(cfg) -> str:
         "",
         f"<b>Airport:</b>          {cfg.airport_name} ({cfg.airport_iata}/{cfg.airport_icao})",
         f"<b>Check Interval:</b>   {cfg.check_interval // 60} min",
+        f"<b>Reminder:</b>         {cfg.reminder_hours}h" if cfg.reminder_hours > 0 else "<b>Reminder:</b>         disabled",
         "",
         "<b>Filter Settings</b>  <i>(interval · active days · arrival window)</i>",
         f"  Special Livery:   {cfg.livery_interval_hours}h renotify · {_days_label(cfg.livery_days)} · {_window_label(cfg.livery_time_filter)}",
         f"  Rare Plane:       {cfg.rare_plane_min_absence_days}d absence · {_days_label(cfg.rare_plane_days)} · {_window_label(cfg.rare_plane_time_filter)}",
-        f"  Rego Watchlist:   {cfg.rego_interval_hours}h · {_days_label(cfg.rego_days)} · {_window_label(cfg.rego_time_filter)}",
-        f"  Type Watchlist:   {cfg.type_interval_hours}h · {_days_label(cfg.type_days)} · {_window_label(cfg.type_time_filter)}",
+        f"  Rego Watchlist:        {cfg.rego_interval_hours}h · {_days_label(cfg.rego_days)} · {_window_label(cfg.rego_time_filter)}",
+        f"  Type Watchlist:        {cfg.type_interval_hours}h · {_days_label(cfg.type_days)} · {_window_label(cfg.type_time_filter)}",
+        f"  Airline/Op Watchlist:  {cfg.airline_interval_hours}h · {_days_label(cfg.airline_days)} · {_window_label(cfg.airline_time_filter)}",
         "",
         "<b>Military</b>  <i>(adsb.fi)</i>",
         f"  Check Interval:  {cfg.military_check_interval // 60} min",
@@ -216,10 +228,12 @@ async def handle_category_select(update: Update, context: ContextTypes.DEFAULT_T
         return ConversationHandler.END
 
     if choice == "Airport & Polling":
+        reminder = f"{cfg.reminder_hours}h" if cfg.reminder_hours > 0 else "disabled"
         text = (
             f"<b>Airport &amp; Polling</b>\n\n"
             f"  Airport:          {cfg.airport_name} ({cfg.airport_iata}/{cfg.airport_icao})\n"
             f"  Check Interval:   {cfg.check_interval // 60} min\n"
+            f"  Reminder:         {reminder}\n"
             f"  Next Check:       {_next_check_str(context, cfg)} (local)"
         )
         await update.message.reply_html(text, reply_markup=_AIRPORT_KB)
@@ -267,6 +281,15 @@ async def handle_airport_submenu(update: Update, context: ContextTypes.DEFAULT_T
         await update.message.reply_text(
             f"Current: {cfg.check_interval // 60} min\n\n"
             "Enter the new check interval in minutes (1–120)",
+            reply_markup=_REMOVE_KB,
+        )
+        return ENTER_VALUE
+
+    if choice == "Reminder Hours":
+        current = f"{cfg.reminder_hours}h" if cfg.reminder_hours > 0 else "disabled"
+        await update.message.reply_text(
+            f"Current: {current}\n\n"
+            "Enter hours before arrival to send a reminder (e.g. 12), or 0 to disable",
             reply_markup=_REMOVE_KB,
         )
         return ENTER_VALUE
@@ -507,6 +530,20 @@ async def handle_enter_value(update: Update, context: ContextTypes.DEFAULT_TYPE)
             f"Updated: checking every {minutes} min.",
             reply_markup=_AIRPORT_KB,
         )
+        return AIRPORT_SUBMENU
+
+    if field == "Reminder Hours":
+        try:
+            value = int(raw)
+            if value < 0:
+                raise ValueError
+        except ValueError:
+            await update.message.reply_text("Please enter a non-negative whole number (0 to disable).")
+            return ENTER_VALUE
+        cfg.reminder_hours = value
+        store.save_setting("REMINDER_HOURS", str(value))
+        label = f"{value}h" if value > 0 else "disabled"
+        await update.message.reply_text(f"Updated: reminder {label}.", reply_markup=_AIRPORT_KB)
         return AIRPORT_SUBMENU
 
     # ----------------------------------------------------------------

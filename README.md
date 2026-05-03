@@ -1,4 +1,4 @@
-# spmonitor
+# SpotAlert
 
 A Telegram bot that monitors FlightRadar24 arrivals at a chosen airport and sends notifications when interesting aircraft are detected. Designed for aircraft spotters who want advance notice of special liveries, rare airline/type combinations, watchlisted registrations, operators, and military traffic.
 
@@ -59,8 +59,8 @@ pip install -r requirements.txt
 
 1. **Clone the repo**
    ```bash
-   git clone https://github.com/abc539411/spmonitor.git
-   cd spmonitor
+   git clone https://github.com/abc539411/spotalert.git
+   cd spotalert
    ```
 
 2. **Create your config file**
@@ -113,7 +113,7 @@ Each filter supports two optional constraints:
 
 ## Data Persistence
 
-A SQLite database is created at `config/filters/spmonitor.db` on first run. It stores:
+A SQLite database is created at `config/filters/spotalert.db` on first run. It stores:
 - Notification history and throttle tracking for all filters
 - Rego, type, and airline/operator watchlists
 - Exclusion list

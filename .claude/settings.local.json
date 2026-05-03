@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(Get-ChildItem -Path \"c:\\\\Users\\\\abc53\\\\Documents\\\\PyProjects\\\\spmonitor\\\\spmonitor_legacy\" -Recurse | Select-Object FullName, @{Name=\"Type\";Expression={if\\($_.PSIsContainer\\){\"Dir\"}else{\"File\"}}} | Format-Table -AutoSize)",
+      "PowerShell(ls C:\\\\Users\\\\abc53\\\\Documents\\\\PyProjects\\\\spmonitor\\\\v0.20 -Recurse | Where-Object { -not $_.PSIsContainer } | Select-Object FullName)",
+      "PowerShell(py --version)",
+      "PowerShell(py -3 --version)",
+      "PowerShell(py -m pip index versions python-telegram-bot 2>&1)",
+      "PowerShell(findstr -i \"py\")",
+      "PowerShell(Stop-Process -Id 32108 -Force -ErrorAction SilentlyContinue)",
+      "PowerShell(Stop-Process -Name python -Force -ErrorAction SilentlyContinue)",
+      "WebSearch"
+    ]
+  }
+}

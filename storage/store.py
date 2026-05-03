@@ -65,6 +65,18 @@ class SqliteStore:
                 "CREATE UNIQUE INDEX IF NOT EXISTS idx_type_uniq ON type_watchlist(airline, aircraft_type)"
             )
             conn.execute("""
+                CREATE TABLE IF NOT EXISTS airline_watchlist (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    icao_code TEXT NOT NULL,
+                    entry_type TEXT NOT NULL,
+                    name TEXT,
+                    last_notified_ts INTEGER DEFAULT 0
+                )
+            """)
+            conn.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_airline_uniq ON airline_watchlist(icao_code, entry_type)"
+            )
+            conn.execute("""
                 CREATE TABLE IF NOT EXISTS special_livery_history (
                     registration TEXT PRIMARY KEY,
                     last_notified_ts INTEGER NOT NULL
@@ -247,6 +259,15 @@ class SqliteStore:
                 {"Airline": r["airline"], "Aircraft Type": r["aircraft_type"]}
                 for r in rows
             ])
+        if list_name == "Airline/Operator Watchlist":
+            cols = ["ICAO Code", "Type", "Name"]
+            rows = self._fetch(
+                "SELECT icao_code, entry_type, name FROM airline_watchlist ORDER BY id ASC"
+            )
+            return TableView(columns=cols, rows=[
+                {"ICAO Code": r["icao_code"], "Type": r["entry_type"].capitalize(), "Name": r["name"] or ""}
+                for r in rows
+            ])
         raise ValueError(f"Unknown list: {list_name!r}")
 
     def add_exclusion(self, airline: str, registration: str, description: str) -> None:
@@ -282,6 +303,24 @@ class SqliteStore:
             for row_id in rows_to_delete:
                 conn.execute(f"DELETE FROM {table} WHERE id = ?", (row_id,))
         return self.get_list_view(list_name)
+
+    # ------------------------------------------------------------------
+    # Watchlist membership checks (read-only, no side effects)
+    # ------------------------------------------------------------------
+
+    def is_on_rego_watchlist(self, registration: str) -> bool:
+        with self._connect() as conn:
+            return conn.execute(
+                "SELECT 1 FROM rego_watchlist WHERE registration = ? LIMIT 1",
+                (registration.strip(),),
+            ).fetchone() is not None
+
+    def is_on_type_watchlist(self, airline: str, aircraft_type: str) -> bool:
+        with self._connect() as conn:
+            return conn.execute(
+                "SELECT 1 FROM type_watchlist WHERE airline = ? AND aircraft_type = ? LIMIT 1",
+                (airline.strip(), aircraft_type.strip()),
+            ).fetchone() is not None
 
     # ------------------------------------------------------------------
     # Exclusion check
@@ -407,6 +446,43 @@ class SqliteStore:
                 "UPDATE type_watchlist SET last_notified_ts = ? WHERE airline = ? AND aircraft_type = ?",
                 (now_ts, airline.strip(), aircraft_type.strip()),
             )
+
+    def add_airline_watch(self, icao_code: str, entry_type: str, name: str) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT OR IGNORE INTO airline_watchlist(icao_code, entry_type, name, last_notified_ts)"
+                " VALUES (?,?,?,0)",
+                (icao_code.strip().upper(), entry_type.strip(), name.strip()),
+            )
+
+    def should_notify_airline_watchlist(self, icao_code: str, entry_type: str,
+                                        now_ts: int, min_hours: int) -> bool:
+        icao_code, entry_type = icao_code.strip().upper(), entry_type.strip()
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT last_notified_ts FROM airline_watchlist WHERE icao_code = ? AND entry_type = ?",
+                (icao_code, entry_type),
+            ).fetchone()
+            if row is None:
+                return False
+            last_ts = row["last_notified_ts"]
+            if last_ts is None or int(last_ts) == 0:
+                return True
+            return (now_ts - int(last_ts)) / 3600 > min_hours
+
+    def mark_airline_notified(self, icao_code: str, entry_type: str, now_ts: int) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE airline_watchlist SET last_notified_ts = ? WHERE icao_code = ? AND entry_type = ?",
+                (now_ts, icao_code.strip().upper(), entry_type.strip()),
+            )
+
+    def is_on_airline_watchlist(self, icao_code: str, entry_type: str) -> bool:
+        with self._connect() as conn:
+            return conn.execute(
+                "SELECT 1 FROM airline_watchlist WHERE icao_code = ? AND entry_type = ? LIMIT 1",
+                (icao_code.strip().upper(), entry_type.strip()),
+            ).fetchone() is not None
 
     def should_notify_military(self, registration: str, now_ts: int, min_hours: int) -> bool:
         registration = registration.strip()
@@ -537,4 +613,6 @@ def _list_meta(list_name: str) -> Tuple[str, str]:
         return "rego_watchlist", "SELECT id FROM rego_watchlist ORDER BY id ASC"
     if list_name == "Type Watchlist":
         return "type_watchlist", "SELECT id FROM type_watchlist ORDER BY id ASC"
+    if list_name == "Airline/Operator Watchlist":
+        return "airline_watchlist", "SELECT id FROM airline_watchlist ORDER BY id ASC"
     raise ValueError(f"Unknown list: {list_name!r}")

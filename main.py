@@ -59,8 +59,14 @@ class AppConfig:
     type_days: List[str]
     type_time_filter: str
 
+    # Airline/Operator Watchlist filter
+    airline_interval_hours: int
+    airline_days: List[str]
+    airline_time_filter: str
+
     # Seconds between each arrivals check; used by follow-up logic to detect missed flights
     check_interval: int
+    reminder_hours: int  # hours before arrival to send a reminder; 0 = disabled
 
     # Summary command period definitions
     summary_morning_pre_sunrise_hours: int   # X: morning starts X hours before sunrise
@@ -143,7 +149,11 @@ def build_config(env: Env, fr_api: FlightRadar24API, store: SqliteStore) -> AppC
         type_interval_hours=_si(store, env, "TYPE_WATCHLIST_RENOTIFY_HOURS"),
         type_days=_sl(store, env, "TYPE_WATCHLIST_ACTIVE_DAYS"),
         type_time_filter=_s(store, env, "TYPE_WATCHLIST_ARRIVAL_WINDOW"),
+        airline_interval_hours=_si(store, env, "AIRLINE_WATCHLIST_RENOTIFY_HOURS"),
+        airline_days=_sl(store, env, "AIRLINE_WATCHLIST_ACTIVE_DAYS"),
+        airline_time_filter=_s(store, env, "AIRLINE_WATCHLIST_ARRIVAL_WINDOW"),
         check_interval=math.ceil(float(_s(store, env, "CHECK_INTERVAL_MINUTES", default="30")) * 60),
+        reminder_hours=_si(store, env, "REMINDER_HOURS", default="12"),
         summary_morning_pre_sunrise_hours=_si(store, env, "SUMMARY_MORNING_PRE_SUNRISE_HOURS", default="1"),
         summary_morning_end_hour=_si(store, env, "SUMMARY_MORNING_END_HOUR", default="12"),
         summary_afternoon_start_hour=_si(store, env, "SUMMARY_AFTERNOON_START_HOUR", default="12"),
@@ -165,7 +175,7 @@ def main() -> None:
 
     os.makedirs("logs", exist_ok=True)
     file_handler = logging.handlers.RotatingFileHandler(
-        "logs/spmonitor.log", maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8"
+        "logs/spotalert.log", maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8"
     )
     file_handler.setFormatter(log_format)
 
@@ -183,7 +193,7 @@ def main() -> None:
     os.makedirs(filters_dir, exist_ok=True)
 
     fr_api = FlightRadar24API()
-    store = SqliteStore(os.path.join(filters_dir, "spmonitor.db"), config_file=config_file)
+    store = SqliteStore(os.path.join(filters_dir, "spotalert.db"), config_file=config_file)
     store.migrate_from_csv_folder(filters_dir)
 
     cfg = build_config(env, fr_api, store)

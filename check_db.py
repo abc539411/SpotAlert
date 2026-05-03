@@ -1,7 +1,7 @@
 import sqlite3
 from datetime import datetime
 
-conn = sqlite3.connect("config/filters/spmonitor.db")
+conn = sqlite3.connect("config/filters/spotalert.db")
 conn.row_factory = sqlite3.Row
 
 def ts(val):
@@ -57,6 +57,13 @@ rows5 = conn.execute("SELECT airline, aircraft_type FROM type_watchlist").fetcha
 print(f"Total: {len(rows5)} entries")
 for r in rows5:
     print(f"  {r['airline']:<8} {r['aircraft_type']}")
+
+print()
+print("=== airline_watchlist ===")
+rows_aw = conn.execute("SELECT icao_code, entry_type, name FROM airline_watchlist ORDER BY id").fetchall()
+print(f"Total: {len(rows_aw)} entries")
+for r in rows_aw:
+    print(f"  {r['icao_code']:<8} {r['entry_type']:<10} {r['name'] or ''}")
 
 print()
 print("=== exclusion_list ===")

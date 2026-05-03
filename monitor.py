@@ -361,11 +361,51 @@ def check_type_watchlist(arriving_flight: dict, cfg) -> Optional[Tuple[dict, str
     return None
 
 
+def check_airline_watchlist(arriving_flight: dict, cfg) -> Optional[Tuple]:
+    flight_data = arriving_flight.get("flight") or {}
+
+    airline_name = (flight_data.get("airline") or {}).get("name") or ""
+    if any(keyword in airline_name for keyword in cfg.livery_keywords):
+        return None
+
+    parsed = _parse_aircraft(arriving_flight)
+    if parsed is None:
+        return None
+    registration, _, flight = parsed
+
+    if not _passes_schedule_filters(
+        flight, cfg.airline_days, cfg.airline_time_filter,
+        cfg.airport_tz, cfg.airport_lat, cfg.airport_lon,
+    ):
+        return None
+    if cfg.store.is_excluded(registration):
+        return None
+
+    now_ts = int(datetime.now().timestamp())
+
+    airline_icao = _safe_get(flight_data, "airline", "code", "icao", default="")
+    if airline_icao and airline_icao != "N/A":
+        if cfg.store.should_notify_airline_watchlist(airline_icao, "airline", now_ts, cfg.airline_interval_hours):
+            def on_notified(code=airline_icao, t=now_ts):
+                cfg.store.mark_airline_notified(code, "airline", t)
+            return flight, registration, on_notified, "Watchlist Airline"
+
+    owner_icao = _safe_get(flight_data, "owner", "code", "icao", default="")
+    if owner_icao and owner_icao != "N/A":
+        if cfg.store.should_notify_airline_watchlist(owner_icao, "operator", now_ts, cfg.airline_interval_hours):
+            def on_notified(code=owner_icao, t=now_ts):
+                cfg.store.mark_airline_notified(code, "operator", t)
+            return flight, registration, on_notified, "Watchlist Operator"
+
+    return None
+
+
 _FILTERS = [
     ("Special Livery",          check_special_livery),
-    ("Rare Plane/Airline",      check_rare_plane),
     ("Watchlist Registration",  check_rego_watchlist),
     ("Watchlist Aircraft Type", check_type_watchlist),
+    ("Watchlist Airline",       check_airline_watchlist),
+    ("Rare Plane/Airline",      check_rare_plane),
 ]
 
 
@@ -375,14 +415,14 @@ def _first_matching_filter(
     """Run filters in priority order; stop at the first match.
 
     Returns (flight_dict, registration, notification_type, on_notified) or None.
-    Stopping at the first match is important — later filters would write their own
-    DB sentinels as side-effects even if their result is never used.
+    check_airline_watchlist returns an optional 4th element to override the type label.
     """
     for notification_type, check_fn in _FILTERS:
         result = check_fn(arriving_flight, cfg)
         if result is not None:
-            flight, registration, on_notified = result
-            return flight, registration, notification_type, on_notified
+            flight, registration, on_notified = result[0], result[1], result[2]
+            override_type = result[3] if len(result) > 3 else notification_type
+            return flight, registration, override_type, on_notified
     return None
 
 
@@ -396,9 +436,9 @@ async def run_check(context: ContextTypes.DEFAULT_TYPE) -> None:
 
     log.info("Checking arrivals at %s...", cfg.airport_iata)
 
-    # Build a map of every registration currently visible in arrivals.
-    # Used by check_follow_ups to detect cancellations/diversions.
-    current_arrivals: dict = {}  # registration -> flight dict (first occurrence)
+    # Build maps of currently visible arrivals for follow-up checks.
+    current_arrivals: dict = {}             # registration  → flight dict
+    arrivals_by_flight_number: dict = {}    # flight_number → (registration, flight dict)
 
     try:
         for page in cfg.fetch_pages:
@@ -415,6 +455,9 @@ async def run_check(context: ContextTypes.DEFAULT_TYPE) -> None:
                     registration, _, flight = parsed
                     if registration not in current_arrivals:
                         current_arrivals[registration] = flight
+                    fn = str(_safe_get(flight, "identification", "number", "default", default=""))
+                    if fn and fn not in arrivals_by_flight_number:
+                        arrivals_by_flight_number[fn] = (registration, flight)
 
                 match = _first_matching_filter(arriving_flight, cfg)
                 if match is None:
@@ -427,7 +470,7 @@ async def run_check(context: ContextTypes.DEFAULT_TYPE) -> None:
     except Exception as exc:
         log.error("Unexpected error in run_check: %s", exc, exc_info=True)
 
-    await check_follow_ups(context, cfg, chat_id, current_arrivals)
+    await check_follow_ups(context, cfg, chat_id, current_arrivals, arrivals_by_flight_number)
 
 
 async def _send_notification(
@@ -490,7 +533,8 @@ async def _send_notification(
 # Follow-up checks: 12hr arrival reminder + cancellation/diversion
 # ------------------------------------------------------------------
 
-async def check_follow_ups(context, cfg, chat_id: str, current_arrivals: dict) -> None:
+async def check_follow_ups(context, cfg, chat_id: str, current_arrivals: dict,
+                           arrivals_by_flight_number: dict = None) -> None:
     now_ts = int(datetime.now().timestamp())
     cfg.store.cleanup_arrived_flights(now_ts)
 
@@ -522,9 +566,10 @@ async def check_follow_ups(context, cfg, chat_id: str, current_arrivals: dict) -
             #   • the original schedule was 12h+ after the initial notification
             #     (no point reminding if you were notified when it was already close)
             if (not reminder_sent
+                    and cfg.reminder_hours > 0
                     and current_arrival_ts > now_ts
-                    and (current_arrival_ts - now_ts) <= 12 * _HOURS
-                    and (original_arr_ts - first_notified_ts) > 12 * _HOURS):
+                    and (current_arrival_ts - now_ts) <= cfg.reminder_hours * _HOURS
+                    and (original_arr_ts - first_notified_ts) > cfg.reminder_hours * _HOURS):
                 await _send_arrival_reminder(
                     context, cfg, chat_id, current_flight, registration, notification_type
                 )
@@ -533,13 +578,22 @@ async def check_follow_ups(context, cfg, chat_id: str, current_arrivals: dict) -
         else:
             # Flight is no longer in the arrivals board
             if arrival_ts > now_ts:
-                # It's still expected in the future — wait for 2 full check cycles before
-                # declaring it cancelled, to avoid false alarms from transient FR24 gaps
+                # Wait for 2 full check cycles to rule out transient FR24 gaps
                 if now_ts - last_seen_ts > 2 * cfg.check_interval:
-                    await _send_cancellation_notice(
-                        context, cfg, chat_id,
-                        registration, flight_number, notification_type, arrival_ts,
-                    )
+                    # Check if the flight number reappeared under a different registration
+                    swap = arrivals_by_flight_number.get(flight_number) if arrivals_by_flight_number and flight_number else None
+                    if swap and swap[0] != registration:
+                        new_rego, new_flight = swap
+                        await _send_aircraft_swap_notice(
+                            context, cfg, chat_id,
+                            registration, new_rego, new_flight,
+                            flight_number, notification_type, arrival_ts,
+                        )
+                    else:
+                        await _send_cancellation_notice(
+                            context, cfg, chat_id,
+                            registration, flight_number, notification_type, arrival_ts,
+                        )
                     cfg.store.delete_tracked_flight(registration)
 
 
@@ -585,6 +639,76 @@ async def _send_arrival_reminder(
         log.info("Sent arrival reminder for %s", registration)
     except Exception as exc:
         log.error("Failed to send arrival reminder for %s: %s", registration, exc)
+
+
+def _classify_new_aircraft(flight: dict, registration: str, cfg) -> Optional[str]:
+    """Read-only filter check on the new aircraft. Returns a label if interesting, else None."""
+    airline_name = (flight.get("airline") or {}).get("name") or ""
+
+    if any(kw in airline_name for kw in cfg.livery_keywords):
+        match = re.search(r'\((.+?)\)', airline_name)
+        livery = match.group(1) if match else airline_name
+        return f"Special Livery — {livery}"
+
+    if cfg.store.is_on_rego_watchlist(registration):
+        return "Watchlist Registration"
+
+    try:
+        owner = flight.get("owner") or {}
+        airline_icao = owner["code"]["icao"]
+        aircraft_type = _safe_get(flight, "aircraft", "model", "code", default="")
+        if aircraft_type and cfg.store.is_on_type_watchlist(airline_icao, aircraft_type):
+            return "Watchlist Aircraft Type"
+    except (KeyError, TypeError):
+        pass
+
+    al_icao = _safe_get(flight.get("airline") or {}, "code", "icao", default="")
+    if al_icao and al_icao != "N/A" and cfg.store.is_on_airline_watchlist(al_icao, "airline"):
+        return "Watchlist Airline"
+
+    ow_icao = _safe_get(flight.get("owner") or {}, "code", "icao", default="")
+    if ow_icao and ow_icao != "N/A" and cfg.store.is_on_airline_watchlist(ow_icao, "operator"):
+        return "Watchlist Operator"
+
+    return None
+
+
+async def _send_aircraft_swap_notice(
+    context,
+    cfg,
+    chat_id: str,
+    old_rego: str,
+    new_rego: str,
+    new_flight: dict,
+    flight_number: str,
+    notification_type: str,
+    arrival_ts: int,
+) -> None:
+    tz = pytz.timezone(cfg.airport_tz)
+    arrival_str = (
+        datetime.fromtimestamp(arrival_ts).astimezone(tz).strftime("%a %H:%M")
+        if arrival_ts else "N/A"
+    )
+    aircraft = new_flight.get("aircraft") or {}
+    ac_type  = _safe_get(aircraft, "model", "code")
+    ac_name  = _safe_get(aircraft, "model", "text")
+
+    lines = [
+        f"<b>Aircraft Changed — {notification_type}</b>",
+        f"  Flight:    {flight_number or 'N/A'}",
+        f"  Was:       {old_rego}",
+        f"  Now:       {new_rego}  ({ac_name} / {ac_type})",
+        f"  Arrival:   {arrival_str} (local)",
+    ]
+    interesting = _classify_new_aircraft(new_flight, new_rego, cfg)
+    if interesting:
+        lines.append(f"\n  <b>{interesting}</b>")
+
+    try:
+        await context.bot.send_message(chat_id=chat_id, text="\n".join(lines), parse_mode="HTML")
+        log.info("Sent aircraft swap notice: %s → %s on %s", old_rego, new_rego, flight_number)
+    except Exception as exc:
+        log.error("Failed to send swap notice for %s: %s", flight_number, exc)
 
 
 async def _send_cancellation_notice(
