@@ -8,6 +8,9 @@ logs/
 # Deployment scripts (may contain credentials)
 deploy_deck.py
 
+# Personal planning notes
+to_do.md
+
 # Python
 __pycache__/
 *.pyc
