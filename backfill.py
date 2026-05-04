@@ -57,9 +57,12 @@ def backfill(
     """Sweep negative pages (historical arrivals) until we hit duplicate or empty data."""
     all_sightings: dict = {}
     all_rare: dict = {}        # (airline, type) -> latest ts
-    all_patterns: dict = {}    # (arr_fn, dep_fn) -> latest dep_ts
-    seen_registrations: set = set()  # detect when pages stop adding new data
+    all_patterns: dict = {}    # (arr_fn, dep_fn) -> (dep_ts, sched_ts, al_name, ...)
+    dep_by_rego: dict = {}     # global across all pages so arrival/departure page offsets don't break matching
+    seen_registrations: set = set()
 
+    # Pass 1: collect all pages to build global departure lookup and arrivals data
+    all_pages_arrivals = []
     page = -1
     consecutive_no_new = 0
 
@@ -71,8 +74,7 @@ def backfill(
             log.warning("Failed to fetch page %d: %s — stopping", page, exc)
             break
 
-        # Build departure lookup for this page
-        dep_by_rego: dict = {}
+        # Accumulate departures into global lookup
         for dep_entry in (schedule.get("departures") or {}).get("data") or []:
             try:
                 fl = dep_entry["flight"]
@@ -99,45 +101,17 @@ def backfill(
             log.info("Page %d: no arrivals — stopping", page)
             break
 
-        new_this_page = 0
-        for arr_entry in arrivals:
-            try:
-                fl = arr_entry["flight"]
-                rego = _safe_get(fl, "aircraft", "registration") or ""
-                if not rego:
-                    continue
+        new_this_page = sum(
+            1 for e in arrivals
+            if _safe_get(e.get("flight", {}), "aircraft", "registration") not in seen_registrations
+            and _safe_get(e.get("flight", {}), "aircraft", "registration") not in ("", None)
+        )
+        for e in arrivals:
+            r = _safe_get(e.get("flight", {}), "aircraft", "registration")
+            if r:
+                seen_registrations.add(r)
 
-                airline_icao = _safe_get(fl, "airline", "code", "icao") or ""
-                aircraft_type = _safe_get(fl, "aircraft", "model", "code") or ""
-                arr_fn = _safe_get(fl, "identification", "number", "default") or ""
-                arr_ts = _best_ts(fl.get("time") or {}, "arrival")
-
-                if rego not in seen_registrations:
-                    seen_registrations.add(rego)
-                    new_this_page += 1
-
-                if arr_ts:
-                    all_sightings[rego] = max(all_sightings.get(rego, 0), arr_ts)
-
-                if airline_icao and aircraft_type and arr_ts:
-                    key = (airline_icao, aircraft_type)
-                    all_rare[key] = max(all_rare.get(key, 0), arr_ts)
-
-                if arr_fn and rego in dep_by_rego:
-                    dep_fn, dep_ts, sched_dep_ts, al_name, al_iata, al_icao, d_name, d_iata, d_icao = dep_by_rego[rego]
-                    if dep_ts > (arr_ts or 0):
-                        key = (arr_fn, dep_fn)
-                        prev = all_patterns.get(key, (0, None, None, None, None, None, None, None))
-                        all_patterns[key] = (
-                            max(prev[0], dep_ts),
-                            sched_dep_ts or prev[1],
-                            al_name or prev[2], al_iata or prev[3], al_icao or prev[4],
-                            d_name or prev[5], d_iata or prev[6], d_icao or prev[7],
-                        )
-
-            except (KeyError, TypeError):
-                continue
-
+        all_pages_arrivals.extend(arrivals)
         log.info("Page %d: %d arrivals, %d new registrations seen", page, len(arrivals), new_this_page)
 
         if new_this_page == 0:
@@ -150,6 +124,40 @@ def backfill(
 
         page -= 1
         time.sleep(sleep_secs)
+
+    # Pass 2: process all arrivals against the complete global departure lookup
+    for arr_entry in all_pages_arrivals:
+        try:
+            fl = arr_entry["flight"]
+            rego = _safe_get(fl, "aircraft", "registration") or ""
+            if not rego:
+                continue
+
+            airline_icao = _safe_get(fl, "airline", "code", "icao") or ""
+            aircraft_type = _safe_get(fl, "aircraft", "model", "code") or ""
+            arr_fn = _safe_get(fl, "identification", "number", "default") or ""
+            arr_ts = _best_ts(fl.get("time") or {}, "arrival")
+
+            if arr_ts:
+                all_sightings[rego] = max(all_sightings.get(rego, 0), arr_ts)
+
+            if airline_icao and aircraft_type and arr_ts:
+                key = (airline_icao, aircraft_type)
+                all_rare[key] = max(all_rare.get(key, 0), arr_ts)
+
+            if arr_fn and rego in dep_by_rego:
+                dep_fn, dep_ts, sched_dep_ts, al_name, al_iata, al_icao, d_name, d_iata, d_icao = dep_by_rego[rego]
+                if dep_ts > (arr_ts or 0):
+                    key = (arr_fn, dep_fn)
+                    prev = all_patterns.get(key, (0, None, None, None, None, None, None, None))
+                    all_patterns[key] = (
+                        max(prev[0], dep_ts),
+                        sched_dep_ts or prev[1],
+                        al_name or prev[2], al_iata or prev[3], al_icao or prev[4],
+                        d_name or prev[5], d_iata or prev[6], d_icao or prev[7],
+                    )
+        except (KeyError, TypeError):
+            continue
 
     # Write to DB
     if all_sightings:
