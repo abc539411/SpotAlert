@@ -94,7 +94,9 @@ def _is_on_approach(ac: dict, airport_lat: float, airport_lon: float,
                     radius_nm: int, max_alt_ft: int) -> bool:
     try:
         alt = ac.get("alt_baro")
-        alt = 0 if alt == "ground" else int(alt)
+        if alt == "ground":
+            return False
+        alt = int(alt)
         if alt > max_alt_ft:
             return False
     except (TypeError, ValueError):
@@ -119,6 +121,9 @@ def _format_notification(ac: dict, airport_iata: str, dist_nm: float) -> str:
     # Show full description if available, otherwise fall back to type code
     aircraft_str = f"{desc} ({ac_type})" if desc else ac_type
 
+    hex_code = (ac.get("hex") or "").lower()
+    map_link = f"\nhttps://globe.adsb.fi/?icao={hex_code}" if hex_code else ""
+
     return "\n".join([
         "<b>Military Aircraft Approaching</b>",
         f"  Registration: <b>{registration}</b>",
@@ -128,7 +133,7 @@ def _format_notification(ac: dict, airport_iata: str, dist_nm: float) -> str:
         f"  Altitude: {alt} ft",
         f"  Speed: {speed} kts",
         f"  Distance: {dist_nm:.0f} nm from {airport_iata}",
-    ])
+    ]) + map_link
 
 
 async def check_military(context: ContextTypes.DEFAULT_TYPE) -> None:
