@@ -277,8 +277,7 @@ async def run_eod_recommendation(context: ContextTypes.DEFAULT_TYPE) -> None:
             lines.append(_flight_line(e, tz, include_reason=True))
 
     lines.append("")
-    if weather:
-        lines.append(f"Weather tomorrow: {weather}")
+    lines.append(f"Weather tomorrow: {weather}" if weather else "Weather tomorrow: unavailable")
     lines.append(_sun_line(sunrise_ts, sunset_ts, tz))
 
     keyboard = InlineKeyboardMarkup([[

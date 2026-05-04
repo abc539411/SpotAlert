@@ -41,7 +41,7 @@ _VALID_DAYS = {"Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"}
 _CATEGORY_KB = ReplyKeyboardMarkup(
     [
         ["Monitoring", "Filters"],
-        ["Military", "Summary"],
+        ["Military", "Spot Periods"],
         ["Spot Recommendation"],
         ["Done"],
     ],
@@ -91,8 +91,8 @@ _AIRPORT_KB = ReplyKeyboardMarkup(
     resize_keyboard=True,
 )
 
-# Summary sub-keyboard
-_SUMMARY_KB = ReplyKeyboardMarkup(
+# Spot Periods sub-keyboard
+_SPOT_PERIODS_KB = ReplyKeyboardMarkup(
     [["Morning Start", "Morning End"], ["Afternoon Start", "Afternoon End"], ["Back"]],
     resize_keyboard=True,
 )
@@ -214,7 +214,7 @@ def _overview(cfg) -> str:
         "",
         f"<b>Military:</b> {cfg.military_check_interval // 60} min · {cfg.military_radius_nm} nm · {cfg.military_max_alt_ft} ft · renotify {cfg.military_renotify_hours}h",
         "",
-        f"<b>Summary:</b> Morning {cfg.summary_morning_pre_sunrise_hours}h pre-sunrise→{cfg.summary_morning_end_hour}:00 · Afternoon {cfg.summary_afternoon_start_hour}:00→{cfg.summary_afternoon_post_sunset_hours}h post-sunset",
+        f"<b>Spot Periods:</b> Morning {cfg.summary_morning_pre_sunrise_hours}h pre-sunrise→{cfg.summary_morning_end_hour}:00 · Afternoon {cfg.summary_afternoon_start_hour}:00→{cfg.summary_afternoon_post_sunset_hours}h post-sunset",
         "",
         f"<b>Spot Rec:</b> {'enabled' if cfg.spot_rec_enabled else 'disabled'}",
     ]
@@ -290,9 +290,9 @@ async def handle_category_select(update: Update, context: ContextTypes.DEFAULT_T
         await update.message.reply_html(_military_detail(cfg), reply_markup=_MILITARY_KB)
         return MILITARY_SUBMENU
 
-    if choice == "Summary":
-        context.user_data["settings_category"] = "Summary"
-        await update.message.reply_html(_summary_period_detail(cfg), reply_markup=_SUMMARY_KB)
+    if choice == "Spot Periods":
+        context.user_data["settings_category"] = "Spot Periods"
+        await update.message.reply_html(_spot_periods_detail(cfg), reply_markup=_SPOT_PERIODS_KB)
         return SUMMARY_SUBMENU
 
     if choice == "Spot Recommendation":
@@ -435,9 +435,9 @@ async def handle_filter_submenu(update: Update, context: ContextTypes.DEFAULT_TY
     return ENTER_VALUE
 
 
-def _summary_period_detail(cfg) -> str:
+def _spot_periods_detail(cfg) -> str:
     return (
-        "<b>Summary Periods</b>\n\n"
+        "<b>Spot Periods</b>\n\n"
         f"  Morning Start: {cfg.summary_morning_pre_sunrise_hours}h before sunrise\n"
         f"  Morning End: {cfg.summary_morning_end_hour}:00\n"
         f"  Afternoon Start: {cfg.summary_afternoon_start_hour}:00\n"
@@ -640,7 +640,7 @@ async def handle_enter_value(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return AIRPORT_SUBMENU
 
     # ----------------------------------------------------------------
-    # Summary period settings
+    # Spot period settings
     # ----------------------------------------------------------------
     if field == "Morning Start":
         try:
@@ -653,7 +653,7 @@ async def handle_enter_value(update: Update, context: ContextTypes.DEFAULT_TYPE)
         cfg.summary_morning_pre_sunrise_hours = value
         store.save_setting("SUMMARY_MORNING_PRE_SUNRISE_HOURS", str(value))
         await update.message.reply_html(
-            f"Updated.\n\n{_summary_period_detail(cfg)}", reply_markup=_SUMMARY_KB
+            f"Updated.\n\n{_spot_periods_detail(cfg)}", reply_markup=_SPOT_PERIODS_KB
         )
         return SUMMARY_SUBMENU
 
@@ -668,7 +668,7 @@ async def handle_enter_value(update: Update, context: ContextTypes.DEFAULT_TYPE)
         cfg.summary_morning_end_hour = value
         store.save_setting("SUMMARY_MORNING_END_HOUR", str(value))
         await update.message.reply_html(
-            f"Updated.\n\n{_summary_period_detail(cfg)}", reply_markup=_SUMMARY_KB
+            f"Updated.\n\n{_spot_periods_detail(cfg)}", reply_markup=_SPOT_PERIODS_KB
         )
         return SUMMARY_SUBMENU
 
@@ -683,7 +683,7 @@ async def handle_enter_value(update: Update, context: ContextTypes.DEFAULT_TYPE)
         cfg.summary_afternoon_start_hour = value
         store.save_setting("SUMMARY_AFTERNOON_START_HOUR", str(value))
         await update.message.reply_html(
-            f"Updated.\n\n{_summary_period_detail(cfg)}", reply_markup=_SUMMARY_KB
+            f"Updated.\n\n{_spot_periods_detail(cfg)}", reply_markup=_SPOT_PERIODS_KB
         )
         return SUMMARY_SUBMENU
 
@@ -698,7 +698,7 @@ async def handle_enter_value(update: Update, context: ContextTypes.DEFAULT_TYPE)
         cfg.summary_afternoon_post_sunset_hours = value
         store.save_setting("SUMMARY_AFTERNOON_POST_SUNSET_HOURS", str(value))
         await update.message.reply_html(
-            f"Updated.\n\n{_summary_period_detail(cfg)}", reply_markup=_SUMMARY_KB
+            f"Updated.\n\n{_spot_periods_detail(cfg)}", reply_markup=_SPOT_PERIODS_KB
         )
         return SUMMARY_SUBMENU
 
