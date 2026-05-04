@@ -81,7 +81,16 @@ def backfill(
                 dep_ts = _best_ts(fl.get("time") or {}, "departure")
                 if rego and fn and dep_ts:
                     sched_only = (fl.get("time") or {}).get("scheduled", {}).get("departure")
-                    dep_by_rego[rego] = (fn, dep_ts, int(sched_only) if isinstance(sched_only, (int, float)) else None)
+                    airline = fl.get("airline") or {}
+                    airline_code = airline.get("code") or {}
+                    dest = (fl.get("airport") or {}).get("destination") or {}
+                    dest_code = dest.get("code") or {}
+                    dep_by_rego[rego] = (
+                        fn, dep_ts,
+                        int(sched_only) if isinstance(sched_only, (int, float)) else None,
+                        airline.get("name"), airline_code.get("iata"), airline_code.get("icao"),
+                        dest.get("name"), dest_code.get("iata"), dest_code.get("icao"),
+                    )
             except (KeyError, TypeError):
                 continue
 
@@ -115,11 +124,16 @@ def backfill(
                     all_rare[key] = max(all_rare.get(key, 0), arr_ts)
 
                 if arr_fn and rego in dep_by_rego:
-                    dep_fn, dep_ts, sched_dep_ts = dep_by_rego[rego]
+                    dep_fn, dep_ts, sched_dep_ts, al_name, al_iata, al_icao, d_name, d_iata, d_icao = dep_by_rego[rego]
                     if dep_ts > (arr_ts or 0):
                         key = (arr_fn, dep_fn)
-                        prev_ts, prev_sched = all_patterns.get(key, (0, None))
-                        all_patterns[key] = (max(prev_ts, dep_ts), sched_dep_ts or prev_sched)
+                        prev = all_patterns.get(key, (0, None, None, None, None, None, None, None))
+                        all_patterns[key] = (
+                            max(prev[0], dep_ts),
+                            sched_dep_ts or prev[1],
+                            al_name or prev[2], al_iata or prev[3], al_icao or prev[4],
+                            d_name or prev[5], d_iata or prev[6], d_icao or prev[7],
+                        )
 
             except (KeyError, TypeError):
                 continue
@@ -142,8 +156,13 @@ def backfill(
         store.bulk_update_sightings(all_sightings)
     for (airline, aircraft_type), ts in all_rare.items():
         store.backfill_rare_plane_seen(airline, aircraft_type, ts)
-    for (arr_fn, dep_fn), (dep_ts, sched_dep_ts) in all_patterns.items():
-        store.record_departure_pattern(arr_fn, dep_fn, airport_iata, dep_ts, sched_dep_ts)
+    for (arr_fn, dep_fn), (dep_ts, sched_ts, al_name, al_iata, al_icao, d_name, d_iata, d_icao) in all_patterns.items():
+        store.record_departure_pattern(
+            arr_fn, dep_fn, airport_iata, dep_ts,
+            scheduled_dep_ts=sched_ts,
+            airline_name=al_name, airline_iata=al_iata, airline_icao=al_icao,
+            dest_name=d_name, dest_iata=d_iata, dest_icao=d_icao,
+        )
 
     log.info(
         "Backfill complete — %d sightings, %d rare plane records, %d departure patterns written to DB",
