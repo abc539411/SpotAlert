@@ -343,8 +343,14 @@ def _airline_detail_from_flight(flight_data: dict) -> str:
 
 
 def _evaluate_rolling_flights(cfg, window_start: int, window_end: int,
-                               sunrise_ts: int, sunset_ts: int) -> List[FlightEval]:
-    """Evaluate all tracked flights in the window, categorising each with a reason."""
+                               sunrise_ts: int, sunset_ts: int,
+                               current_arrivals: dict = None,
+                               arrivals_by_fn: dict = None) -> List[FlightEval]:
+    """Evaluate all tracked flights in the window, categorising each with a reason.
+
+    current_arrivals: {registration: flight} — if provided, used to detect cancellations/swaps.
+    arrivals_by_fn:   {flight_number: (registration, flight)} — for swap detection.
+    """
     results = []
     tz = pytz.timezone(cfg.airport_tz)
 
@@ -359,6 +365,19 @@ def _evaluate_rolling_flights(cfg, window_start: int, window_end: int,
         arr_str = datetime.fromtimestamp(arrival_ts).astimezone(tz).strftime("%H:%M")
         detail = _get_airline_detail(cfg, registration)
         livery = extra_info if notif_type == "Special Livery" else ""
+
+        # Cancellation / swap check (only when current arrivals data is provided)
+        if current_arrivals is not None and registration not in current_arrivals:
+            flight_number = record["flight_number"] or ""
+            if flight_number and arrivals_by_fn and flight_number in arrivals_by_fn:
+                new_rego, _ = arrivals_by_fn[flight_number]
+                if new_rego != registration:
+                    results.append(FlightEval(arrival_ts, registration, notif_type, False,
+                                              f"aircraft changed to {new_rego}", detail, livery))
+                    continue
+            results.append(FlightEval(arrival_ts, registration, notif_type, False,
+                                      "cancelled or diverted", detail, livery))
+            continue
 
         if cfg.spot_rec_lighting_gate and not _passes_lighting_gate(arrival_ts, sunrise_ts, sunset_ts):
             results.append(FlightEval(arrival_ts, registration, notif_type, False,
@@ -470,6 +489,7 @@ def _build_detail_message(
     tz,
     sunrise_ts: int = 0,
     sunset_ts: int = 0,
+    show_verdict: bool = True,
 ) -> str:
     """Build the detailed manual check message, tightening window to first→last arrival."""
     severe_weather = weather_gate and weather and weather.is_severe
@@ -482,15 +502,18 @@ def _build_detail_message(
     else:
         window_str = None
 
-    # Verdict
-    if severe_weather:
-        verdict = f"Not recommended — severe weather ({weather})"
-    elif len(qualifying) >= threshold:
-        verdict = f"Recommended — {len(qualifying)} qualifying arrival{'s' if len(qualifying) != 1 else ''}"
+    # Verdict (only for Best Time to Go)
+    if show_verdict:
+        if severe_weather:
+            verdict = f"Not recommended — severe weather ({weather})"
+        elif len(qualifying) >= threshold:
+            verdict = f"Recommended — {len(qualifying)} qualifying arrival{'s' if len(qualifying) != 1 else ''}"
+        else:
+            verdict = f"Not recommended — {len(qualifying)} qualifying arrival{'s' if len(qualifying) != 1 else ''} (need {threshold})"
+        lines = [f"<b>{header}</b>", verdict]
     else:
-        verdict = f"Not recommended — {len(qualifying)} qualifying arrival{'s' if len(qualifying) != 1 else ''} (need {threshold})"
-
-    lines = [f"<b>{header}</b>", verdict]
+        count_str = f"{len(qualifying)} interesting arrival{'s' if len(qualifying) != 1 else ''}"
+        lines = [f"<b>{header}</b>", count_str]
     if window_str:
         lines.append(f"Window: {window_str}")
     lines.append("")
@@ -521,94 +544,132 @@ def _build_detail_message(
     return "\n".join(lines)
 
 
-async def _run_spot_check(send_fn, context: ContextTypes.DEFAULT_TYPE, target: str) -> None:
-    """Core logic for both /spot today and /spot tomorrow."""
+_PERIOD_KB = InlineKeyboardMarkup([
+    [InlineKeyboardButton("Morning",          callback_data="spot_period_morning"),
+     InlineKeyboardButton("Afternoon",        callback_data="spot_period_afternoon")],
+    [InlineKeyboardButton("All Day",          callback_data="spot_period_allday"),
+     InlineKeyboardButton("Best Time to Go",  callback_data="spot_period_best")],
+])
+
+_PERIOD_LABELS = {
+    "morning":   "Morning",
+    "afternoon": "Afternoon",
+    "allday":    "All Day",
+    "best":      "Best Time to Go",
+}
+
+
+def _day_hour_ts(d, hour: int, tz) -> int:
+    import datetime as _dt
+    return int(tz.localize(_dt.datetime.combine(d, _dt.time(hour, 0))).timestamp())
+
+
+async def _run_spot_check(send_fn, context: ContextTypes.DEFAULT_TYPE,
+                          day: str, period: str) -> None:
     cfg = context.bot_data["cfg"]
     tz = pytz.timezone(cfg.airport_tz)
     now = datetime.now(tz)
+    show_verdict = (period == "best")
 
-    if target == "today":
-        await send_fn("Checking now...")
+    if day == "today":
+        await send_fn("Checking...")
         now_ts = int(now.timestamp())
-        sunrise_ts, sunset_ts = _sun_times(cfg, now.date())
+        target_date = now.date()
+        sunrise_ts, sunset_ts = _sun_times(cfg, target_date)
 
-        # Cap at midnight tonight (local) to prevent spilling into tomorrow
-        import datetime as _dt
-        midnight = int(tz.localize(_dt.datetime.combine(now.date(), _dt.time(23, 59, 59))).timestamp())
-        window_start = now_ts + cfg.spot_rec_travel_mins * 60
-        window_end = min(window_start + cfg.spot_rec_session_hours * 3600, midnight)
+        if period == "best":
+            import datetime as _dt
+            midnight = int(tz.localize(_dt.datetime.combine(target_date, _dt.time(23, 59, 59))).timestamp())
+            window_start = now_ts + cfg.spot_rec_travel_mins * 60
+            window_end   = min(window_start + cfg.spot_rec_session_hours * 3600, midnight)
+        elif period == "morning":
+            window_start = sunrise_ts - cfg.summary_morning_pre_sunrise_hours * 3600
+            window_end   = _day_hour_ts(target_date, cfg.summary_morning_end_hour, tz)
+        elif period == "afternoon":
+            window_start = _day_hour_ts(target_date, cfg.summary_afternoon_start_hour, tz)
+            window_end   = sunset_ts + cfg.summary_afternoon_post_sunset_hours * 3600
+        else:  # allday — full day, no session window constraint
+            window_start = _day_hour_ts(target_date, 0, tz)
+            window_end   = _day_hour_ts(target_date, 23, tz) + 3599
 
-        evals = _evaluate_rolling_flights(cfg, window_start, window_end, sunrise_ts, sunset_ts)
+        evals      = _evaluate_rolling_flights(cfg, window_start, window_end, sunrise_ts, sunset_ts)
         qualifying = [e for e in evals if e.qualifying]
-        filtered = [e for e in evals if not e.qualifying]
-        weather = get_current_weather(cfg.airport_lat, cfg.airport_lon, cfg.airport_tz)
-
-        msg = _build_detail_message(
-            qualifying, filtered, cfg.spot_rec_threshold,
-            weather, cfg.spot_rec_weather_gate,
-            "Spot check — Today", tz, sunrise_ts, sunset_ts,
-        )
+        filtered   = [e for e in evals if not e.qualifying]
+        weather    = get_current_weather(cfg.airport_lat, cfg.airport_lon, cfg.airport_tz)
+        header     = f"Spot check — Today ({_PERIOD_LABELS[period]})"
+        msg = _build_detail_message(qualifying, filtered, cfg.spot_rec_threshold,
+                                    weather, cfg.spot_rec_weather_gate,
+                                    header, tz, sunrise_ts, sunset_ts, show_verdict=show_verdict)
 
     else:  # tomorrow
         await send_fn("Fetching tomorrow's arrivals...")
-        tomorrow = (now + timedelta(days=1)).date()
+        tomorrow   = (now + timedelta(days=1)).date()
         sunrise_ts, sunset_ts = _sun_times(cfg, tomorrow)
+        evals         = _evaluate_eod_flights(cfg, tomorrow, sunrise_ts, sunset_ts)
+        all_qualifying = [e for e in evals if e.qualifying]
+        all_filtered   = [e for e in evals if not e.qualifying]
 
-        evals = _evaluate_eod_flights(cfg, tomorrow, sunrise_ts, sunset_ts)
-        qualifying = [e for e in evals if e.qualifying]
-        filtered = [e for e in evals if not e.qualifying]
+        if period == "best":
+            session_secs = cfg.spot_rec_session_hours * 3600
+            best_qualifying, best_start = [], None
+            for e in all_qualifying:
+                in_win = [q for q in all_qualifying if e.arrival_ts <= q.arrival_ts <= e.arrival_ts + session_secs]
+                if len(in_win) > len(best_qualifying):
+                    best_qualifying = in_win
+                    best_start = e.arrival_ts
+            qualifying = best_qualifying
+            filtered   = [f for f in all_filtered
+                          if best_start and best_start <= f.arrival_ts <= best_start + session_secs] \
+                         if best_start else all_filtered
+        elif period == "allday":
+            qualifying = all_qualifying
+            filtered   = all_filtered
+        else:
+            if period == "morning":
+                ws = sunrise_ts - cfg.summary_morning_pre_sunrise_hours * 3600
+                we = _day_hour_ts(tomorrow, cfg.summary_morning_end_hour, tz)
+            else:  # afternoon
+                ws = _day_hour_ts(tomorrow, cfg.summary_afternoon_start_hour, tz)
+                we = sunset_ts + cfg.summary_afternoon_post_sunset_hours * 3600
+            qualifying = [e for e in all_qualifying if ws <= e.arrival_ts <= we]
+            filtered   = [e for e in all_filtered   if ws <= e.arrival_ts <= we]
 
-        session_secs = cfg.spot_rec_session_hours * 3600
-        best_qualifying, best_start = [], None
-        for e in qualifying:
-            in_win = [q for q in qualifying if e.arrival_ts <= q.arrival_ts <= e.arrival_ts + session_secs]
-            if len(in_win) > len(best_qualifying):
-                best_qualifying = in_win
-                best_start = e.arrival_ts
-
-        best_filtered = [f for f in filtered if best_start and best_start <= f.arrival_ts <= best_start + session_secs] if best_start else filtered
         weather = get_forecast_weather(cfg.airport_lat, cfg.airport_lon, cfg.airport_tz, day_offset=1)
-
-        msg = _build_detail_message(
-            best_qualifying, best_filtered, cfg.spot_rec_threshold,
-            weather, cfg.spot_rec_weather_gate,
-            f"Spot check — {tomorrow.strftime('%A %-d %b')}", tz, sunrise_ts, sunset_ts,
-        )
+        header  = f"Spot check — {tomorrow.strftime('%A %-d %b')} ({_PERIOD_LABELS[period]})"
+        msg = _build_detail_message(qualifying, filtered, cfg.spot_rec_threshold,
+                                    weather, cfg.spot_rec_weather_gate,
+                                    header, tz, sunrise_ts, sunset_ts, show_verdict=show_verdict)
 
     await send_fn(msg, parse_mode="HTML")
 
 
 async def handle_spot_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    args = context.args
-    if not args:
-        keyboard = InlineKeyboardMarkup([[
-            InlineKeyboardButton("Today", callback_data="spot_check_today"),
-            InlineKeyboardButton("Tomorrow", callback_data="spot_check_tomorrow"),
-        ]])
-        await update.message.reply_text("Check spotting recommendation for:", reply_markup=keyboard)
-        return
-
-    target = args[0].lower()
-    if target not in ("today", "tomorrow"):
-        await update.message.reply_text("Usage: /spot, /spot today, or /spot tomorrow")
-        return
-
-    async def send_fn(text, **kwargs):
-        await update.message.reply_text(text, **kwargs)
-
-    await _run_spot_check(send_fn, context, target)
+    keyboard = InlineKeyboardMarkup([[
+        InlineKeyboardButton("Today",    callback_data="spot_day_today"),
+        InlineKeyboardButton("Tomorrow", callback_data="spot_day_tomorrow"),
+    ]])
+    await update.message.reply_text("Which day?", reply_markup=keyboard)
 
 
-async def handle_spot_check_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def handle_spot_day_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
-    target = query.data.replace("spot_check_", "")
+    day = query.data.replace("spot_day_", "")
+    context.user_data["spot_day"] = day
+    await query.edit_message_text("Which period?", reply_markup=_PERIOD_KB)
+
+
+async def handle_spot_period_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    period = query.data.replace("spot_period_", "")
+    day    = context.user_data.get("spot_day", "today")
     await query.edit_message_reply_markup(reply_markup=None)
 
     async def send_fn(text, **kwargs):
         await context.bot.send_message(chat_id=query.message.chat_id, text=text, **kwargs)
 
-    await _run_spot_check(send_fn, context, target)
+    await _run_spot_check(send_fn, context, day, period)
 
 
 # ------------------------------------------------------------------
@@ -623,11 +684,36 @@ async def _send_spot_followup(context: ContextTypes.DEFAULT_TYPE) -> None:
     now_ts = int(now.timestamp())
     today = now.date()
 
-    window_start = now_ts + cfg.spot_rec_travel_mins * 60
-    window_end = window_start + cfg.spot_rec_session_hours * 3600
     sunrise_ts, sunset_ts = _sun_times(cfg, today)
+    window_start = now_ts + cfg.spot_rec_travel_mins * 60
+    window_end = min(window_start + cfg.spot_rec_session_hours * 3600, sunset_ts)
 
-    evals = _evaluate_rolling_flights(cfg, window_start, window_end, sunrise_ts, sunset_ts)
+    # Fetch current arrivals to detect cancellations and swaps since the EOD recommendation
+    current_arrivals: dict = {}
+    arrivals_by_fn: dict = {}
+    try:
+        for page in cfg.fetch_pages:
+            try:
+                data = cfg.fr_api.get_airport_details(code=cfg.airport_code, page=page)
+                page_arrivals = data["airport"]["pluginData"]["schedule"]["arrivals"]["data"]
+            except Exception:
+                continue
+            for af in page_arrivals:
+                parsed = _parse_aircraft(af)
+                if parsed:
+                    reg, _, flight = parsed
+                    current_arrivals[reg] = flight
+                    fn = str(_safe_get(flight, "identification", "number", "default", default=""))
+                    if fn and fn not in arrivals_by_fn:
+                        arrivals_by_fn[fn] = (reg, flight)
+    except Exception as exc:
+        log.warning("Follow-up: could not fetch current arrivals: %s", exc)
+
+    evals = _evaluate_rolling_flights(
+        cfg, window_start, window_end, sunrise_ts, sunset_ts,
+        current_arrivals if current_arrivals else None,
+        arrivals_by_fn if arrivals_by_fn else None,
+    )
     qualifying = [e for e in evals if e.qualifying]
     filtered = [e for e in evals if not e.qualifying]
 
@@ -697,6 +783,7 @@ async def handle_spot_response(update: Update, context: ContextTypes.DEFAULT_TYP
 # ------------------------------------------------------------------
 
 def register_spot_rec_handlers(app: Application) -> None:
-    app.add_handler(CallbackQueryHandler(handle_spot_response, pattern="^spot_(yes|maybe|no)$"))
-    app.add_handler(CallbackQueryHandler(handle_spot_check_callback, pattern="^spot_check_(today|tomorrow)$"))
+    app.add_handler(CallbackQueryHandler(handle_spot_response,       pattern="^spot_(yes|maybe|no)$"))
+    app.add_handler(CallbackQueryHandler(handle_spot_day_callback,   pattern="^spot_day_(today|tomorrow)$"))
+    app.add_handler(CallbackQueryHandler(handle_spot_period_callback, pattern="^spot_period_(morning|afternoon|allday|best)$"))
     app.add_handler(CommandHandler("spot", handle_spot_command))

@@ -58,32 +58,79 @@ def get_arrival_period(flight: dict, tz_name: str, lat: float, lon: float) -> st
         return "N/A"
 
 
-def get_next_departure(
-    rego_details: Optional[dict], airport_iata: str, tz_name: str
-) -> Tuple[Optional[datetime], Optional[str], Optional[str], Optional[str]]:
-    """Find the next scheduled outbound flight for this aircraft from the monitored airport.
+def _extract_dep_fields(fl: dict, tz_name: str) -> tuple:
+    """Extract departure fields from a rego_details flight entry.
 
-    Returns (departure_time, dest_name, dest_iata, dest_icao), or all None if not found.
+    Returns (dep_time, dep_fn, airline_name, airline_iata, airline_icao, dest_name, dest_iata, dest_icao, time_label).
     """
+    dep_ts, label = _best_time(fl, "departure")
+    dep_time = (
+        datetime.fromtimestamp(dep_ts).astimezone(pytz.timezone(tz_name))
+        if dep_ts else None
+    )
+    dep_fn = ((fl.get("identification") or {}).get("number") or {}).get("default")
+    airline = fl.get("airline") or {}
+    airline_name = airline.get("name")
+    airline_code = airline.get("code") or {}
+    airline_iata = airline_code.get("iata")
+    airline_icao = airline_code.get("icao")
+    dest = fl["airport"]["destination"]
+    return dep_time, dep_fn, airline_name, airline_iata, airline_icao, dest.get("name"), dest["code"]["iata"], dest["code"]["icao"], label
+
+
+def get_next_departure(rego_details: Optional[dict], airport_iata: str, tz_name: str) -> tuple:
+    """Find the next outbound flight for this aircraft from the monitored airport.
+
+    Returns (dep_time, dep_fn, airline_name, airline_iata, airline_icao, dest_name, dest_iata, dest_icao, time_label).
+    All values may be None if no upcoming departure is found.
+    """
+    _empty = (None,) * 8 + ("",)
     if not rego_details or not rego_details.get("data"):
-        return None, None, None, None
+        return _empty
 
     for flight in rego_details["data"]:
         try:
             origin_iata = flight["airport"]["origin"]["code"]["iata"]
             already_departed = flight["time"]["real"]["departure"]
             if origin_iata == airport_iata and already_departed is None:
-                scheduled_dep = flight["time"]["scheduled"]["departure"]
-                departure_time = (
-                    datetime.fromtimestamp(scheduled_dep).astimezone(pytz.timezone(tz_name))
-                    if scheduled_dep else None
-                )
-                dest = flight["airport"]["destination"]
-                return departure_time, dest.get("name"), dest["code"]["iata"], dest["code"]["icao"]
+                return _extract_dep_fields(flight, tz_name)
         except (KeyError, TypeError):
             continue
 
-    return None, None, None, None
+    return _empty
+
+
+def _lookup_flight_by_number(rego_details: Optional[dict], flight_number: str, tz_name: str) -> tuple:
+    """Search rego_details for a flight matching flight_number.
+
+    Returns (dep_time, dep_fn, airline_name, airline_iata, airline_icao, dest_name, dest_iata, dest_icao, time_label).
+    """
+    _empty = (None,) * 8 + ("",)
+    if not rego_details or not rego_details.get("data"):
+        return _empty
+    for fl in rego_details["data"]:
+        try:
+            fn = ((fl.get("identification") or {}).get("number") or {}).get("default")
+            if fn != flight_number:
+                continue
+            return _extract_dep_fields(fl, tz_name)
+        except (KeyError, TypeError):
+            continue
+    return _empty
+
+
+def _best_time(flight: dict, kind: str) -> Tuple[Optional[float], str]:
+    """Return (timestamp, label) using the best available time for 'arrival' or 'departure'.
+
+    Priority: real → estimated → scheduled.
+    Returns (None, '') if no time is available.
+    """
+    times = (flight.get("time") or {})
+    for src, label in (("real", "Actual"), ("estimated", "Estimated"), ("scheduled", "Scheduled")):
+        ts = (times.get(src) or {}).get(kind)
+        if isinstance(ts, (int, float)):
+            return ts, label
+    return None, ""
 
 
 def _safe_get(d: dict, *keys, default="N/A"):
@@ -107,6 +154,7 @@ def format_notification(
     airport_lon: float,
     catalog=None,
     cfg_store=None,
+    dep_pattern_threshold: int = 0,
 ) -> str:
     lines = [f"<b>{notification_type}</b>"]
 
@@ -162,28 +210,43 @@ def format_notification(
     lines.append(f"  Period: {get_arrival_period(flight, airport_tz, airport_lat, airport_lon)}")
 
     tz = pytz.timezone(airport_tz)
-    scheduled_arr_ts = _safe_get(flight, "time", "scheduled", "arrival", default=None)
-    estimated_arr_ts = _safe_get(flight, "time", "estimated", "arrival", default=None)
-
-    if isinstance(scheduled_arr_ts, (int, float)):
-        lines.append(f"  Scheduled: {datetime.fromtimestamp(scheduled_arr_ts).astimezone(tz).strftime('%a %H:%M')} (Local)")
+    arr_ts, arr_label = _best_time(flight, "arrival")
+    if arr_ts:
+        lines.append(f"  {arr_label}: {datetime.fromtimestamp(arr_ts).astimezone(tz).strftime('%a %H:%M')} (Local)")
     else:
-        lines.append("  Scheduled: N/A")
-
-    if isinstance(estimated_arr_ts, (int, float)):
-        lines.append(f"  Estimated: {datetime.fromtimestamp(estimated_arr_ts).astimezone(tz).strftime('%a %H:%M')} (Local)")
-    else:
-        lines.append("  Estimated: N/A")
+        lines.append("  Arrival: N/A")
 
     if rego_details:
-        next_dep_time, dest_name, dest_iata, dest_icao = get_next_departure(
+        dep_time, dep_fn, al_name, al_iata, al_icao, dest_name, dest_iata, dest_icao, dep_label = get_next_departure(
             rego_details, airport_iata, airport_tz
         )
-        if next_dep_time:
+        if dep_time:
             lines += ["", "<b>Next Departure:</b>"]
-            lines.append(f"  Est. Dep: {next_dep_time.strftime('%a %H:%M')} (Local)")
+            lines.append(f"  {dep_label}: {dep_time.strftime('%a %H:%M')} (Local) — {dep_fn}")
+            if al_name:
+                lines.append(f"  Airline: {al_name} ({al_iata}/{al_icao})")
             if dest_name:
                 lines.append(f"  To: {dest_name} ({dest_iata}/{dest_icao})")
+        elif cfg_store is not None and dep_pattern_threshold > 0:
+            arrival_fn = str(_safe_get(flight, "identification", "number", "default", default=""))
+            if arrival_fn and arrival_fn != "N/A":
+                predicted = cfg_store.get_predicted_departure(
+                    arrival_fn, airport_iata, dep_pattern_threshold
+                )
+                if predicted:
+                    pred_fn, confidence, _, _ = predicted
+                    dep_time, dep_fn, al_name, al_iata, al_icao, dest_name, dest_iata, dest_icao, dep_label = _lookup_flight_by_number(
+                        rego_details, pred_fn, airport_tz
+                    )
+                    lines += ["", "<b>Next Departure:</b>"]
+                    if dep_time:
+                        lines.append(f"  Predicted: {dep_time.strftime('%a %H:%M')} (Local) — {dep_fn} — {confidence:.0f}% confidence")
+                    else:
+                        lines.append(f"  Predicted: {pred_fn} — {confidence:.0f}% confidence")
+                    if al_name:
+                        lines.append(f"  Airline: {al_name} ({al_iata}/{al_icao})")
+                    if dest_name:
+                        lines.append(f"  To: {dest_name} ({dest_iata}/{dest_icao})")
 
     flight_id  = _safe_get(flight, "identification", "id", default=None)
     flight_num = _safe_get(flight, "identification", "number", "default", default=None)
@@ -502,6 +565,7 @@ async def run_check(context: ContextTypes.DEFAULT_TYPE) -> None:
             cfg.store.bulk_update_sightings(landed)
 
         # Pass 2: run filters and send notifications
+        import asyncio
         for arriving_flight in all_arriving_flights:
             match = _first_matching_filter(arriving_flight, cfg)
             if match is None:
@@ -510,6 +574,7 @@ async def run_check(context: ContextTypes.DEFAULT_TYPE) -> None:
             await _send_notification(
                 context, cfg, chat_id, flight, registration, notification_type, on_notified
             )
+            await asyncio.sleep(1)  # avoid Telegram rate limits when sending many at once
 
     except Exception as exc:
         log.error("Unexpected error in run_check: %s", exc, exc_info=True)
@@ -546,16 +611,28 @@ async def _send_notification(
         cfg.airport_iata, cfg.airport_tz, cfg.airport_lat, cfg.airport_lon,
         catalog=cfg.catalog,
         cfg_store=cfg.store,
+        dep_pattern_threshold=cfg.departure_pattern_threshold,
     )
+
+    # Record departure pattern for future predictions
+    arrival_fn = str(_safe_get(flight, "identification", "number", "default", default=""))
+    if arrival_fn and arrival_fn != "N/A" and rego_details:
+        _, dep_fn, *_ = get_next_departure(rego_details, cfg.airport_iata, cfg.airport_tz)
+        if dep_fn:
+            cfg.store.record_departure_pattern(arrival_fn, dep_fn, cfg.airport_iata, now_ts)
 
     now_ts = int(datetime.now().timestamp())
     try:
         if photo_url:
-            await context.bot.send_photo(
-                chat_id=chat_id,
-                photo=photo_url,
-                caption=f"Aircraft Photo: {registration}",
-            )
+            try:
+                await context.bot.send_photo(
+                    chat_id=chat_id,
+                    photo=photo_url,
+                    caption=f"Aircraft Photo: {registration}",
+                )
+            except Exception as exc:
+                log.warning("Could not send photo for %s: %s", registration, exc)
+
         await context.bot.send_message(chat_id=chat_id, text=message, parse_mode="HTML")
 
         # Write DB records only after confirmed Telegram delivery
@@ -655,11 +732,8 @@ async def _send_arrival_reminder(
     notification_type: str,
 ) -> None:
     now_ts = int(datetime.now().timestamp())
-    arrival_ts = int(
-        _safe_get(flight, "time", "estimated", "arrival", default=None)
-        or _safe_get(flight, "time", "scheduled", "arrival", default=None)
-        or 0
-    )
+    arr_ts, arr_label = _best_time(flight, "arrival")
+    arrival_ts = int(arr_ts) if arr_ts else 0
     hours_away = round((arrival_ts - now_ts) / _HOURS, 1) if arrival_ts else "?"
     tz = pytz.timezone(cfg.airport_tz)
     arrival_str = (
@@ -675,7 +749,7 @@ async def _send_arrival_reminder(
         f"  Aircraft: {_safe_get(aircraft, 'model', 'text')} ({_safe_get(aircraft, 'model', 'code')})",
         f"  Registration: {registration}",
         f"  Airline: {airline_name}",
-        f"  Arriving: {arrival_str} (Local) — in ~{hours_away}h",
+        f"  {arr_label}: {arrival_str} (Local) — in ~{hours_away}h",
     ]
     flight_id = _safe_get(flight, "identification", "id", default=None)
     if flight_id and flight_id != "N/A":

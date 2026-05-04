@@ -147,7 +147,7 @@ async def handle_summary_period(update: Update, context: ContextTypes.DEFAULT_TY
             if data:
                 aircraft_code = ((data[0].get("aircraft") or {}).get("model") or {}).get("code") or ""
                 airline_name  = (data[0].get("airline") or {}).get("name") or ""
-            dep_time, _, dest_iata, _ = get_next_departure(
+            dep_time, _, _, _, _, _, dest_iata, _, _ = get_next_departure(
                 rego_details, cfg.airport_iata, cfg.airport_tz
             )
             if dep_time:
