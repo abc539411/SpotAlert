@@ -170,6 +170,10 @@ async def check_rolling_recommendation(context: ContextTypes.DEFAULT_TYPE, cfg, 
     evals = _evaluate_rolling_flights(cfg, window_start, window_end, sunrise_ts, sunset_ts)
     interesting = [e for e in evals if e.qualifying]
     filtered    = [e for e in evals if not e.qualifying]
+    _populate_departures(interesting, cfg)
+    # Set session_ts for display (use dep_ts if available, else arr_ts)
+    for e in interesting:
+        e.session_ts = e.dep_ts if e.dep_ts else e.arrival_ts
 
     if len(interesting) < cfg.spot_rec_threshold:
         return
@@ -238,14 +242,10 @@ async def run_eod_recommendation(context: ContextTypes.DEFAULT_TYPE) -> None:
     if not qualifying:
         return
 
-    # Slide a session_hours window to find peak concentration
+    _populate_departures(qualifying, cfg)
+
     session_secs = cfg.spot_rec_session_hours * 3600
-    best_qualifying, best_start = [], None
-    for e in qualifying:
-        in_win = [q for q in qualifying if e.arrival_ts <= q.arrival_ts <= e.arrival_ts + session_secs]
-        if len(in_win) > len(best_qualifying):
-            best_qualifying = in_win
-            best_start = e.arrival_ts
+    best_qualifying = _best_session_window(qualifying, session_secs)
 
     if len(best_qualifying) < cfg.spot_rec_threshold:
         return
@@ -255,16 +255,21 @@ async def run_eod_recommendation(context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     # Filtered flights within the best window
-    best_filtered = [e for e in filtered if best_start and best_start <= e.arrival_ts <= best_start + session_secs]
+    best_start = min(e.session_ts for e in best_qualifying)
+    best_end   = best_start + session_secs
+    best_filtered = [e for e in filtered
+                     if best_start <= e.arrival_ts <= best_end
+                     or (e.dep_ts and best_start <= e.dep_ts <= best_end)]
 
-    first_str = datetime.fromtimestamp(best_qualifying[0].arrival_ts).astimezone(tz).strftime("%H:%M")
-    last_str  = datetime.fromtimestamp(best_qualifying[-1].arrival_ts).astimezone(tz).strftime("%H:%M")
+    first_str = datetime.fromtimestamp(min(e.session_ts for e in best_qualifying)).astimezone(tz).strftime("%H:%M")
+    last_str  = datetime.fromtimestamp(max(e.session_ts for e in best_qualifying)).astimezone(tz).strftime("%H:%M")
     window_str = first_str if first_str == last_str else f"{first_str} – {last_str}"
     day_str = tomorrow.strftime("%A %-d %b")
+    n = len(best_qualifying)
 
     lines = [
         f"<b>Spotting recommendation for {day_str}</b>",
-        f"Best window: {window_str} ({len(best_qualifying)} interesting arrival{'s' if len(best_qualifying) != 1 else ''})",
+        f"Best window: {window_str} ({n} interesting flight{'s' if n != 1 else ''})",
         "",
     ]
     for e in best_qualifying:
@@ -310,6 +315,11 @@ class FlightEval:
     reason: str            # why filtered out, if not qualifying
     detail: str = ""       # "Airline (Type)" for all types
     livery: str = ""       # livery name for Special Livery only
+    flight_number: str = ""          # arrival flight number (for departure lookup)
+    dep_fn: Optional[str] = None     # predicted departure flight number
+    dep_ts: Optional[int] = None     # departure timestamp
+    dep_time_label: str = ""         # "Predicted", "Scheduled", "Estimated"
+    session_ts: Optional[int] = None # time used for Scenario B window optimisation
 
 
 def _get_airline_detail(cfg, registration: str) -> str:
@@ -341,6 +351,82 @@ def _airline_detail_from_flight(flight_data: dict) -> str:
     return clean_airline or aircraft_code
 
 
+def _lookup_departure_for_flight(cfg, arrival_fn: str) -> Tuple[Optional[str], Optional[int], str]:
+    """Look up departure info for an arrival flight number from DB.
+    Returns (dep_fn, dep_ts, dep_time_label) or (None, None, '').
+    """
+    if not arrival_fn:
+        return None, None, ""
+    predicted = cfg.store.get_predicted_departure(arrival_fn, cfg.airport_iata, cfg.departure_pattern_threshold)
+    if not predicted:
+        return None, None, ""
+    dep_fn, _, _, _ = predicted
+    dep_info = cfg.store.get_predicted_dep_info(dep_fn, cfg.airport_iata)
+    dep_ts = dep_info.get("scheduled_dep_ts") if dep_info else None
+    return dep_fn, dep_ts, "Predicted"
+
+
+def _populate_departures(flights: List["FlightEval"], cfg) -> None:
+    """Populate dep_fn, dep_ts, dep_time_label on each FlightEval in-place."""
+    for e in flights:
+        if not e.flight_number:
+            continue
+        dep_fn, dep_ts, dep_label = _lookup_departure_for_flight(cfg, e.flight_number)
+        if dep_fn:
+            e.dep_fn = dep_fn
+            e.dep_ts = dep_ts
+            e.dep_time_label = dep_label
+
+
+def _best_session_window(qualifying: List["FlightEval"], session_secs: int) -> List["FlightEval"]:
+    """Find the session window maximising qualifying aircraft count.
+
+    Each aircraft contributes arr_ts and dep_ts (if available) as candidate window starts.
+    Tiebreaker: minimise span (last session_ts - first session_ts) in window.
+    Per aircraft: if both times fall in window, prefer arrival (minimises window span).
+    """
+    if not qualifying:
+        return []
+
+    candidates: set = set()
+    for e in qualifying:
+        candidates.add(e.arrival_ts)
+        if e.dep_ts:
+            candidates.add(e.dep_ts)
+
+    best_flights: List["FlightEval"] = []
+    best_times: List[int] = []
+    best_span = float("inf")
+
+    for ws in sorted(candidates):
+        we = ws + session_secs
+        in_window: List["FlightEval"] = []
+        session_times: List[int] = []
+        for e in qualifying:
+            arr_in = ws <= e.arrival_ts <= we
+            dep_in = bool(e.dep_ts and ws <= e.dep_ts <= we)
+            if arr_in or dep_in:
+                in_window.append(e)
+                session_times.append(e.arrival_ts if arr_in else e.dep_ts)
+
+        if not in_window:
+            continue
+
+        span = max(session_times) - min(session_times) if len(session_times) > 1 else 0
+        if len(in_window) > len(best_flights) or (
+            len(in_window) == len(best_flights) and span < best_span
+        ):
+            best_flights = in_window
+            best_times = session_times
+            best_span = span
+
+    # Assign session_ts to the winners
+    for e, st in zip(best_flights, best_times):
+        e.session_ts = st
+
+    return best_flights
+
+
 def _evaluate_rolling_flights(cfg, window_start: int, window_end: int,
                                sunrise_ts: int, sunset_ts: int,
                                current_arrivals: dict = None,
@@ -361,6 +447,7 @@ def _evaluate_rolling_flights(cfg, window_start: int, window_end: int,
         registration = record["registration"]
         notif_type = record["notif_type"] or "Interesting"
         extra_info = record["extra_info"] or ""
+        flight_number = record["flight_number"] or ""
         arr_str = datetime.fromtimestamp(arrival_ts).astimezone(tz).strftime("%H:%M")
         detail = _get_airline_detail(cfg, registration)
         livery = extra_info if notif_type == "Special Livery" else ""
@@ -372,25 +459,25 @@ def _evaluate_rolling_flights(cfg, window_start: int, window_end: int,
                 new_rego, _ = arrivals_by_fn[flight_number]
                 if new_rego != registration:
                     results.append(FlightEval(arrival_ts, registration, notif_type, False,
-                                              f"aircraft changed to {new_rego}", detail, livery))
+                                              f"aircraft changed to {new_rego}", detail, livery, flight_number))
                     continue
             results.append(FlightEval(arrival_ts, registration, notif_type, False,
-                                      "cancelled or diverted", detail, livery))
+                                      "cancelled or diverted", detail, livery, flight_number))
             continue
 
         if cfg.spot_rec_lighting_gate and not _passes_lighting_gate(arrival_ts, sunrise_ts, sunset_ts):
             results.append(FlightEval(arrival_ts, registration, notif_type, False,
-                                      f"arrives after sunset ({arr_str})", detail, livery))
+                                      f"arrives after sunset ({arr_str})", detail, livery, flight_number))
             continue
 
         if cfg.spot_rec_max_spotted_times > 0 and cfg.catalog:
             count = cfg.catalog.get_session_count_at_airport(registration, cfg.airport_iata)
             if count >= cfg.spot_rec_max_spotted_times:
                 results.append(FlightEval(arrival_ts, registration, notif_type, False,
-                                          f"photographed {count} times at {cfg.airport_iata}", detail, livery))
+                                          f"photographed {count} times at {cfg.airport_iata}", detail, livery, flight_number))
                 continue
 
-        results.append(FlightEval(arrival_ts, registration, notif_type, True, "", detail, livery))
+        results.append(FlightEval(arrival_ts, registration, notif_type, True, "", detail, livery, flight_number))
 
     return sorted(results, key=lambda x: x.arrival_ts)
 
@@ -423,12 +510,13 @@ def _evaluate_eod_flights(cfg, tomorrow, sunrise_ts: int, sunset_ts: int) -> Lis
                 continue
 
             arr_str = datetime.fromtimestamp(arrival_ts).astimezone(tz).strftime("%H:%M")
+            flight_data = arriving_flight.get("flight") or {}
+            flight_number = _safe_get(flight_data, "identification", "number", "default", default="") or ""
 
             # Exclusion list
             if cfg.store.is_excluded(registration):
-                flight_data = arriving_flight.get("flight") or {}
                 detail = _airline_detail_from_flight(flight_data)
-                results.append(FlightEval(int(arrival_ts), registration, "", False, "on exclusion list", detail))
+                results.append(FlightEval(int(arrival_ts), registration, "", False, "on exclusion list", detail, "", flight_number))
                 continue
 
             # Not interesting by any filter — skip silently
@@ -437,7 +525,6 @@ def _evaluate_eod_flights(cfg, tomorrow, sunrise_ts: int, sunset_ts: int) -> Lis
                 continue
 
             # Extract detail from flight data — no extra API call needed
-            flight_data = arriving_flight.get("flight") or {}
             detail = _airline_detail_from_flight(flight_data)
             if label == "Special Livery":
                 import re as _re
@@ -450,7 +537,7 @@ def _evaluate_eod_flights(cfg, tomorrow, sunrise_ts: int, sunset_ts: int) -> Lis
             # Lighting gate
             if cfg.spot_rec_lighting_gate and not _passes_lighting_gate(int(arrival_ts), sunrise_ts, sunset_ts):
                 results.append(FlightEval(int(arrival_ts), registration, label, False,
-                                          f"arrives after sunset ({arr_str})", detail, livery))
+                                          f"arrives after sunset ({arr_str})", detail, livery, flight_number))
                 continue
 
             # Max spotted
@@ -458,24 +545,45 @@ def _evaluate_eod_flights(cfg, tomorrow, sunrise_ts: int, sunset_ts: int) -> Lis
                 count = cfg.catalog.get_session_count_at_airport(registration, cfg.airport_iata)
                 if count >= cfg.spot_rec_max_spotted_times:
                     results.append(FlightEval(int(arrival_ts), registration, label, False,
-                                              f"photographed {count} times at {cfg.airport_iata}", detail, livery))
+                                              f"photographed {count} times at {cfg.airport_iata}", detail, livery, flight_number))
                     continue
 
-            results.append(FlightEval(int(arrival_ts), registration, label, True, "", detail, livery))
+            results.append(FlightEval(int(arrival_ts), registration, label, True, "", detail, livery, flight_number))
 
     return sorted(results, key=lambda x: x.arrival_ts)
 
 
-def _flight_line(f: "FlightEval", tz, include_reason: bool = False) -> str:
-    """Format a flight entry: type (livery if special) — airline (type) — arr HH:MM."""
-    arr = datetime.fromtimestamp(f.arrival_ts).astimezone(tz).strftime("%H:%M")
+def _flight_line(f: "FlightEval", tz, include_reason: bool = False,
+                 scenario_a: bool = False, now_ts: int = 0) -> str:
+    """Format a flight entry for display.
+
+    Scenario A (manual): show arr and/or dep times; hide arrival if already passed.
+    Scenario B (automatic): show whichever session_ts was chosen (arr or dep).
+    """
     if f.livery:
         type_str = f"{f.notif_type} ({f.livery})"
     else:
         type_str = f.notif_type or ""
     detail_str = f" — {f.detail}" if f.detail else ""
     reason_str = f" — {f.reason}" if include_reason and f.reason else ""
-    return f"  • {f.registration} — {type_str}{detail_str}{reason_str} — arr {arr}"
+
+    if scenario_a:
+        arr_passed = now_ts > 0 and f.arrival_ts < now_ts
+        times = []
+        if not arr_passed:
+            arr = datetime.fromtimestamp(f.arrival_ts).astimezone(tz).strftime("%H:%M")
+            times.append(f"arr {arr}")
+        if f.dep_ts:
+            dep = datetime.fromtimestamp(f.dep_ts).astimezone(tz).strftime("%H:%M")
+            times.append(f"dep {dep} ({f.dep_time_label})")
+        time_str = " / ".join(times) if times else "—"
+    else:
+        ts = f.session_ts if f.session_ts is not None else f.arrival_ts
+        t = datetime.fromtimestamp(ts).astimezone(tz).strftime("%H:%M")
+        label = "dep" if (f.dep_ts and f.session_ts == f.dep_ts and f.session_ts != f.arrival_ts) else "arr"
+        time_str = f"{label} {t}"
+
+    return f"  • {f.registration} — {type_str}{detail_str}{reason_str} — {time_str}"
 
 
 def _build_detail_message(
@@ -489,51 +597,84 @@ def _build_detail_message(
     sunrise_ts: int = 0,
     sunset_ts: int = 0,
     show_verdict: bool = True,
+    scenario_a: bool = False,
+    now_ts: int = 0,
 ) -> str:
-    """Build the detailed manual check message, tightening window to first→last arrival."""
+    """Build the detail message for a spot check.
+
+    scenario_a=True: Scenario A (manual /spot) — show both arr and dep times per aircraft.
+    scenario_a=False: Scenario B (automatic) — show whichever session_ts was chosen.
+    """
     severe_weather = weather_gate and weather and weather.is_severe
 
-    # Tighten window to first → last qualifying arrival
+    # Window string — use session_ts for Scenario B, all event times for Scenario A
     if qualifying:
-        first_str = datetime.fromtimestamp(qualifying[0].arrival_ts).astimezone(tz).strftime("%H:%M")
-        last_str  = datetime.fromtimestamp(qualifying[-1].arrival_ts).astimezone(tz).strftime("%H:%M")
-        window_str = first_str if first_str == last_str else f"{first_str} – {last_str}"
+        if scenario_a:
+            all_times = []
+            for e in qualifying:
+                if not (now_ts > 0 and e.arrival_ts < now_ts):
+                    all_times.append(e.arrival_ts)
+                if e.dep_ts:
+                    all_times.append(e.dep_ts)
+            if all_times:
+                first_str = datetime.fromtimestamp(min(all_times)).astimezone(tz).strftime("%H:%M")
+                last_str  = datetime.fromtimestamp(max(all_times)).astimezone(tz).strftime("%H:%M")
+                window_str = first_str if first_str == last_str else f"{first_str} – {last_str}"
+            else:
+                window_str = None
+        else:
+            times = [e.session_ts if e.session_ts is not None else e.arrival_ts for e in qualifying]
+            first_str = datetime.fromtimestamp(min(times)).astimezone(tz).strftime("%H:%M")
+            last_str  = datetime.fromtimestamp(max(times)).astimezone(tz).strftime("%H:%M")
+            window_str = first_str if first_str == last_str else f"{first_str} – {last_str}"
     else:
         window_str = None
+
+    flight_word = "flight" if scenario_a else "arrival"
+    flight_word_pl = "flights" if scenario_a else "arrivals"
 
     # Verdict (only for Best Time to Go)
     if show_verdict:
         if severe_weather:
             verdict = f"Not recommended — severe weather ({weather})"
         elif len(qualifying) >= threshold:
-            verdict = f"Recommended — {len(qualifying)} qualifying arrival{'s' if len(qualifying) != 1 else ''}"
+            verdict = f"Recommended — {len(qualifying)} qualifying {flight_word if len(qualifying) == 1 else flight_word_pl}"
         else:
-            verdict = f"Not recommended — {len(qualifying)} qualifying arrival{'s' if len(qualifying) != 1 else ''} (need {threshold})"
+            verdict = f"Not recommended — {len(qualifying)} qualifying {flight_word if len(qualifying) == 1 else flight_word_pl} (need {threshold})"
         lines = [f"<b>{header}</b>", verdict]
     else:
-        count_str = f"{len(qualifying)} interesting arrival{'s' if len(qualifying) != 1 else ''}"
+        count_str = f"{len(qualifying)} interesting {flight_word if len(qualifying) == 1 else flight_word_pl}"
         lines = [f"<b>{header}</b>", count_str]
     if window_str:
         lines.append(f"Window: {window_str}")
     lines.append("")
 
     if not qualifying and not filtered:
-        lines.append("  No interesting arrivals in this window.")
+        lines.append(f"  No interesting {flight_word_pl} in this window.")
     else:
-        # Qualifying section
-        if qualifying:
-            section = "Would have qualified:" if severe_weather else f"Qualifying ({len(qualifying)}):"
+        # Qualifying section — filter out scenario_a flights where arrival passed and no dep
+        shown_qualifying = qualifying
+        if scenario_a and now_ts > 0:
+            shown_qualifying = [e for e in qualifying
+                                if e.arrival_ts >= now_ts or e.dep_ts is not None]
+
+        if show_verdict:
+            section = "Would have qualified:" if severe_weather else f"Qualifying ({len(shown_qualifying)}):"
+        else:
+            section = f"Qualifying ({len(shown_qualifying)}):" if shown_qualifying else None
+
+        if shown_qualifying and section:
             lines.append(section)
-            for f in qualifying:
-                lines.append(_flight_line(f, tz))
+            for e in shown_qualifying:
+                lines.append(_flight_line(e, tz, scenario_a=scenario_a, now_ts=now_ts))
 
         # Filtered section
         if filtered:
-            if qualifying:
+            if shown_qualifying:
                 lines.append("")
             lines.append(f"Filtered out ({len(filtered)}):")
-            for f in filtered:
-                lines.append(_flight_line(f, tz, include_reason=True))
+            for e in filtered:
+                lines.append(_flight_line(e, tz, include_reason=True, scenario_a=scenario_a, now_ts=now_ts))
 
     lines.append("")
     lines.append(f"Weather: {weather}" if weather else "Weather: unavailable")
@@ -594,11 +735,13 @@ async def _run_spot_check(send_fn, context: ContextTypes.DEFAULT_TYPE,
         evals      = _evaluate_rolling_flights(cfg, window_start, window_end, sunrise_ts, sunset_ts)
         qualifying = [e for e in evals if e.qualifying]
         filtered   = [e for e in evals if not e.qualifying]
+        _populate_departures(qualifying + filtered, cfg)
         weather    = get_current_weather(cfg.airport_lat, cfg.airport_lon, cfg.airport_tz)
         header     = f"Spot check — Today ({_PERIOD_LABELS[period]})"
         msg = _build_detail_message(qualifying, filtered, cfg.spot_rec_threshold,
                                     weather, cfg.spot_rec_weather_gate,
-                                    header, tz, sunrise_ts, sunset_ts, show_verdict=show_verdict)
+                                    header, tz, sunrise_ts, sunset_ts, show_verdict=show_verdict,
+                                    scenario_a=True, now_ts=now_ts)
 
     else:  # tomorrow
         await send_fn("Fetching tomorrow's arrivals...")
@@ -633,11 +776,13 @@ async def _run_spot_check(send_fn, context: ContextTypes.DEFAULT_TYPE,
             qualifying = [e for e in all_qualifying if ws <= e.arrival_ts <= we]
             filtered   = [e for e in all_filtered   if ws <= e.arrival_ts <= we]
 
+        _populate_departures(qualifying + filtered, cfg)
         weather = get_forecast_weather(cfg.airport_lat, cfg.airport_lon, cfg.airport_tz, day_offset=1)
         header  = f"Spot check — {tomorrow.strftime('%A %-d %b')} ({_PERIOD_LABELS[period]})"
         msg = _build_detail_message(qualifying, filtered, cfg.spot_rec_threshold,
                                     weather, cfg.spot_rec_weather_gate,
-                                    header, tz, sunrise_ts, sunset_ts, show_verdict=show_verdict)
+                                    header, tz, sunrise_ts, sunset_ts, show_verdict=show_verdict,
+                                    scenario_a=True, now_ts=int(now.timestamp()))
 
     await send_fn(msg, parse_mode="HTML")
 
