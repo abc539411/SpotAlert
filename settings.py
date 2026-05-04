@@ -705,8 +705,81 @@ async def handle_enter_value(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return SUMMARY_SUBMENU
 
     # ----------------------------------------------------------------
+    # Military settings
+    # ----------------------------------------------------------------
+    if field == "Check Interval" and category == "Military":
+        try:
+            minutes = int(raw)
+            if not 1 <= minutes <= 60:
+                raise ValueError
+        except ValueError:
+            await update.message.reply_text("Please enter a whole number between 1 and 60.")
+            return ENTER_VALUE
+        cfg.military_check_interval = minutes * 60
+        store.save_setting("MILITARY_CHECK_INTERVAL_MINUTES", str(minutes))
+        for job in context.application.job_queue.get_jobs_by_name("military_check"):
+            job.schedule_removal()
+        context.application.job_queue.run_repeating(
+            check_military, interval=cfg.military_check_interval, first=0,
+            name="military_check",
+        )
+        await update.message.reply_html(
+            f"Updated.\n\n{_military_detail(cfg)}", reply_markup=_MILITARY_KB
+        )
+        return MILITARY_SUBMENU
+
+    if field == "Search Radius":
+        try:
+            value = int(raw)
+            if not 1 <= value <= 250:
+                raise ValueError
+        except ValueError:
+            await update.message.reply_text("Please enter a whole number between 1 and 250.")
+            return ENTER_VALUE
+        cfg.military_radius_nm = value
+        store.save_setting("MILITARY_RADIUS_NM", str(value))
+        await update.message.reply_html(
+            f"Updated.\n\n{_military_detail(cfg)}", reply_markup=_MILITARY_KB
+        )
+        return MILITARY_SUBMENU
+
+    if field == "Max Altitude":
+        try:
+            value = int(raw)
+            if value < 100:
+                raise ValueError
+        except ValueError:
+            await update.message.reply_text("Please enter a positive altitude in feet (minimum 100).")
+            return ENTER_VALUE
+        cfg.military_max_alt_ft = value
+        store.save_setting("MILITARY_MAX_ALT_FT", str(value))
+        await update.message.reply_html(
+            f"Updated.\n\n{_military_detail(cfg)}", reply_markup=_MILITARY_KB
+        )
+        return MILITARY_SUBMENU
+
+    if field == "Re-notify Interval" and category == "Military":
+        try:
+            value = int(raw)
+            if value < 1:
+                raise ValueError
+        except ValueError:
+            await update.message.reply_text("Please enter a positive whole number.")
+            return ENTER_VALUE
+        cfg.military_renotify_hours = value
+        store.save_setting("MILITARY_RENOTIFY_HOURS", str(value))
+        await update.message.reply_html(
+            f"Updated.\n\n{_military_detail(cfg)}", reply_markup=_MILITARY_KB
+        )
+        return MILITARY_SUBMENU
+
+    # ----------------------------------------------------------------
     # Filter settings
     # ----------------------------------------------------------------
+    if category not in _FILTER_META:
+        await update.message.reply_text("Please choose from the keyboard.")
+        return CATEGORY_SELECT
+
     m = _FILTER_META[category]
 
     if field in {"Re-notify Interval", "Min Absence"}:
@@ -766,75 +839,6 @@ async def handle_enter_value(update: Update, context: ContextTypes.DEFAULT_TYPE)
             f"Updated.\n\n{_filter_detail(cfg, category)}", reply_markup=kb
         )
         return FILTER_SUBMENU
-
-    # ----------------------------------------------------------------
-    # Military settings
-    # ----------------------------------------------------------------
-    if field == "Check Interval" and context.user_data.get("settings_category") == "Military":
-        try:
-            minutes = int(raw)
-            if not 1 <= minutes <= 60:
-                raise ValueError
-        except ValueError:
-            await update.message.reply_text("Please enter a whole number between 1 and 60.")
-            return ENTER_VALUE
-        cfg.military_check_interval = minutes * 60
-        store.save_setting("MILITARY_CHECK_INTERVAL_MINUTES", str(minutes))
-        for job in context.application.job_queue.get_jobs_by_name("military_check"):
-            job.schedule_removal()
-        context.application.job_queue.run_repeating(
-            check_military, interval=cfg.military_check_interval, first=0,
-            name="military_check",
-        )
-        await update.message.reply_html(
-            f"Updated.\n\n{_military_detail(cfg)}", reply_markup=_MILITARY_KB
-        )
-        return MILITARY_SUBMENU
-
-    if field == "Search Radius":
-        try:
-            value = int(raw)
-            if not 1 <= value <= 250:
-                raise ValueError
-        except ValueError:
-            await update.message.reply_text("Please enter a whole number between 1 and 250.")
-            return ENTER_VALUE
-        cfg.military_radius_nm = value
-        store.save_setting("MILITARY_RADIUS_NM", str(value))
-        await update.message.reply_html(
-            f"Updated.\n\n{_military_detail(cfg)}", reply_markup=_MILITARY_KB
-        )
-        return MILITARY_SUBMENU
-
-    if field == "Max Altitude":
-        try:
-            value = int(raw)
-            if value < 100:
-                raise ValueError
-        except ValueError:
-            await update.message.reply_text("Please enter a positive altitude in feet (minimum 100).")
-            return ENTER_VALUE
-        cfg.military_max_alt_ft = value
-        store.save_setting("MILITARY_MAX_ALT_FT", str(value))
-        await update.message.reply_html(
-            f"Updated.\n\n{_military_detail(cfg)}", reply_markup=_MILITARY_KB
-        )
-        return MILITARY_SUBMENU
-
-    if field == "Re-notify Interval":
-        try:
-            value = int(raw)
-            if value < 1:
-                raise ValueError
-        except ValueError:
-            await update.message.reply_text("Please enter a positive whole number.")
-            return ENTER_VALUE
-        cfg.military_renotify_hours = value
-        store.save_setting("MILITARY_RENOTIFY_HOURS", str(value))
-        await update.message.reply_html(
-            f"Updated.\n\n{_military_detail(cfg)}", reply_markup=_MILITARY_KB
-        )
-        return MILITARY_SUBMENU
 
     # Should never reach here
     return ConversationHandler.END
