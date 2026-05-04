@@ -113,9 +113,13 @@ class SqliteStore:
                     first_notified_ts INTEGER NOT NULL,
                     reminder_sent     INTEGER NOT NULL DEFAULT 0,
                     last_seen_ts      INTEGER NOT NULL,
-                    extra_info        TEXT DEFAULT ''
+                    extra_info        TEXT DEFAULT '',
+                    detail            TEXT DEFAULT ''
                 )
             """)
+            nr_cols = {row[1] for row in conn.execute("PRAGMA table_info(notification_record)").fetchall()}
+            if "detail" not in nr_cols:
+                conn.execute("ALTER TABLE notification_record ADD COLUMN detail TEXT DEFAULT ''")
 
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS military_history (
@@ -562,6 +566,7 @@ class SqliteStore:
         first_notified_ts: int,
         now_ts: int,
         extra_info: str = "",
+        detail: str = "",
     ) -> None:
         with self._connect() as conn:
             conn.execute(
@@ -569,11 +574,11 @@ class SqliteStore:
                 INSERT OR REPLACE INTO notification_record
                   (registration, flight_number, notif_type,
                    original_arr_ts, arrival_ts, first_notified_ts,
-                   reminder_sent, last_seen_ts, extra_info)
-                VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)
+                   reminder_sent, last_seen_ts, extra_info, detail)
+                VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
                 """,
                 (registration.strip(), flight_number, notif_type,
-                 arrival_ts, arrival_ts, first_notified_ts, now_ts, extra_info),
+                 arrival_ts, arrival_ts, first_notified_ts, now_ts, extra_info, detail),
             )
 
     def get_tracked_flights(self) -> List[sqlite3.Row]:
