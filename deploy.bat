@@ -24,6 +24,7 @@ for %%F in (
     stats.py
     spot_recommendation.py
     weather.py
+    backfill.py
 ) do (
     echo   Copying %%F...
     %PSCP% -pw %PASSWORD% -hostkey "%HOSTKEY%" "%SRC%%%F" "%HOST%:%DEST%/%%F" >nul 2>&1
@@ -31,6 +32,12 @@ for %%F in (
 
 echo   Copying storage\store.py...
 %PSCP% -pw %PASSWORD% -hostkey "%HOSTKEY%" "%SRC%storage\store.py" "%HOST%:%DEST%/storage/store.py" >nul 2>&1
+
+echo   Copying flightradar24api\api.py...
+%PSCP% -pw %PASSWORD% -hostkey "%HOSTKEY%" "%SRC%flightradar24api\api.py" "%HOST%:%DEST%/flightradar24api/api.py" >nul 2>&1
+
+echo   Copying flightradar24api\request.py...
+%PSCP% -pw %PASSWORD% -hostkey "%HOSTKEY%" "%SRC%flightradar24api\request.py" "%HOST%:%DEST%/flightradar24api/request.py" >nul 2>&1
 
 echo.
 echo Restarting service...
