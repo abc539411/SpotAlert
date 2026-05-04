@@ -251,22 +251,45 @@ def format_notification(
                 )
                 if predicted:
                     pred_fn, confidence, _, _ = predicted
-                    # Step 1: look up scheduled time from our own DB
-                    sched_ts = cfg_store.get_dep_scheduled_time(pred_fn, airport_iata)
-                    # Step 2: if DB has nothing, call FR24 by flight number
-                    if sched_ts is None and fr_api is not None:
+                    # Step 1: all details from our own DB
+                    dep_info = cfg_store.get_predicted_dep_info(pred_fn, airport_iata)
+                    sched_ts  = dep_info.get("scheduled_dep_ts") if dep_info else None
+                    al_name   = dep_info.get("airline_name")     if dep_info else None
+                    al_iata   = dep_info.get("airline_iata")     if dep_info else None
+                    al_icao   = dep_info.get("airline_icao")     if dep_info else None
+                    dest_name = dep_info.get("dest_name")        if dep_info else None
+                    dest_iata = dep_info.get("dest_iata")        if dep_info else None
+                    dest_icao = dep_info.get("dest_icao")        if dep_info else None
+                    # Step 2: fill any missing fields from FR24 by flight number
+                    if fr_api is not None and (sched_ts is None or not al_name or not dest_name):
                         try:
                             fl_data = fr_api.get_flight_by_number(pred_fn)
-                            sched_ts = _get_scheduled_dep_ts(fl_data, airport_iata, pred_fn)
+                            if sched_ts is None:
+                                sched_ts = _get_scheduled_dep_ts(fl_data, airport_iata, pred_fn)
+                            if not al_name or not dest_name:
+                                _, _, al_name2, al_iata2, al_icao2, dest_name2, dest_iata2, dest_icao2, _ = _lookup_flight_by_number(
+                                    fl_data, pred_fn, airport_tz
+                                )
+                                al_name   = al_name   or al_name2
+                                al_iata   = al_iata   or al_iata2
+                                al_icao   = al_icao   or al_icao2
+                                dest_name = dest_name or dest_name2
+                                dest_iata = dest_iata or dest_iata2
+                                dest_icao = dest_icao or dest_icao2
                         except Exception:
                             pass
                     tz = pytz.timezone(airport_tz)
                     lines += ["", "<b>Next Departure:</b>"]
                     if sched_ts:
                         dep_time = datetime.fromtimestamp(sched_ts).astimezone(tz)
-                        lines.append(f"  Predicted: {dep_time.strftime('%a %H:%M')} (Local) — {pred_fn} — {confidence:.0f}% confidence")
+                        lines.append(f"  Predicted: {dep_time.strftime('%a %H:%M')} (Local) — {pred_fn}")
                     else:
-                        lines.append(f"  Predicted: {pred_fn} — {confidence:.0f}% confidence")
+                        lines.append(f"  Predicted: {pred_fn}")
+                    if al_name:
+                        lines.append(f"  Airline: {al_name} ({al_iata}/{al_icao})")
+                    if dest_name:
+                        lines.append(f"  To: {dest_name} ({dest_iata}/{dest_icao})")
+                    lines.append(f"  Confidence: {confidence:.0f}%")
 
     flight_id  = _safe_get(flight, "identification", "id", default=None)
     flight_num = _safe_get(flight, "identification", "number", "default", default=None)
@@ -640,10 +663,17 @@ async def _send_notification(
     # Record departure pattern for future predictions
     arrival_fn = str(_safe_get(flight, "identification", "number", "default", default=""))
     if arrival_fn and arrival_fn != "N/A" and rego_details:
-        _, dep_fn, *_ = get_next_departure(rego_details, cfg.airport_iata, cfg.airport_tz)
+        _, dep_fn, al_name, al_iata, al_icao, dest_name, dest_iata, dest_icao, _ = get_next_departure(
+            rego_details, cfg.airport_iata, cfg.airport_tz
+        )
         if dep_fn:
             sched_dep_ts = _get_scheduled_dep_ts(rego_details, cfg.airport_iata, dep_fn)
-            cfg.store.record_departure_pattern(arrival_fn, dep_fn, cfg.airport_iata, now_ts, sched_dep_ts)
+            cfg.store.record_departure_pattern(
+                arrival_fn, dep_fn, cfg.airport_iata, now_ts,
+                scheduled_dep_ts=sched_dep_ts,
+                airline_name=al_name, airline_iata=al_iata, airline_icao=al_icao,
+                dest_name=dest_name, dest_iata=dest_iata, dest_icao=dest_icao,
+            )
     try:
         if photo_url:
             try:

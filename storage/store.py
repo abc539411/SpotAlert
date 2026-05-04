@@ -137,12 +137,23 @@ class SqliteStore:
                     count                   INTEGER NOT NULL DEFAULT 1,
                     last_seen_ts            INTEGER NOT NULL,
                     scheduled_dep_ts        INTEGER DEFAULT NULL,
+                    airline_name            TEXT DEFAULT NULL,
+                    airline_iata            TEXT DEFAULT NULL,
+                    airline_icao            TEXT DEFAULT NULL,
+                    dest_name               TEXT DEFAULT NULL,
+                    dest_iata               TEXT DEFAULT NULL,
+                    dest_icao               TEXT DEFAULT NULL,
                     PRIMARY KEY (arrival_flight_number, departure_flight_number, airport_iata)
                 )
             """)
             fdp_cols = {row[1] for row in conn.execute("PRAGMA table_info(flight_departure_pattern)").fetchall()}
-            if "scheduled_dep_ts" not in fdp_cols:
-                conn.execute("ALTER TABLE flight_departure_pattern ADD COLUMN scheduled_dep_ts INTEGER DEFAULT NULL")
+            for col, typ in [
+                ("scheduled_dep_ts", "INTEGER"), ("airline_name", "TEXT"),
+                ("airline_iata", "TEXT"), ("airline_icao", "TEXT"),
+                ("dest_name", "TEXT"), ("dest_iata", "TEXT"), ("dest_icao", "TEXT"),
+            ]:
+                if col not in fdp_cols:
+                    conn.execute(f"ALTER TABLE flight_departure_pattern ADD COLUMN {col} {typ} DEFAULT NULL")
 
             # Persists settings changed via the Telegram bot so they survive restarts.
             # On startup, these values take precedence over config.env.
@@ -626,21 +637,37 @@ class SqliteStore:
 
     def record_departure_pattern(self, arrival_fn: str, departure_fn: str,
                                   airport_iata: str, now_ts: int,
-                                  scheduled_dep_ts: Optional[int] = None) -> None:
+                                  scheduled_dep_ts: Optional[int] = None,
+                                  airline_name: Optional[str] = None,
+                                  airline_iata: Optional[str] = None,
+                                  airline_icao: Optional[str] = None,
+                                  dest_name: Optional[str] = None,
+                                  dest_iata: Optional[str] = None,
+                                  dest_icao: Optional[str] = None) -> None:
         """Increment the observation count for an arrival→departure flight number pairing."""
         with self._connect() as conn:
             conn.execute(
                 """
                 INSERT INTO flight_departure_pattern
-                    (arrival_flight_number, departure_flight_number, airport_iata, count, last_seen_ts, scheduled_dep_ts)
-                VALUES (?, ?, ?, 1, ?, ?)
+                    (arrival_flight_number, departure_flight_number, airport_iata, count, last_seen_ts,
+                     scheduled_dep_ts, airline_name, airline_iata, airline_icao,
+                     dest_name, dest_iata, dest_icao)
+                VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(arrival_flight_number, departure_flight_number, airport_iata)
                 DO UPDATE SET
-                    count = count + 1,
-                    last_seen_ts = excluded.last_seen_ts,
-                    scheduled_dep_ts = COALESCE(excluded.scheduled_dep_ts, scheduled_dep_ts)
+                    count            = count + 1,
+                    last_seen_ts     = excluded.last_seen_ts,
+                    scheduled_dep_ts = COALESCE(excluded.scheduled_dep_ts, scheduled_dep_ts),
+                    airline_name     = COALESCE(excluded.airline_name, airline_name),
+                    airline_iata     = COALESCE(excluded.airline_iata, airline_iata),
+                    airline_icao     = COALESCE(excluded.airline_icao, airline_icao),
+                    dest_name        = COALESCE(excluded.dest_name, dest_name),
+                    dest_iata        = COALESCE(excluded.dest_iata, dest_iata),
+                    dest_icao        = COALESCE(excluded.dest_icao, dest_icao)
                 """,
-                (arrival_fn.strip(), departure_fn.strip(), airport_iata.strip(), now_ts, scheduled_dep_ts),
+                (arrival_fn.strip(), departure_fn.strip(), airport_iata.strip(), now_ts,
+                 scheduled_dep_ts, airline_name, airline_iata, airline_icao,
+                 dest_name, dest_iata, dest_icao),
             )
 
     def backfill_rare_plane_seen(self, airline: str, aircraft_type: str, seen_ts: int) -> None:
@@ -656,19 +683,30 @@ class SqliteStore:
                 (airline.strip(), aircraft_type.strip(), seen_ts),
             )
 
-    def get_dep_scheduled_time(self, dep_fn: str, airport_iata: str) -> Optional[int]:
-        """Return the most recently recorded scheduled departure time for a flight number."""
+    def get_predicted_dep_info(self, dep_fn: str, airport_iata: str) -> Optional[dict]:
+        """Return stored departure details for a predicted flight number, or None if not found."""
         with self._connect() as conn:
             row = conn.execute(
                 """
-                SELECT scheduled_dep_ts FROM flight_departure_pattern
+                SELECT scheduled_dep_ts, airline_name, airline_iata, airline_icao,
+                       dest_name, dest_iata, dest_icao
+                FROM flight_departure_pattern
                 WHERE departure_flight_number = ? AND airport_iata = ?
-                  AND scheduled_dep_ts IS NOT NULL
                 ORDER BY last_seen_ts DESC LIMIT 1
                 """,
                 (dep_fn.strip(), airport_iata.strip()),
             ).fetchone()
-            return int(row["scheduled_dep_ts"]) if row else None
+            if not row:
+                return None
+            return {
+                "scheduled_dep_ts": row["scheduled_dep_ts"],
+                "airline_name":     row["airline_name"],
+                "airline_iata":     row["airline_iata"],
+                "airline_icao":     row["airline_icao"],
+                "dest_name":        row["dest_name"],
+                "dest_iata":        row["dest_iata"],
+                "dest_icao":        row["dest_icao"],
+            }
 
     def get_predicted_departure(self, arrival_fn: str, airport_iata: str,
                                  threshold_pct: int) -> Optional[tuple]:
