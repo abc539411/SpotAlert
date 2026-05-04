@@ -87,7 +87,7 @@ _MILITARY_KB = ReplyKeyboardMarkup(
 
 # Airport & Polling sub-keyboard
 _AIRPORT_KB = ReplyKeyboardMarkup(
-    [["Airport Code", "Check Interval"], ["Reminder Hours"], ["Force Check Now"], ["Back"]],
+    [["Airport Code", "Check Interval"], ["Reminder Hours"], ["Dep. Pattern Threshold"], ["Force Check Now"], ["Back"]],
     resize_keyboard=True,
 )
 
@@ -361,6 +361,14 @@ async def handle_airport_submenu(update: Update, context: ContextTypes.DEFAULT_T
         )
         return ENTER_VALUE
 
+    if choice == "Dep. Pattern Threshold":
+        await update.message.reply_text(
+            f"Current: {cfg.departure_pattern_threshold}%\n\n"
+            "Minimum confidence % to show a predicted next departure (0 to disable, e.g. 80)",
+            reply_markup=_REMOVE_KB,
+        )
+        return ENTER_VALUE
+
     if choice == "Force Check Now":
         for job in context.application.job_queue.get_jobs_by_name("arrivals_check"):
             job.schedule_removal()
@@ -615,6 +623,20 @@ async def handle_enter_value(update: Update, context: ContextTypes.DEFAULT_TYPE)
         store.save_setting("REMINDER_HOURS", str(value))
         label = f"{value}h" if value > 0 else "disabled"
         await update.message.reply_text(f"Updated: reminder {label}.", reply_markup=_AIRPORT_KB)
+        return AIRPORT_SUBMENU
+
+    if field == "Dep. Pattern Threshold":
+        try:
+            value = int(raw)
+            if not 0 <= value <= 100:
+                raise ValueError
+        except ValueError:
+            await update.message.reply_text("Please enter a number between 0 and 100 (0 to disable).")
+            return ENTER_VALUE
+        cfg.departure_pattern_threshold = value
+        store.save_setting("DEPARTURE_PATTERN_THRESHOLD", str(value))
+        label = f"{value}%" if value > 0 else "disabled"
+        await update.message.reply_text(f"Updated: departure pattern threshold {label}.", reply_markup=_AIRPORT_KB)
         return AIRPORT_SUBMENU
 
     # ----------------------------------------------------------------

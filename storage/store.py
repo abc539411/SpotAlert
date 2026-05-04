@@ -129,6 +129,16 @@ class SqliteStore:
                     last_seen_ts INTEGER NOT NULL
                 )
             """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS flight_departure_pattern (
+                    arrival_flight_number   TEXT NOT NULL,
+                    departure_flight_number TEXT NOT NULL,
+                    airport_iata            TEXT NOT NULL,
+                    count                   INTEGER NOT NULL DEFAULT 1,
+                    last_seen_ts            INTEGER NOT NULL,
+                    PRIMARY KEY (arrival_flight_number, departure_flight_number, airport_iata)
+                )
+            """)
 
             # Persists settings changed via the Telegram bot so they survive restarts.
             # On startup, these values take precedence over config.env.
@@ -605,6 +615,52 @@ class SqliteStore:
                     "SELECT COUNT(*) FROM airline_watchlist WHERE last_notified_ts > 0"
                 ).fetchone()[0],
             }
+
+    # ------------------------------------------------------------------
+    # Departure pattern learning
+    # ------------------------------------------------------------------
+
+    def record_departure_pattern(self, arrival_fn: str, departure_fn: str,
+                                  airport_iata: str, now_ts: int) -> None:
+        """Increment the observation count for an arrival→departure flight number pairing."""
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO flight_departure_pattern
+                    (arrival_flight_number, departure_flight_number, airport_iata, count, last_seen_ts)
+                VALUES (?, ?, ?, 1, ?)
+                ON CONFLICT(arrival_flight_number, departure_flight_number, airport_iata)
+                DO UPDATE SET count = count + 1, last_seen_ts = excluded.last_seen_ts
+                """,
+                (arrival_fn.strip(), departure_fn.strip(), airport_iata.strip(), now_ts),
+            )
+
+    def get_predicted_departure(self, arrival_fn: str, airport_iata: str,
+                                 threshold_pct: int) -> Optional[tuple]:
+        """Return (departure_fn, confidence_pct, obs_count, total_count) if the most
+        common departure for this arrival meets the threshold, else None."""
+        arrival_fn   = arrival_fn.strip()
+        airport_iata = airport_iata.strip()
+        with self._connect() as conn:
+            total = conn.execute(
+                "SELECT SUM(count) FROM flight_departure_pattern "
+                "WHERE arrival_flight_number = ? AND airport_iata = ?",
+                (arrival_fn, airport_iata),
+            ).fetchone()[0] or 0
+            if total == 0:
+                return None
+            row = conn.execute(
+                "SELECT departure_flight_number, count FROM flight_departure_pattern "
+                "WHERE arrival_flight_number = ? AND airport_iata = ? "
+                "ORDER BY count DESC LIMIT 1",
+                (arrival_fn, airport_iata),
+            ).fetchone()
+            if not row:
+                return None
+            confidence = row["count"] / total * 100
+            if confidence >= threshold_pct:
+                return row["departure_flight_number"], confidence, int(row["count"]), int(total)
+        return None
 
     def bulk_update_sightings(self, sightings: dict) -> None:
         """Record actual arrival timestamps for planes that have landed.

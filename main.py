@@ -20,7 +20,6 @@ from monitor import run_check
 from military import check_military
 from bot import register_handlers
 from settings import register_settings_handlers
-from summary import register_summary_handlers
 from lightroom import find_catalog
 from lookup import register_lookup_handler
 from stats import register_stats_handlers
@@ -96,6 +95,7 @@ class AppConfig:
     spot_rec_weather_gate: bool = True
     spot_rec_lighting_gate: bool = True
     spot_rec_max_spotted_times: int = 0   # 0 = disabled
+    departure_pattern_threshold: int = 80  # min % confidence to show a predicted departure
 
     # Dependencies — excluded from repr/comparison
     fr_api: object = field(repr=False, default=None)
@@ -189,6 +189,7 @@ def build_config(env: Env, fr_api: FlightRadar24API, store: SqliteStore, catalog
         spot_rec_weather_gate=_s(store, env, "SPOT_REC_WEATHER_GATE", default="true").lower() == "true",
         spot_rec_lighting_gate=_s(store, env, "SPOT_REC_LIGHTING_GATE", default="true").lower() == "true",
         spot_rec_max_spotted_times=_si(store, env, "SPOT_REC_MAX_SPOTTED_TIMES", default="0"),
+        departure_pattern_threshold=_si(store, env, "DEPARTURE_PATTERN_THRESHOLD", default="80"),
         fr_api=fr_api,
         store=store,
         catalog=catalog,
@@ -240,8 +241,7 @@ def main() -> None:
 
     async def _set_commands(application: Application) -> None:
         await application.bot.set_my_commands([
-            BotCommand("spot",     "Check if recommended to go spotting today or tomorrow"),
-            BotCommand("summary",  "View notified flights by day & period"),
+            BotCommand("spot",     "Check interesting flights or get a spotting recommendation"),
             BotCommand("stats",    "View spotting stats and notification totals"),
             BotCommand("filters",  "Manage watchlists & exclusion list"),
             BotCommand("settings", "Configure filter intervals, days & windows"),
@@ -256,7 +256,6 @@ def main() -> None:
 
     register_handlers(app)
     register_settings_handlers(app)
-    register_summary_handlers(app)
     register_lookup_handler(app)
     register_stats_handlers(app)
     register_spot_rec_handlers(app)
