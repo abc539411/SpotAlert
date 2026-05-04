@@ -133,6 +133,21 @@ def _best_time(flight: dict, kind: str) -> Tuple[Optional[float], str]:
     return None, ""
 
 
+def _get_scheduled_dep_ts(rego_details: Optional[dict], airport_iata: str, dep_fn: str) -> Optional[int]:
+    """Extract the scheduled departure time for dep_fn departing from airport_iata."""
+    for fl in (rego_details or {}).get("data") or []:
+        try:
+            fn = ((fl.get("identification") or {}).get("number") or {}).get("default")
+            origin = fl["airport"]["origin"]["code"]["iata"]
+            if fn == dep_fn and origin == airport_iata:
+                ts = (fl.get("time") or {}).get("scheduled", {}).get("departure")
+                if isinstance(ts, (int, float)):
+                    return int(ts)
+        except (KeyError, TypeError):
+            continue
+    return None
+
+
 def _safe_get(d: dict, *keys, default="N/A"):
     """Walk a nested dict safely; return default on any missing key or None value."""
     for k in keys:
@@ -155,6 +170,7 @@ def format_notification(
     catalog=None,
     cfg_store=None,
     dep_pattern_threshold: int = 0,
+    fr_api=None,
 ) -> str:
     lines = [f"<b>{notification_type}</b>"]
 
@@ -235,18 +251,22 @@ def format_notification(
                 )
                 if predicted:
                     pred_fn, confidence, _, _ = predicted
-                    dep_time, dep_fn, al_name, al_iata, al_icao, dest_name, dest_iata, dest_icao, dep_label = _lookup_flight_by_number(
-                        rego_details, pred_fn, airport_tz
-                    )
+                    # Step 1: look up scheduled time from our own DB
+                    sched_ts = cfg_store.get_dep_scheduled_time(pred_fn, airport_iata)
+                    # Step 2: if DB has nothing, call FR24 by flight number
+                    if sched_ts is None and fr_api is not None:
+                        try:
+                            fl_data = fr_api.get_flight_by_number(pred_fn)
+                            sched_ts = _get_scheduled_dep_ts(fl_data, airport_iata, pred_fn)
+                        except Exception:
+                            pass
+                    tz = pytz.timezone(airport_tz)
                     lines += ["", "<b>Next Departure:</b>"]
-                    if dep_time:
-                        lines.append(f"  Predicted: {dep_time.strftime('%a %H:%M')} (Local) — {dep_fn} — {confidence:.0f}% confidence")
+                    if sched_ts:
+                        dep_time = datetime.fromtimestamp(sched_ts).astimezone(tz)
+                        lines.append(f"  Predicted: {dep_time.strftime('%a %H:%M')} (Local) — {pred_fn} — {confidence:.0f}% confidence")
                     else:
                         lines.append(f"  Predicted: {pred_fn} — {confidence:.0f}% confidence")
-                    if al_name:
-                        lines.append(f"  Airline: {al_name} ({al_iata}/{al_icao})")
-                    if dest_name:
-                        lines.append(f"  To: {dest_name} ({dest_iata}/{dest_icao})")
 
     flight_id  = _safe_get(flight, "identification", "id", default=None)
     flight_num = _safe_get(flight, "identification", "number", "default", default=None)
@@ -612,16 +632,18 @@ async def _send_notification(
         catalog=cfg.catalog,
         cfg_store=cfg.store,
         dep_pattern_threshold=cfg.departure_pattern_threshold,
+        fr_api=cfg.fr_api,
     )
+
+    now_ts = int(datetime.now().timestamp())
 
     # Record departure pattern for future predictions
     arrival_fn = str(_safe_get(flight, "identification", "number", "default", default=""))
     if arrival_fn and arrival_fn != "N/A" and rego_details:
         _, dep_fn, *_ = get_next_departure(rego_details, cfg.airport_iata, cfg.airport_tz)
         if dep_fn:
-            cfg.store.record_departure_pattern(arrival_fn, dep_fn, cfg.airport_iata, now_ts)
-
-    now_ts = int(datetime.now().timestamp())
+            sched_dep_ts = _get_scheduled_dep_ts(rego_details, cfg.airport_iata, dep_fn)
+            cfg.store.record_departure_pattern(arrival_fn, dep_fn, cfg.airport_iata, now_ts, sched_dep_ts)
     try:
         if photo_url:
             try:

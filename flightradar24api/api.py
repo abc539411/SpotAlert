@@ -63,10 +63,13 @@ class FlightRadar24API:
             raise AirportNotFoundError(f"Could not find airport: '{code}'")
         return Airport(info=content["details"])
 
-    def get_airport_details(self, code: str, flight_limit: int = 100, page: int = 1) -> Dict:
+    def get_airport_details(self, code: str, flight_limit: int = 100, page: int = 1,
+                            timestamp: Optional[int] = None) -> Dict:
         if not (3 <= len(code) <= 4):
             raise ValueError(f"Invalid airport code: '{code}'")
         params = {"format": "json", "code": code, "limit": flight_limit, "page": page}
+        if timestamp is not None:
+            params["timestamp"] = timestamp
         if self.__login_data:
             params["token"] = self.__login_data["cookies"]["_frPl"]
         response = APIRequest(Core.api_airport_data_url, params, Core.json_headers, exclude_status_codes=[400])
@@ -126,6 +129,16 @@ class FlightRadar24API:
 
     def get_flight_details(self, flight: Flight) -> Dict[Any, Any]:
         return APIRequest(Core.flight_data_url.format(flight.id), headers=Core.json_headers).get_content()
+
+    def get_flight_by_number(self, flight_number: str) -> Dict[Any, Any]:
+        """Fetch flight history/schedule by flight number (callsign)."""
+        params = {"fetchBy": "callsign"}
+        if self.__login_data:
+            params["token"] = self.__login_data["cookies"]["_frPl"]
+        url = Core.api_flightradar_base_url + f"/flight/list.json?query={flight_number}"
+        response = APIRequest(url, params, headers=Core.json_headers)
+        content: Dict = response.get_content()
+        return content.get("result", {}).get("response", {})
 
     def get_rego_details(self, aircraft: str) -> Dict[Any, Any]:
         params = {}

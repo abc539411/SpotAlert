@@ -136,9 +136,13 @@ class SqliteStore:
                     airport_iata            TEXT NOT NULL,
                     count                   INTEGER NOT NULL DEFAULT 1,
                     last_seen_ts            INTEGER NOT NULL,
+                    scheduled_dep_ts        INTEGER DEFAULT NULL,
                     PRIMARY KEY (arrival_flight_number, departure_flight_number, airport_iata)
                 )
             """)
+            fdp_cols = {row[1] for row in conn.execute("PRAGMA table_info(flight_departure_pattern)").fetchall()}
+            if "scheduled_dep_ts" not in fdp_cols:
+                conn.execute("ALTER TABLE flight_departure_pattern ADD COLUMN scheduled_dep_ts INTEGER DEFAULT NULL")
 
             # Persists settings changed via the Telegram bot so they survive restarts.
             # On startup, these values take precedence over config.env.
@@ -621,19 +625,50 @@ class SqliteStore:
     # ------------------------------------------------------------------
 
     def record_departure_pattern(self, arrival_fn: str, departure_fn: str,
-                                  airport_iata: str, now_ts: int) -> None:
+                                  airport_iata: str, now_ts: int,
+                                  scheduled_dep_ts: Optional[int] = None) -> None:
         """Increment the observation count for an arrival→departure flight number pairing."""
         with self._connect() as conn:
             conn.execute(
                 """
                 INSERT INTO flight_departure_pattern
-                    (arrival_flight_number, departure_flight_number, airport_iata, count, last_seen_ts)
-                VALUES (?, ?, ?, 1, ?)
+                    (arrival_flight_number, departure_flight_number, airport_iata, count, last_seen_ts, scheduled_dep_ts)
+                VALUES (?, ?, ?, 1, ?, ?)
                 ON CONFLICT(arrival_flight_number, departure_flight_number, airport_iata)
-                DO UPDATE SET count = count + 1, last_seen_ts = excluded.last_seen_ts
+                DO UPDATE SET
+                    count = count + 1,
+                    last_seen_ts = excluded.last_seen_ts,
+                    scheduled_dep_ts = COALESCE(excluded.scheduled_dep_ts, scheduled_dep_ts)
                 """,
-                (arrival_fn.strip(), departure_fn.strip(), airport_iata.strip(), now_ts),
+                (arrival_fn.strip(), departure_fn.strip(), airport_iata.strip(), now_ts, scheduled_dep_ts),
             )
+
+    def backfill_rare_plane_seen(self, airline: str, aircraft_type: str, seen_ts: int) -> None:
+        """Raw upsert for historical backfill — updates last_seen_ts without notification logic."""
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO rare_plane_history(airline, aircraft_type, last_seen_ts, last_notified_ts)
+                VALUES (?, ?, ?, 0)
+                ON CONFLICT(airline, aircraft_type) DO UPDATE
+                SET last_seen_ts = MAX(last_seen_ts, excluded.last_seen_ts)
+                """,
+                (airline.strip(), aircraft_type.strip(), seen_ts),
+            )
+
+    def get_dep_scheduled_time(self, dep_fn: str, airport_iata: str) -> Optional[int]:
+        """Return the most recently recorded scheduled departure time for a flight number."""
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT scheduled_dep_ts FROM flight_departure_pattern
+                WHERE departure_flight_number = ? AND airport_iata = ?
+                  AND scheduled_dep_ts IS NOT NULL
+                ORDER BY last_seen_ts DESC LIMIT 1
+                """,
+                (dep_fn.strip(), airport_iata.strip()),
+            ).fetchone()
+            return int(row["scheduled_dep_ts"]) if row else None
 
     def get_predicted_departure(self, arrival_fn: str, airport_iata: str,
                                  threshold_pct: int) -> Optional[tuple]:
