@@ -525,13 +525,15 @@ async def handle_military_submenu(update: Update, context: ContextTypes.DEFAULT_
             "Enter search radius in nautical miles (1–250)",
             reply_markup=_REMOVE_KB,
         )
-    elif choice == "Max Altitude":
+        return ENTER_VALUE
+
+    if choice == "Max Altitude":
         await update.message.reply_text(
             f"Current: {cfg.military_max_alt_ft} ft\n\n"
             "Enter maximum altitude in feet for approach detection",
             reply_markup=_REMOVE_KB,
         )
-    elif choice == "Re-notify Interval":
+    if choice == "Re-notify Interval":
         await update.message.reply_text(
             f"Current: {cfg.military_renotify_hours}h\n\n"
             "Enter re-notify interval in hours",
