@@ -29,24 +29,38 @@ Each notification includes:
 - **Last Spotted** — the date, airport, and number of times you have photographed this aircraft (sourced from your Lightroom catalog — see below)
 - **Last Seen at airport** — the last date this registration was recorded landing at the monitored airport
 - Scheduled and estimated arrival times (local)
-- Next scheduled departure from the monitored airport
+- **Next Departure** — the next outbound flight from the monitored airport, showing estimated/scheduled/predicted time, flight number, and destination; predicted departures are sourced from historical arrival→departure patterns learned by the bot and shown with a confidence percentage
 
 ### Military Traffic
 
 - Monitors nearby military aircraft via the [adsb.fi](https://opendata.adsb.fi) open data API — no API key required
-- Notifies when a military aircraft is on approach within a configurable radius and below a configurable altitude threshold
+- Notifies when a military aircraft is on approach within a configurable radius and below a configurable altitude threshold; aircraft on the ground are excluded
+- Notification includes country of origin (derived from ICAO hex address), registration, callsign, aircraft type, altitude, speed, distance, and a direct link to the aircraft on globe.adsb.fi
 - Runs on its own check interval, independent of the main arrivals check
 
 ### Spot Recommendation
 
-Automatically recommends whether it is worth heading out to spot based on the number of interesting arrivals in your planned session window.
+Automatically recommends whether it is worth heading out to spot based on interesting flights in your planned session window. Both arrivals **and** predicted departures are factored in when optimising the session window.
 
-- **Rolling check** — runs every arrivals cycle during the day; fires if enough interesting planes are arriving within your travel + session window
-- **End-of-day check** — runs once at a configurable time each evening; scans the next day's full schedule to find the optimal session window and sends a recommendation with Yes/Maybe/No response buttons
-  - Tapping **Yes** schedules a follow-up message at the time you need to leave, with an updated flight list
+All recommendation data is read from the bot's own notification record — no additional FR24 API calls are made during a spot check.
+
+**Automatic triggers:**
+- **Rolling check** — runs after every arrivals poll during the day; fires if enough interesting flights are within your travel + session window
+- **End-of-day check** — runs once at a configurable hour each evening; reads tomorrow's notified flights from the DB, finds the optimal session window, and sends a recommendation with Yes/Maybe/No response buttons
+  - Tapping **Yes** schedules a follow-up "time to leave" message, with an updated flight list
   - Tapping **No** suppresses rolling recommendations the next day
-- Both checks respect configurable gates: day type (any day vs weekends/public holidays), weather (severe weather suppresses the recommendation), and lighting (flights arriving after sunset can be excluded)
-- Aircraft you have photographed too many times at the airport can be excluded from the interesting count (configurable threshold)
+
+**Manual `/spot` command:**
+- Choose **Today** or **Tomorrow**, then select a period:
+  - **Morning / Afternoon / All Day** — shows all interesting flights in that period with both arrival and predicted departure times per aircraft (Scenario A)
+  - **Best Time to Go** — finds the session window that fits the most interesting flights, considering both arrivals and predicted departures, and shows the single best time per aircraft (Scenario B)
+
+**Filters applied to all checks:**
+- **Lighting gate** — flights arriving after sunset are excluded; predicted departure times outside daylight are hidden
+- **Day gate** — automatic checks only run on qualifying days (any day, weekends only, or public holidays)
+- **Weather gate** — automatic checks are suppressed when severe weather is forecast; manual checks always show weather with a verdict
+- **Spotted times** — aircraft you have photographed too many times at this airport can be excluded (configurable threshold)
+- **Cancellation/swap detection** — the monitor continuously updates the notification record; cancelled, diverted, or swapped flights are removed before the recommendation reads it
 
 ### Registration Lookup
 
@@ -67,7 +81,7 @@ Type any aircraft registration directly into the chat (e.g. `VH-XQU`) to instant
 
 | Command | Description |
 |---|---|
-| `/spot` | Check if it is recommended to go spotting today or tomorrow |
+| `/spot` | Check if it is recommended to go spotting — choose day (today/tomorrow) and period (Morning/Afternoon/All Day/Best Time to Go) |
 | `/summary` | View notified flights for today or tomorrow by time period |
 | `/stats` | View spotting stats and notification totals |
 | `/filters` | Manage watchlists and exclusion list |
@@ -173,6 +187,7 @@ A SQLite database is created at `config/filters/spotalert.db` on first run. It s
 - Exclusion list
 - Follow-up tracking (reminders, aircraft swaps, cancellations)
 - Sighting history — actual landing timestamps for registrations seen at the airport
+- **Departure patterns** — historical arrival→departure flight number pairings with observation counts, scheduled departure times, airline, and destination; used to predict next departures and factor them into spot recommendations
 - Any settings changed via the bot
 
 A daily backup is saved automatically to `config/filters/backups/`, keeping the last 7 copies.
@@ -187,6 +202,14 @@ A standalone script to inspect the contents of the database directly — useful 
 
 ```bash
 python check_db.py
+```
+
+### backfill.py
+
+A one-time setup script that seeds the database with historical data from FR24 (requires a FR24 premium account). Run it once after first install to bootstrap the departure pattern and rare plane history before the bot has had time to learn from live traffic.
+
+```bash
+python backfill.py
 ```
 
 ---
