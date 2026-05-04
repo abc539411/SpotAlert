@@ -239,8 +239,6 @@ def format_notification(
         if dep_time:
             lines += ["", "<b>Next Departure:</b>"]
             lines.append(f"  {dep_label}: {dep_time.strftime('%a %H:%M')} (Local) — {dep_fn}")
-            if al_name:
-                lines.append(f"  Airline: {al_name} ({al_iata}/{al_icao})")
             if dest_name:
                 lines.append(f"  To: {dest_name} ({dest_iata}/{dest_icao})")
         elif cfg_store is not None and dep_pattern_threshold > 0:
@@ -285,8 +283,6 @@ def format_notification(
                         lines.append(f"  Predicted: {dep_time.strftime('%a %H:%M')} (Local) — {pred_fn}")
                     else:
                         lines.append(f"  Predicted: {pred_fn}")
-                    if al_name:
-                        lines.append(f"  Airline: {al_name} ({al_iata}/{al_icao})")
                     if dest_name:
                         lines.append(f"  To: {dest_name} ({dest_iata}/{dest_icao})")
                     lines.append(f"  Confidence: {confidence:.0f}%")
