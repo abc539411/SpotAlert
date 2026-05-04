@@ -35,7 +35,8 @@ class APIRequest:
         request_method = _scraper.get if data is None else _scraper.post
 
         if params:
-            url += "?" + "&".join(f"{k}={v}" for k, v in params.items())
+            sep = "&" if "?" in url else "?"
+            url += sep + "&".join(f"{k}={v}" for k, v in params.items())
 
         # Do not pass custom headers — cloudscraper must own all headers for Cloudflare bypass
         self.__response = request_method(url, cookies=cookies, data=data)
