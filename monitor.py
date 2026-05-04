@@ -696,8 +696,17 @@ async def _send_notification(
             airline_name = (flight.get("airline") or {}).get("name") or ""
             match = re.search(r'\((.+?)\)', airline_name)
             extra_info = match.group(1) if match else airline_name
+
+        airline_raw   = (flight.get("airline") or {}).get("name") or ""
+        aircraft_code = _safe_get(flight, "aircraft", "model", "code", default="")
+        clean_airline = re.sub(r'\s*\(.*?\)', '', airline_raw).strip()
+        if clean_airline and aircraft_code:
+            detail = f"{clean_airline} ({aircraft_code})"
+        else:
+            detail = clean_airline or aircraft_code
+
         cfg.store.record_notified_flight(
-            registration, flight_number, notification_type, arrival_ts, now_ts, now_ts, extra_info
+            registration, flight_number, notification_type, arrival_ts, now_ts, now_ts, extra_info, detail
         )
     except Exception as exc:
         log.error("Failed to send notification for %s: %s", registration, exc, exc_info=True)
