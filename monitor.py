@@ -36,6 +36,21 @@ def get_flight_status(flight: dict) -> str:
         return "N/A"
 
 
+def _get_fr24_status(flight: dict) -> tuple:
+    """Return (status_text, diverted_airport) from the FR24 status field.
+
+    status_text: 'canceled', 'diverted', or '' if unknown.
+    diverted_airport: IATA code (e.g. 'NBO') or '' for non-diversions.
+    """
+    try:
+        generic = flight["status"]["generic"]["status"]
+        text = (generic.get("text") or "").lower()
+        diverted = (generic.get("diverted") or "").upper()
+        return text, diverted
+    except (KeyError, TypeError):
+        return "", ""
+
+
 def get_arrival_period(flight: dict, tz_name: str, lat: float, lon: float) -> str:
     """Return 'Daylight Arrival' or 'Night-time Arrival' based on local sunrise/sunset."""
     try:
@@ -742,6 +757,21 @@ async def check_follow_ups(context, cfg, chat_id: str, current_arrivals: dict,
             )
             cfg.store.update_tracked_flight(registration, now_ts, current_arrival_ts)
 
+            # Check FR24 status for confirmed cancellation or diversion
+            status_text, diverted_airport = _get_fr24_status(current_flight)
+            if status_text == "canceled":
+                await _send_cancellation_notice(
+                    context, cfg, chat_id, registration, flight_number, notification_type, arrival_ts
+                )
+                cfg.store.delete_tracked_flight(registration)
+                continue
+            elif status_text == "diverted":
+                await _send_diversion_notice(
+                    context, cfg, chat_id, registration, flight_number, notification_type, arrival_ts, diverted_airport
+                )
+                cfg.store.delete_tracked_flight(registration)
+                continue
+
             # Send a 12-hour reminder only if:
             #   • we haven't already sent one
             #   • the flight is still in the future
@@ -764,7 +794,16 @@ async def check_follow_ups(context, cfg, chat_id: str, current_arrivals: dict,
                 # Wait for 2 full check cycles to rule out transient FR24 gaps
                 if now_ts - last_seen_ts > 2 * cfg.check_interval:
                     # Check if the flight number reappeared under a different registration
+                    # on the same day — ignores tomorrow's scheduled flights with the same number
                     swap = arrivals_by_flight_number.get(flight_number) if arrivals_by_flight_number and flight_number else None
+                    if swap and swap[0] != registration:
+                        tz = pytz.timezone(cfg.airport_tz)
+                        orig_date = datetime.fromtimestamp(arrival_ts, tz).date()
+                        new_arr_ts = _safe_get(swap[1], "time", "scheduled", "arrival", default=None) \
+                                     or _safe_get(swap[1], "time", "estimated", "arrival", default=None)
+                        swap_date = datetime.fromtimestamp(new_arr_ts, tz).date() if isinstance(new_arr_ts, (int, float)) else None
+                        if swap_date != orig_date:
+                            swap = None
                     if swap and swap[0] != registration:
                         new_rego, new_flight = swap
                         await _send_aircraft_swap_notice(
@@ -773,7 +812,7 @@ async def check_follow_ups(context, cfg, chat_id: str, current_arrivals: dict,
                             flight_number, notification_type, arrival_ts,
                         )
                     else:
-                        await _send_cancellation_notice(
+                        await _send_disappeared_notice(
                             context, cfg, chat_id,
                             registration, flight_number, notification_type, arrival_ts,
                         )
@@ -891,6 +930,34 @@ async def _send_aircraft_swap_notice(
         log.error("Failed to send swap notice for %s: %s", flight_number, exc)
 
 
+async def _send_disappeared_notice(
+    context,
+    cfg,
+    chat_id: str,
+    registration: str,
+    flight_number: str,
+    notification_type: str,
+    arrival_ts: int,
+) -> None:
+    tz = pytz.timezone(cfg.airport_tz)
+    arrival_str = (
+        datetime.fromtimestamp(arrival_ts).astimezone(tz).strftime("%a %H:%M")
+        if arrival_ts else "N/A"
+    )
+    message = (
+        f"<b>No Longer Visible — {notification_type}</b>\n"
+        f"  Registration: {registration}\n"
+        f"  Flight: {flight_number or 'N/A'}\n"
+        f"  Was scheduled: {arrival_str} (Local)\n\n"
+        "This flight has dropped off the arrivals board."
+    )
+    try:
+        await context.bot.send_message(chat_id=chat_id, text=message, parse_mode="HTML")
+        log.info("Sent disappeared notice for %s", registration)
+    except Exception as exc:
+        log.error("Failed to send disappeared notice for %s: %s", registration, exc)
+
+
 async def _send_cancellation_notice(
     context,
     cfg,
@@ -906,15 +973,42 @@ async def _send_cancellation_notice(
         if arrival_ts else "N/A"
     )
     message = (
-        f"<b>No Longer Arriving — {notification_type}</b>\n"
+        f"<b>Cancelled — {notification_type}</b>\n"
         f"  Registration: {registration}\n"
         f"  Flight: {flight_number or 'N/A'}\n"
-        f"  Was scheduled: {arrival_str} (Local)\n\n"
-        "This flight has disappeared from the arrivals board — "
-        "likely cancelled or diverted."
+        f"  Was scheduled: {arrival_str} (Local)"
     )
     try:
         await context.bot.send_message(chat_id=chat_id, text=message, parse_mode="HTML")
         log.info("Sent cancellation notice for %s", registration)
     except Exception as exc:
         log.error("Failed to send cancellation notice for %s: %s", registration, exc)
+
+
+async def _send_diversion_notice(
+    context,
+    cfg,
+    chat_id: str,
+    registration: str,
+    flight_number: str,
+    notification_type: str,
+    arrival_ts: int,
+    diverted_airport: str,
+) -> None:
+    tz = pytz.timezone(cfg.airport_tz)
+    arrival_str = (
+        datetime.fromtimestamp(arrival_ts).astimezone(tz).strftime("%a %H:%M")
+        if arrival_ts else "N/A"
+    )
+    airport_str = f" to {diverted_airport}" if diverted_airport else ""
+    message = (
+        f"<b>Diverted{airport_str} — {notification_type}</b>\n"
+        f"  Registration: {registration}\n"
+        f"  Flight: {flight_number or 'N/A'}\n"
+        f"  Was scheduled: {arrival_str} (Local)"
+    )
+    try:
+        await context.bot.send_message(chat_id=chat_id, text=message, parse_mode="HTML")
+        log.info("Sent diversion notice for %s → %s", registration, diverted_airport or "unknown")
+    except Exception as exc:
+        log.error("Failed to send diversion notice for %s: %s", registration, exc)
