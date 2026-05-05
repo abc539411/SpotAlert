@@ -4,12 +4,14 @@ import logging
 
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
+from translations import tr_airline, tr_aircraft
 
 log = logging.getLogger(__name__)
 
 
 async def handle_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     cfg = context.bot_data["cfg"]
+    lang = cfg.language_for(update.effective_chat.id)
     lines = ["<b>SpotAlert Stats</b>", ""]
 
     # ----------------------------------------------------------------
@@ -33,7 +35,9 @@ async def handle_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                 lines.append("  Most photographed:")
                 for reg, count in s["top_photographed"]:
                     airline, ac_type = cfg.catalog.get_aircraft_info(reg)
-                    detail = f" — {airline} ({ac_type})" if airline and ac_type else f" — {airline or ac_type}"
+                    al = tr_airline(airline, lang) if airline else ""
+                    ac = tr_aircraft(ac_type, lang) if ac_type else ""
+                    detail = f" — {al} ({ac})" if al and ac else f" — {al or ac}"
                     lines.append(f"    {reg}{detail} · {count} session{'s' if count != 1 else ''}")
 
             if s["multi_airport"]:
@@ -41,7 +45,9 @@ async def handle_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                 lines.append("  Spotted at multiple airports:")
                 for reg, apt_count, airports in s["multi_airport"]:
                     airline, ac_type = cfg.catalog.get_aircraft_info(reg)
-                    detail = f" — {airline} ({ac_type})" if airline and ac_type else f" — {airline or ac_type}"
+                    al = tr_airline(airline, lang) if airline else ""
+                    ac = tr_aircraft(ac_type, lang) if ac_type else ""
+                    detail = f" — {al} ({ac})" if al and ac else f" — {al or ac}"
                     apt_list = ", ".join(a.strip() for a in airports.split(","))
                     lines.append(f"    {reg}{detail} · {apt_list} ({apt_count} airports)")
         else:

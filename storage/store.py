@@ -168,6 +168,13 @@ class SqliteStore:
                     value TEXT NOT NULL
                 )
             """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS users (
+                    chat_id  TEXT PRIMARY KEY,
+                    is_admin INTEGER NOT NULL DEFAULT 0,
+                    language TEXT NOT NULL DEFAULT 'en'
+                )
+            """)
 
     # ------------------------------------------------------------------
     # App settings (bot-managed, persisted across restarts)
@@ -826,6 +833,51 @@ class SqliteStore:
                 pass
 
         return dest_path
+
+    # ------------------------------------------------------------------
+    # User management
+    # ------------------------------------------------------------------
+
+    def upsert_user(self, chat_id: str, is_admin: bool, language: str = "en") -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO users(chat_id, is_admin, language) VALUES (?,?,?) "
+                "ON CONFLICT(chat_id) DO UPDATE SET is_admin=excluded.is_admin",
+                (str(chat_id), 1 if is_admin else 0, language),
+            )
+
+    def get_user(self, chat_id: str) -> Optional[Dict]:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT chat_id, is_admin, language FROM users WHERE chat_id = ?",
+                (str(chat_id),),
+            ).fetchone()
+            if not row:
+                return None
+            return {"chat_id": row["chat_id"], "is_admin": bool(row["is_admin"]), "language": row["language"]}
+
+    def get_all_users(self) -> List[Dict]:
+        rows = self._fetch("SELECT chat_id, is_admin, language FROM users")
+        return [{"chat_id": r["chat_id"], "is_admin": bool(r["is_admin"]), "language": r["language"]} for r in rows]
+
+    def delete_user(self, chat_id: str) -> bool:
+        with self._connect() as conn:
+            cur = conn.execute("DELETE FROM users WHERE chat_id = ? AND is_admin = 0", (str(chat_id),))
+            return cur.rowcount > 0
+
+    def set_user_language(self, chat_id: str, language: str) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE users SET language = ? WHERE chat_id = ?",
+                (language, str(chat_id)),
+            )
+
+    def is_admin(self, chat_id: str) -> bool:
+        user = self.get_user(str(chat_id))
+        return bool(user and user["is_admin"])
+
+    def is_known_user(self, chat_id: str) -> bool:
+        return self.get_user(str(chat_id)) is not None
 
     # ------------------------------------------------------------------
     # Internal helpers

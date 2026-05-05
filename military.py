@@ -8,6 +8,8 @@ from typing import List, Optional
 import requests
 from telegram.ext import ContextTypes
 
+from translations import t, tr_aircraft
+
 log = logging.getLogger(__name__)
 
 # ICAO hex address ranges → country name
@@ -109,7 +111,7 @@ def _is_on_approach(ac: dict, airport_lat: float, airport_lon: float,
     return _haversine_nm(float(lat), float(lon), airport_lat, airport_lon) <= radius_nm
 
 
-def _format_notification(ac: dict, airport_iata: str, dist_nm: float) -> str:
+def _format_notification(ac: dict, airport_iata: str, dist_nm: float, lang: str = "en") -> str:
     registration = ac.get("r") or "N/A"
     callsign     = (ac.get("flight") or "").strip() or "N/A"
     ac_type      = ac.get("t") or "N/A"
@@ -118,21 +120,20 @@ def _format_notification(ac: dict, airport_iata: str, dist_nm: float) -> str:
     speed        = ac.get("gs", "N/A")
     country      = _country_from_hex(ac.get("hex", "")) or "Unknown"
 
-    # Show full description if available, otherwise fall back to type code
-    aircraft_str = f"{desc} ({ac_type})" if desc else ac_type
+    aircraft_str = f"{tr_aircraft(desc, lang)} ({ac_type})" if desc else ac_type
 
     hex_code = (ac.get("hex") or "").lower()
     map_link = f"\nhttps://globe.adsb.fi/?icao={hex_code}" if hex_code else ""
 
     return "\n".join([
-        "<b>Military Aircraft Approaching</b>",
-        f"  Registration: <b>{registration}</b>",
+        f"<b>{t('military_approaching', lang)}</b>",
+        f"  {t('registration', lang)}: <b>{registration}</b>",
         f"  Callsign: {callsign}",
-        f"  Country: {country}",
-        f"  Aircraft: {aircraft_str}",
-        f"  Altitude: {alt} ft",
-        f"  Speed: {speed} kts",
-        f"  Distance: {dist_nm:.0f} nm from {airport_iata}",
+        f"  {t('country', lang)}: {country}",
+        f"  {t('aircraft', lang)}: {aircraft_str}",
+        f"  {t('altitude', lang)}: {alt} ft",
+        f"  {t('speed', lang)}: {speed} kts",
+        f"  {t('distance', lang)}: {dist_nm:.0f} nm from {airport_iata}",
     ]) + map_link
 
 
@@ -164,10 +165,12 @@ async def check_military(context: ContextTypes.DEFAULT_TYPE) -> None:
             float(ac["lat"]), float(ac["lon"]),
             cfg.airport_lat, cfg.airport_lon,
         )
-        message = _format_notification(ac, cfg.airport_iata, dist_nm)
 
         try:
-            await context.bot.send_message(chat_id=cfg.chat_id, text=message, parse_mode="HTML")
+            for dest_chat_id in cfg.all_chat_ids:
+                lang = cfg.language_for(dest_chat_id)
+                message = _format_notification(ac, cfg.airport_iata, dist_nm, lang=lang)
+                await context.bot.send_message(chat_id=dest_chat_id, text=message, parse_mode="HTML")
             cfg.store.mark_military_notified(registration, now_ts)
             log.info("Military notification sent: %s", registration)
         except Exception as exc:
