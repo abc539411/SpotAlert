@@ -126,6 +126,8 @@ async def handle_lookup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         else:
             lines.append("Not yet photographed")
 
+    lines.append(f"\nhttps://www.flightradar24.com/data/aircraft/{registration.lower()}")
+
     await update.message.reply_html("\n".join(lines))
 
 
