@@ -61,16 +61,35 @@ def _render_list_html(title: str, columns: list, rows: list, show_index: bool) -
 
 
 def _lookup_airline_icao(context: ContextTypes.DEFAULT_TYPE, registration: str) -> str:
-    """Return airline ICAO code from FR24 rego details, or empty string if unavailable."""
+    """Return airline ICAO code — DB first, FR24 fallback."""
+    cfg = context.bot_data["cfg"]
+
+    # DB: find the flight number for this registration, then look up airline ICAO
+    # from the departure pattern table (populated at every notification).
     try:
-        cfg = context.bot_data["cfg"]
+        for record in cfg.store.get_tracked_flights():
+            if record["registration"] == registration and record["flight_number"]:
+                row = cfg.store._fetch(
+                    "SELECT airline_icao FROM flight_departure_pattern "
+                    "WHERE arrival_flight_number = ? AND airport_iata = ? "
+                    "AND airline_icao IS NOT NULL ORDER BY last_seen_ts DESC LIMIT 1",
+                    (record["flight_number"], cfg.airport_iata),
+                )
+                if row and row[0]["airline_icao"]:
+                    return row[0]["airline_icao"]
+                break
+    except Exception as exc:
+        log.warning("DB airline ICAO lookup failed for %s: %s", registration, exc)
+
+    # Fallback: FR24
+    try:
         details = cfg.fr_api.get_rego_details(registration)
         data = (details or {}).get("data") or []
         if data:
             airline = (data[0].get("airline") or {})
             return (airline.get("code") or {}).get("icao") or ""
     except Exception as exc:
-        log.warning("Airline lookup failed for %s: %s", registration, exc)
+        log.warning("FR24 airline lookup failed for %s: %s", registration, exc)
     return ""
 
 
