@@ -6,7 +6,7 @@ from datetime import datetime
 
 import pytz
 from telegram import Update
-from telegram.ext import Application, ContextTypes, MessageHandler, filters
+from telegram.ext import Application, ConversationHandler, ContextTypes, MessageHandler, filters
 
 log = logging.getLogger(__name__)
 
@@ -39,9 +39,21 @@ def _format_seen(last_seen_ts: int, airport_iata: str, airport_tz: str) -> str:
 async def handle_lookup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text = update.message.text or ""
     registration = _extract_registration(text)
-    log.info("Lookup: text=%r → registration=%r", text, registration)
     if not registration:
         return
+
+    # Skip if user is inside an active ConversationHandler
+    for handler_group in context.application.handlers.values():
+        for h in handler_group:
+            if isinstance(h, ConversationHandler):
+                try:
+                    key = h._get_key(update)
+                    if h._conversations.get(key) is not None:
+                        return
+                except Exception:
+                    pass
+
+    log.info("Lookup: text=%r → registration=%r", text, registration)
 
     cfg = context.bot_data["cfg"]
 
@@ -76,8 +88,14 @@ async def handle_lookup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 aircraft_code = ((data[0].get("aircraft") or {}).get("model") or {}).get("code") or ""
                 aircraft_name = ((data[0].get("aircraft") or {}).get("model") or {}).get("text") or ""
                 airline_name  = (data[0].get("airline") or {}).get("name") or ""
-                aircraft_str  = f"{aircraft_name} ({aircraft_code})" if aircraft_name else aircraft_code
-                operator_str  = airline_name
+            else:
+                # No flight history — fall back to aircraftInfo (registration-level data)
+                info = (rego_details or {}).get("aircraftInfo") or {}
+                aircraft_code = (info.get("model") or {}).get("code") or ""
+                aircraft_name = (info.get("model") or {}).get("text") or ""
+                airline_name  = (info.get("airline") or {}).get("name") or ""
+            aircraft_str = f"{aircraft_name} ({aircraft_code})" if aircraft_name else aircraft_code
+            operator_str = airline_name
         except Exception as exc:
             log.warning("FR24 lookup failed for %s: %s", registration, exc)
 
