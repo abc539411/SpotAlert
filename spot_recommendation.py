@@ -326,6 +326,7 @@ class FlightEval:
 def _lookup_departure_for_flight(cfg, arrival_fn: str) -> Tuple[Optional[str], Optional[int], str]:
     """Look up departure info for an arrival flight number from DB.
     Returns (dep_fn, dep_ts, dep_time_label) or (None, None, '').
+    Precedence for dep_ts: estimated → scheduled → None (predicted, no time).
     """
     if not arrival_fn:
         return None, None, ""
@@ -334,8 +335,12 @@ def _lookup_departure_for_flight(cfg, arrival_fn: str) -> Tuple[Optional[str], O
         return None, None, ""
     dep_fn, _, _, _ = predicted
     dep_info = cfg.store.get_predicted_dep_info(dep_fn, cfg.airport_iata)
-    dep_ts = dep_info.get("scheduled_dep_ts") if dep_info else None
-    return dep_fn, dep_ts, "Predicted"
+    if dep_info:
+        if dep_info.get("estimated_dep_ts"):
+            return dep_fn, dep_info["estimated_dep_ts"], "Estimated"
+        if dep_info.get("scheduled_dep_ts"):
+            return dep_fn, dep_info["scheduled_dep_ts"], "Scheduled"
+    return dep_fn, None, "Predicted"
 
 
 def _populate_departures(flights: List["FlightEval"], cfg,
@@ -478,7 +483,7 @@ def _flight_line(f: "FlightEval", tz, include_reason: bool = False,
             times.append(f"arr {arr}")
         if f.dep_ts:
             dep = datetime.fromtimestamp(f.dep_ts).astimezone(tz).strftime("%H:%M")
-            times.append(f"dep {dep} ({f.dep_time_label})")
+            times.append(f"dep {dep}")
         time_str = " / ".join(times) if times else "—"
     else:
         ts = f.session_ts if f.session_ts is not None else f.arrival_ts
