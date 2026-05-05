@@ -47,20 +47,44 @@ async def handle_lookup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
     lines = [f"<b>Lookup: {registration}</b>", ""]
 
-    # --- FR24 aircraft details ---
+    # --- Aircraft details: DB first, FR24 fallback ---
+    aircraft_str = ""
+    operator_str = ""
+
+    # Check notification_record for stored detail ("Airline (Type)")
     try:
-        rego_details = cfg.fr_api.get_rego_details(registration)
-        data = (rego_details or {}).get("data") or []
-        if data:
-            aircraft_code = ((data[0].get("aircraft") or {}).get("model") or {}).get("code") or ""
-            aircraft_name = ((data[0].get("aircraft") or {}).get("model") or {}).get("text") or ""
-            airline_name  = (data[0].get("airline") or {}).get("name") or ""
-            if aircraft_name or aircraft_code:
-                lines.append(f"Aircraft: {aircraft_name} ({aircraft_code})" if aircraft_name else f"Aircraft: {aircraft_code}")
-            if airline_name:
-                lines.append(f"Operator: {airline_name}")
+        for record in cfg.store.get_tracked_flights():
+            if record["registration"] == registration and record["detail"]:
+                import re as _re
+                detail = record["detail"]
+                m = _re.match(r"^(.*?)\s*\(([^)]+)\)\s*$", detail)
+                if m:
+                    operator_str  = m.group(1).strip()
+                    aircraft_str  = m.group(2).strip()
+                else:
+                    operator_str = detail
+                break
     except Exception as exc:
-        log.warning("FR24 lookup failed for %s: %s", registration, exc)
+        log.warning("DB detail lookup failed for %s: %s", registration, exc)
+
+    # Fallback to FR24 if DB had nothing
+    if not aircraft_str and not operator_str:
+        try:
+            rego_details = cfg.fr_api.get_rego_details(registration)
+            data = (rego_details or {}).get("data") or []
+            if data:
+                aircraft_code = ((data[0].get("aircraft") or {}).get("model") or {}).get("code") or ""
+                aircraft_name = ((data[0].get("aircraft") or {}).get("model") or {}).get("text") or ""
+                airline_name  = (data[0].get("airline") or {}).get("name") or ""
+                aircraft_str  = f"{aircraft_name} ({aircraft_code})" if aircraft_name else aircraft_code
+                operator_str  = airline_name
+        except Exception as exc:
+            log.warning("FR24 lookup failed for %s: %s", registration, exc)
+
+    if aircraft_str:
+        lines.append(f"Aircraft: {aircraft_str}")
+    if operator_str:
+        lines.append(f"Operator: {operator_str}")
 
     lines.append("")
 

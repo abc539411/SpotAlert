@@ -166,25 +166,7 @@ async def check_military(context: ContextTypes.DEFAULT_TYPE) -> None:
         )
         message = _format_notification(ac, cfg.airport_iata, dist_nm)
 
-        photo_url = None
         try:
-            rego_details = cfg.fr_api.get_rego_details(registration)
-            images = (rego_details or {}).get("aircraftImages") or []
-            if images:
-                photo_url = images[0]["images"]["medium"][0]["link"]
-        except Exception as exc:
-            log.warning("Could not fetch photo for %s: %s", registration, exc)
-
-        try:
-            if photo_url:
-                try:
-                    await context.bot.send_photo(
-                        chat_id=cfg.chat_id,
-                        photo=photo_url,
-                        caption=f"Aircraft Photo: {registration}",
-                    )
-                except Exception as exc:
-                    log.warning("Could not send photo for %s: %s", registration, exc)
             await context.bot.send_message(chat_id=cfg.chat_id, text=message, parse_mode="HTML")
             cfg.store.mark_military_notified(registration, now_ts)
             log.info("Military notification sent: %s", registration)
