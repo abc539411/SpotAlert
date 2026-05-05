@@ -171,9 +171,11 @@ async def check_rolling_recommendation(context: ContextTypes.DEFAULT_TYPE, cfg, 
     interesting = [e for e in evals if e.qualifying]
     filtered    = [e for e in evals if not e.qualifying]
     _populate_departures(interesting, cfg, sunset_ts=sunset_ts, sunrise_ts=sunrise_ts)
-    # Set session_ts for display (use dep_ts if available, else arr_ts)
     for e in interesting:
-        e.session_ts = e.dep_ts if e.dep_ts else e.arrival_ts
+        arr_in = window_start <= e.arrival_ts <= window_end
+        dep_in = bool(e.dep_ts and window_start <= e.dep_ts <= window_end)
+        e.session_ts = e.arrival_ts if arr_in else (e.dep_ts or e.arrival_ts)
+        e.show_dep = arr_in and dep_in
 
     if len(interesting) < cfg.spot_rec_threshold:
         return
@@ -320,6 +322,7 @@ class FlightEval:
     dep_ts: Optional[int] = None     # departure timestamp
     dep_time_label: str = ""         # "Predicted", "Scheduled", "Estimated"
     session_ts: Optional[int] = None # time used for Scenario B window optimisation
+    show_dep: bool = False           # True when both arr and dep fall within the session window
 
 
 
@@ -367,8 +370,9 @@ def _best_session_window(qualifying: List["FlightEval"], session_secs: int) -> L
     """Find the session window maximising qualifying aircraft count.
 
     Each aircraft contributes arr_ts and dep_ts (if available) as candidate window starts.
-    Tiebreaker: minimise span (last session_ts - first session_ts) in window.
-    Per aircraft: if both times fall in window, prefer arrival (minimises window span).
+    Tiebreaker: minimise span across ALL in-window events (both arr and dep counted).
+    Per aircraft: session_ts = arr if arr in window, else dep.
+    show_dep set True when both arr and dep fall within the chosen window.
     """
     if not qualifying:
         return []
@@ -380,34 +384,43 @@ def _best_session_window(qualifying: List["FlightEval"], session_secs: int) -> L
             candidates.add(e.dep_ts)
 
     best_flights: List["FlightEval"] = []
-    best_times: List[int] = []
     best_span = float("inf")
+    best_ws: Optional[int] = None
+    best_we: Optional[int] = None
 
     for ws in sorted(candidates):
         we = ws + session_secs
         in_window: List["FlightEval"] = []
-        session_times: List[int] = []
+        event_times: List[int] = []  # all events (arr + dep) in window for span calculation
         for e in qualifying:
             arr_in = ws <= e.arrival_ts <= we
             dep_in = bool(e.dep_ts and ws <= e.dep_ts <= we)
             if arr_in or dep_in:
                 in_window.append(e)
-                session_times.append(e.arrival_ts if arr_in else e.dep_ts)
+                if arr_in:
+                    event_times.append(e.arrival_ts)
+                if dep_in:
+                    event_times.append(e.dep_ts)
 
         if not in_window:
             continue
 
-        span = max(session_times) - min(session_times) if len(session_times) > 1 else 0
+        span = max(event_times) - min(event_times) if len(event_times) > 1 else 0
         if len(in_window) > len(best_flights) or (
             len(in_window) == len(best_flights) and span < best_span
         ):
             best_flights = in_window
-            best_times = session_times
             best_span = span
+            best_ws = ws
+            best_we = we
 
-    # Assign session_ts to the winners
-    for e, st in zip(best_flights, best_times):
-        e.session_ts = st
+    # Assign session_ts and show_dep for the best window
+    if best_ws is not None:
+        for e in best_flights:
+            arr_in = best_ws <= e.arrival_ts <= best_we
+            dep_in = bool(e.dep_ts and best_ws <= e.dep_ts <= best_we)
+            e.session_ts = e.arrival_ts if arr_in else e.dep_ts
+            e.show_dep = arr_in and dep_in
 
     return best_flights
 
@@ -488,8 +501,13 @@ def _flight_line(f: "FlightEval", tz, include_reason: bool = False,
     else:
         ts = f.session_ts if f.session_ts is not None else f.arrival_ts
         t = datetime.fromtimestamp(ts).astimezone(tz).strftime("%H:%M")
-        label = "dep" if (f.dep_ts and f.session_ts == f.dep_ts and f.session_ts != f.arrival_ts) else "arr"
-        time_str = f"{label} {t}"
+        if f.show_dep and f.dep_ts:
+            dep_t = datetime.fromtimestamp(f.dep_ts).astimezone(tz).strftime("%H:%M")
+            time_str = f"arr {t} / dep {dep_t}"
+        elif f.dep_ts and f.session_ts == f.dep_ts and f.session_ts != f.arrival_ts:
+            time_str = f"dep {t}"
+        else:
+            time_str = f"arr {t}"
 
     return f"  • {f.registration} — {type_str}{detail_str}{reason_str} — {time_str}"
 
