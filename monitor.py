@@ -583,17 +583,20 @@ async def run_check(context: ContextTypes.DEFAULT_TYPE) -> None:
 
     log.info("Checking arrivals at %s...", cfg.airport_iata)
 
-    # Build maps of currently visible arrivals for follow-up checks.
+    # Build maps of currently visible arrivals and departures for follow-up checks.
     current_arrivals: dict = {}             # registration  → flight dict
     arrivals_by_flight_number: dict = {}    # flight_number → (registration, flight dict)
+    current_departures: dict = {}           # registration  → departure flight dict
 
     try:
-        # Pass 1: collect all arrivals from every page
+        # Pass 1: collect all arrivals and departures from every page
         all_arriving_flights = []
         for page in cfg.fetch_pages:
             try:
                 data = cfg.fr_api.get_airport_details(code=cfg.airport_code, page=page)
-                arrivals = data["airport"]["pluginData"]["schedule"]["arrivals"]["data"]
+                schedule = data["airport"]["pluginData"]["schedule"]
+                arrivals   = schedule["arrivals"]["data"]
+                departures = schedule.get("departures", {}).get("data") or []
             except Exception as exc:
                 log.warning("Failed to fetch arrivals (page %d): %s", page, exc)
                 continue
@@ -608,6 +611,13 @@ async def run_check(context: ContextTypes.DEFAULT_TYPE) -> None:
                     if fn and fn not in arrivals_by_flight_number:
                         arrivals_by_flight_number[fn] = (registration, flight)
                 all_arriving_flights.append(arriving_flight)
+
+            for dep_flight in departures:
+                parsed = _parse_aircraft(dep_flight)
+                if parsed:
+                    registration, _, flight = parsed
+                    if registration not in current_departures:
+                        current_departures[registration] = flight
 
         # Record actual arrivals — only planes that have landed, using their real arrival time
         landed = {
@@ -633,7 +643,7 @@ async def run_check(context: ContextTypes.DEFAULT_TYPE) -> None:
     except Exception as exc:
         log.error("Unexpected error in run_check: %s", exc, exc_info=True)
 
-    await check_follow_ups(context, cfg, chat_id, current_arrivals, arrivals_by_flight_number)
+    await check_follow_ups(context, cfg, chat_id, current_arrivals, arrivals_by_flight_number, current_departures)
 
     from spot_recommendation import check_rolling_recommendation
     await check_rolling_recommendation(context, cfg, chat_id)
@@ -679,9 +689,22 @@ async def _send_notification(
         )
         if dep_fn:
             sched_dep_ts = _get_scheduled_dep_ts(rego_details, cfg.airport_iata, dep_fn)
+            # Also capture estimated departure time if available
+            estimated_dep_ts = None
+            for fl in (rego_details or {}).get("data") or []:
+                try:
+                    fn = ((fl.get("identification") or {}).get("number") or {}).get("default")
+                    origin = fl["airport"]["origin"]["code"]["iata"]
+                    if fn == dep_fn and origin == cfg.airport_iata:
+                        est = (fl.get("time") or {}).get("estimated", {}).get("departure")
+                        if isinstance(est, (int, float)):
+                            estimated_dep_ts = int(est)
+                except (KeyError, TypeError):
+                    continue
             cfg.store.record_departure_pattern(
                 arrival_fn, dep_fn, cfg.airport_iata, now_ts,
                 scheduled_dep_ts=sched_dep_ts,
+                estimated_dep_ts=estimated_dep_ts,
                 airline_name=al_name, airline_iata=al_iata, airline_icao=al_icao,
                 dest_name=dest_name, dest_iata=dest_iata, dest_icao=dest_icao,
             )
@@ -732,7 +755,8 @@ async def _send_notification(
 # ------------------------------------------------------------------
 
 async def check_follow_ups(context, cfg, chat_id: str, current_arrivals: dict,
-                           arrivals_by_flight_number: dict = None) -> None:
+                           arrivals_by_flight_number: dict = None,
+                           current_departures: dict = None) -> None:
     now_ts = int(datetime.now().timestamp())
     cfg.store.cleanup_arrived_flights(now_ts)
 
@@ -756,6 +780,19 @@ async def check_follow_ups(context, cfg, chat_id: str, current_arrivals: dict,
                 or arrival_ts
             )
             cfg.store.update_tracked_flight(registration, now_ts, current_arrival_ts)
+
+            # Refresh departure timestamps from current departures schedule
+            if current_departures and registration in current_departures and flight_number:
+                dep_flight = current_departures[registration]
+                dep_fn = str(_safe_get(dep_flight, "identification", "number", "default", default=""))
+                if dep_fn and dep_fn != "N/A":
+                    estimated_dep_ts = _safe_get(dep_flight, "time", "estimated", "departure", default=None)
+                    scheduled_dep_ts = _safe_get(dep_flight, "time", "scheduled", "departure", default=None)
+                    estimated_dep_ts = int(estimated_dep_ts) if isinstance(estimated_dep_ts, (int, float)) else None
+                    scheduled_dep_ts = int(scheduled_dep_ts) if isinstance(scheduled_dep_ts, (int, float)) else None
+                    cfg.store.update_departure_timestamps(
+                        flight_number, dep_fn, cfg.airport_iata, estimated_dep_ts, scheduled_dep_ts
+                    )
 
             # Check FR24 status for confirmed cancellation or diversion
             status_text, diverted_airport = _get_fr24_status(current_flight)
@@ -784,7 +821,7 @@ async def check_follow_ups(context, cfg, chat_id: str, current_arrivals: dict,
                     and (current_arrival_ts - now_ts) <= cfg.reminder_hours * _HOURS
                     and (original_arr_ts - first_notified_ts) > cfg.reminder_hours * _HOURS):
                 await _send_arrival_reminder(
-                    context, cfg, chat_id, current_flight, registration, notification_type
+                    context, cfg, chat_id, current_flight, registration, notification_type, flight_number
                 )
                 cfg.store.mark_reminder_sent(registration)
 
@@ -826,6 +863,7 @@ async def _send_arrival_reminder(
     flight: dict,
     registration: str,
     notification_type: str,
+    flight_number: str = "",
 ) -> None:
     now_ts = int(datetime.now().timestamp())
     arr_ts, arr_label = _best_time(flight, "arrival")
@@ -847,6 +885,33 @@ async def _send_arrival_reminder(
         f"  Airline: {airline_name}",
         f"  {arr_label}: {arrival_str} (Local) — in ~{hours_away}h",
     ]
+
+    # Next departure — DB lookup: estimated → scheduled → predicted
+    if flight_number and cfg.departure_pattern_threshold > 0:
+        predicted = cfg.store.get_predicted_departure(flight_number, cfg.airport_iata, cfg.departure_pattern_threshold)
+        if predicted:
+            dep_fn, confidence, _, _ = predicted
+            dep_info = cfg.store.get_predicted_dep_info(dep_fn, cfg.airport_iata)
+            estimated_ts = dep_info.get("estimated_dep_ts") if dep_info else None
+            sched_ts     = dep_info.get("scheduled_dep_ts") if dep_info else None
+            dest_name    = dep_info.get("dest_name") if dep_info else None
+            dest_iata    = dep_info.get("dest_iata") if dep_info else None
+            dest_icao    = dep_info.get("dest_icao") if dep_info else None
+            lines.append("")
+            lines.append("<b>Next Departure:</b>")
+            if estimated_ts:
+                dep_str = datetime.fromtimestamp(estimated_ts).astimezone(tz).strftime("%a %H:%M")
+                lines.append(f"  Estimated: {dep_str} (Local) — {dep_fn}")
+            elif sched_ts:
+                dep_str = datetime.fromtimestamp(sched_ts).astimezone(tz).strftime("%a %H:%M")
+                lines.append(f"  Scheduled: {dep_str} (Local) — {dep_fn}")
+            else:
+                lines.append(f"  Predicted: {dep_fn}")
+            if dest_name:
+                lines.append(f"  To: {dest_name} ({dest_iata}/{dest_icao})")
+            if not estimated_ts and not sched_ts:
+                lines.append(f"  Confidence: {confidence:.0f}%")
+
     flight_id = _safe_get(flight, "identification", "id", default=None)
     if flight_id and flight_id != "N/A":
         lines.append(f"\nhttps://www.flightradar24.com/{flight_id}")
