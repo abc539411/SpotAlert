@@ -10,7 +10,6 @@ from astral import LocationInfo
 from astral.sun import sun
 from telegram.ext import ContextTypes
 
-from translations import t, tr_airline, tr_airport, tr_aircraft
 
 log = logging.getLogger(__name__)
 
@@ -188,31 +187,29 @@ def format_notification(
     cfg_store=None,
     dep_pattern_threshold: int = 0,
     fr_api=None,
-    lang: str = "en",
 ) -> str:
     lines = [f"<b>{notification_type}</b>"]
 
-    lines.append(f"  {t('flight', lang)}: {_safe_get(flight, 'identification', 'number', 'default')}")
+    lines.append(f"  Flight: {_safe_get(flight, 'identification', 'number', 'default')}")
 
     origin = (flight.get("airport") or {}).get("origin") or {}
-    origin_name = tr_airport(origin.get("name") or "N/A", lang)
+    origin_name = origin.get("name") or "N/A"
     origin_iata = _safe_get(origin, "code", "iata")
     origin_icao = _safe_get(origin, "code", "icao")
-    lines.append(f"  {t('dep_airport', lang)}: {origin_name} ({origin_iata}/{origin_icao})")
+    lines.append(f"  Dep. Airport: {origin_name} ({origin_iata}/{origin_icao})")
 
-    lines.append(f"  {t('status', lang)}: {get_flight_status(flight)}")
+    lines.append(f"  Status: {get_flight_status(flight)}")
 
     aircraft = (flight.get("aircraft") or {})
-    aircraft_text = tr_aircraft(_safe_get(aircraft, 'model', 'text'), lang)
-    lines.append(f"  {t('aircraft', lang)}: {aircraft_text} ({_safe_get(aircraft, 'model', 'code')})")
+    lines.append(f"  Aircraft: {_safe_get(aircraft, 'model', 'text')} ({_safe_get(aircraft, 'model', 'code')})")
 
     airline = (flight.get("airline") or {})
-    airline_name = tr_airline(airline.get("name") or "N/A", lang)
+    airline_name = airline.get("name") or "N/A"
     airline_iata = _safe_get(airline, "code", "iata")
     airline_icao = _safe_get(airline, "code", "icao")
-    lines.append(f"  {t('airline', lang)}: {airline_name} ({airline_iata}/{airline_icao})")
+    lines.append(f"  Airline: {airline_name} ({airline_iata}/{airline_icao})")
 
-    lines.append(f"  {t('registration', lang)}: {_safe_get(aircraft, 'registration')}")
+    lines.append(f"  Registration: {_safe_get(aircraft, 'registration')}")
     lines.append("")
 
     if catalog is not None:
@@ -221,9 +218,9 @@ def format_notification(
             dt, apt, count = spotted
             apt_str = f" at {apt}" if apt else ""
             times_str = f"({count} time{'s' if count != 1 else ''})"
-            lines.append(f"  {t('last_spotted', lang)}: {dt.strftime('%d %b %Y')}{apt_str} {times_str}")
+            lines.append(f"  Last Spotted: {dt.strftime('%d %b %Y')}{apt_str} {times_str}")
         else:
-            lines.append(f"  {t('last_spotted', lang)}: {t('not_photographed', lang)}")
+            lines.append("  Last Spotted: Not yet photographed")
 
     last_seen_ts = cfg_store.get_last_seen(registration) if cfg_store is not None else None
     if last_seen_ts:
@@ -239,29 +236,27 @@ def format_notification(
             seen_str = f"{seen_date} ({days_ago} days ago)"
         else:
             seen_str = seen_date
-        lines.append(f"  {t('last_seen_at', lang, airport=airport_iata)}: {seen_str}")
+        lines.append(f"  Last Seen at {airport_iata}: {seen_str}")
 
-    lines += ["", f"<b>{t('arrival_section', lang)}:</b>"]
-    lines.append(f"  {t('arrival_period', lang)}: {get_arrival_period(flight, airport_tz, airport_lat, airport_lon)}")
+    lines += ["", "<b>Arrival:</b>"]
+    lines.append(f"  Period: {get_arrival_period(flight, airport_tz, airport_lat, airport_lon)}")
 
     tz = pytz.timezone(airport_tz)
     arr_ts, arr_label = _best_time(flight, "arrival")
     if arr_ts:
-        translated_label = t(arr_label.lower(), lang) if arr_label.lower() in ("estimated", "scheduled") else arr_label
-        lines.append(f"  {translated_label}: {datetime.fromtimestamp(arr_ts).astimezone(tz).strftime('%a %H:%M')} (Local)")
+        lines.append(f"  {arr_label}: {datetime.fromtimestamp(arr_ts).astimezone(tz).strftime('%a %H:%M')} (Local)")
     else:
-        lines.append(f"  {t('arrival_section', lang)}: N/A")
+        lines.append("  Arrival: N/A")
 
     if rego_details:
         dep_time, dep_fn, al_name, al_iata, al_icao, dest_name, dest_iata, dest_icao, dep_label = get_next_departure(
             rego_details, airport_iata, airport_tz
         )
         if dep_time:
-            lines += ["", f"<b>{t('next_departure', lang)}</b>"]
-            translated_dep_label = t(dep_label.lower(), lang) if dep_label.lower() in ("estimated", "scheduled") else dep_label
-            lines.append(f"  {translated_dep_label}: {dep_time.strftime('%a %H:%M')} (Local) — {dep_fn}")
+            lines += ["", "<b>Next Departure:</b>"]
+            lines.append(f"  {dep_label}: {dep_time.strftime('%a %H:%M')} (Local) — {dep_fn}")
             if dest_name:
-                lines.append(f"  {t('to_dest', lang)}: {tr_airport(dest_name, lang)} ({dest_iata}/{dest_icao})")
+                lines.append(f"  To: {dest_name} ({dest_iata}/{dest_icao})")
         elif cfg_store is not None and dep_pattern_threshold > 0:
             arrival_fn = str(_safe_get(flight, "identification", "number", "default", default=""))
             if arrival_fn and arrival_fn != "N/A":
@@ -296,15 +291,15 @@ def format_notification(
                         except Exception:
                             pass
                     tz = pytz.timezone(airport_tz)
-                    lines += ["", f"<b>{t('next_departure', lang)}</b>"]
+                    lines += ["", "<b>Next Departure:</b>"]
                     if sched_ts:
                         dep_time = datetime.fromtimestamp(sched_ts).astimezone(tz)
-                        lines.append(f"  {t('predicted', lang)}: {dep_time.strftime('%a %H:%M')} (Local) — {pred_fn}")
+                        lines.append(f"  Predicted: {dep_time.strftime('%a %H:%M')} (Local) — {pred_fn}")
                     else:
-                        lines.append(f"  {t('predicted', lang)}: {pred_fn}")
+                        lines.append(f"  Predicted: {pred_fn}")
                     if dest_name:
-                        lines.append(f"  {t('to_dest', lang)}: {tr_airport(dest_name, lang)} ({dest_iata}/{dest_icao})")
-                    lines.append(f"  {t('confidence', lang)}: {confidence:.0f}%")
+                        lines.append(f"  To: {dest_name} ({dest_iata}/{dest_icao})")
+                    lines.append(f"  Confidence: {confidence:.0f}%")
 
     flight_id  = _safe_get(flight, "identification", "id", default=None)
     flight_num = _safe_get(flight, "identification", "number", "default", default=None)
@@ -710,24 +705,21 @@ async def _send_notification(
                 dest_name=dest_name, dest_iata=dest_iata, dest_icao=dest_icao,
             )
     try:
-        # Send to all registered users, each in their own language
+        message = format_notification(
+            flight, registration, notification_type, rego_details,
+            cfg.airport_iata, cfg.airport_tz, cfg.airport_lat, cfg.airport_lon,
+            catalog=cfg.catalog,
+            cfg_store=cfg.store,
+            dep_pattern_threshold=cfg.departure_pattern_threshold,
+            fr_api=cfg.fr_api,
+        )
         for dest_chat_id in cfg.all_chat_ids:
-            lang = cfg.language_for(dest_chat_id)
-            message = format_notification(
-                flight, registration, notification_type, rego_details,
-                cfg.airport_iata, cfg.airport_tz, cfg.airport_lat, cfg.airport_lon,
-                catalog=cfg.catalog,
-                cfg_store=cfg.store,
-                dep_pattern_threshold=cfg.departure_pattern_threshold,
-                fr_api=cfg.fr_api,
-                lang=lang,
-            )
             if photo_url:
                 try:
                     await context.bot.send_photo(
                         chat_id=dest_chat_id,
                         photo=photo_url,
-                        caption=t("aircraft_photo", lang, registration=registration),
+                        caption=f"Aircraft Photo: {registration}",
                     )
                 except Exception as exc:
                     log.warning("Could not send photo for %s to %s: %s", registration, dest_chat_id, exc)
@@ -884,43 +876,42 @@ async def _send_arrival_reminder(
             dep_info = cfg.store.get_predicted_dep_info(dep_fn, cfg.airport_iata)
             dep_data = {"dep_fn": dep_fn, "confidence": confidence, "dep_info": dep_info}
 
+    arrival_str = datetime.fromtimestamp(arrival_ts).astimezone(tz).strftime("%a %H:%M") if arrival_ts else "N/A"
+    lines = [
+        f"<b>Arriving Soon — {notification_type}</b>",
+        f"  Flight: {_safe_get(flight, 'identification', 'number', 'default')}",
+        f"  Aircraft: {aircraft_text_raw} ({_safe_get(aircraft, 'model', 'code')})",
+        f"  Registration: {registration}",
+        f"  Airline: {airline_name_raw}",
+        f"  {arr_label}: {arrival_str} (Local) — in ~{hours_away}h",
+    ]
+    if dep_data:
+        dep_fn     = dep_data["dep_fn"]
+        confidence = dep_data["confidence"]
+        dep_info   = dep_data["dep_info"]
+        estimated_ts = dep_info.get("estimated_dep_ts") if dep_info else None
+        sched_ts     = dep_info.get("scheduled_dep_ts") if dep_info else None
+        dest_name    = dep_info.get("dest_name") if dep_info else None
+        dest_iata    = dep_info.get("dest_iata") if dep_info else None
+        dest_icao    = dep_info.get("dest_icao") if dep_info else None
+        lines.append("")
+        lines.append("<b>Next Departure:</b>")
+        if estimated_ts:
+            dep_str = datetime.fromtimestamp(estimated_ts).astimezone(tz).strftime("%a %H:%M")
+            lines.append(f"  Estimated: {dep_str} (Local) — {dep_fn}")
+        elif sched_ts:
+            dep_str = datetime.fromtimestamp(sched_ts).astimezone(tz).strftime("%a %H:%M")
+            lines.append(f"  Scheduled: {dep_str} (Local) — {dep_fn}")
+        else:
+            lines.append(f"  Predicted: {dep_fn}")
+        if dest_name:
+            lines.append(f"  To: {dest_name} ({dest_iata}/{dest_icao})")
+        if not estimated_ts and not sched_ts:
+            lines.append(f"  Confidence: {confidence:.0f}%")
+    if flight_id and flight_id != "N/A":
+        lines.append(f"\nhttps://www.flightradar24.com/{flight_id}")
+
     for dest_chat_id in cfg.all_chat_ids:
-        lang = cfg.language_for(dest_chat_id)
-        arrival_str = datetime.fromtimestamp(arrival_ts).astimezone(tz).strftime("%a %H:%M") if arrival_ts else "N/A"
-        translated_arr_label = t(arr_label.lower(), lang) if arr_label.lower() in ("estimated", "scheduled") else arr_label
-        lines = [
-            f"<b>{t('arriving_soon', lang)} — {notification_type}</b>",
-            f"  {t('flight', lang)}: {_safe_get(flight, 'identification', 'number', 'default')}",
-            f"  {t('aircraft', lang)}: {tr_aircraft(aircraft_text_raw, lang)} ({_safe_get(aircraft, 'model', 'code')})",
-            f"  {t('registration', lang)}: {registration}",
-            f"  {t('airline', lang)}: {tr_airline(airline_name_raw, lang)}",
-            f"  {translated_arr_label}: {arrival_str} (Local) — in ~{hours_away}h",
-        ]
-        if dep_data:
-            dep_fn    = dep_data["dep_fn"]
-            confidence = dep_data["confidence"]
-            dep_info  = dep_data["dep_info"]
-            estimated_ts = dep_info.get("estimated_dep_ts") if dep_info else None
-            sched_ts     = dep_info.get("scheduled_dep_ts") if dep_info else None
-            dest_name    = dep_info.get("dest_name") if dep_info else None
-            dest_iata    = dep_info.get("dest_iata") if dep_info else None
-            dest_icao    = dep_info.get("dest_icao") if dep_info else None
-            lines.append("")
-            lines.append(f"<b>{t('next_departure', lang)}:</b>")
-            if estimated_ts:
-                dep_str = datetime.fromtimestamp(estimated_ts).astimezone(tz).strftime("%a %H:%M")
-                lines.append(f"  {t('estimated', lang)}: {dep_str} (Local) — {dep_fn}")
-            elif sched_ts:
-                dep_str = datetime.fromtimestamp(sched_ts).astimezone(tz).strftime("%a %H:%M")
-                lines.append(f"  {t('scheduled', lang)}: {dep_str} (Local) — {dep_fn}")
-            else:
-                lines.append(f"  {t('predicted', lang)}: {dep_fn}")
-            if dest_name:
-                lines.append(f"  {t('to_dest', lang)}: {tr_airport(dest_name, lang)} ({dest_iata}/{dest_icao})")
-            if not estimated_ts and not sched_ts:
-                lines.append(f"  {t('confidence', lang)}: {confidence:.0f}%")
-        if flight_id and flight_id != "N/A":
-            lines.append(f"\nhttps://www.flightradar24.com/{flight_id}")
         try:
             await context.bot.send_message(chat_id=dest_chat_id, text="\n".join(lines), parse_mode="HTML")
         except Exception as exc:
@@ -969,17 +960,16 @@ async def _send_aircraft_swap_notice(
     ac_type  = _safe_get(aircraft, "model", "code")
     ac_name  = _safe_get(aircraft, "model", "text")
     interesting = _classify_new_aircraft(new_flight, new_rego, cfg)
+    lines = [
+        f"<b>Aircraft Changed — {notification_type}</b>",
+        f"  Flight: {flight_number or 'N/A'}",
+        f"  Was: {old_rego}",
+        f"  Now: {new_rego} ({ac_name} / {ac_type})",
+        f"  Arrival: {arrival_str} (Local)",
+    ]
+    if interesting:
+        lines.append(f"\n  <b>{interesting}</b>")
     for dest_chat_id in cfg.all_chat_ids:
-        lang = cfg.language_for(dest_chat_id)
-        lines = [
-            f"<b>{t('aircraft_changed', lang)} — {notification_type}</b>",
-            f"  {t('flight', lang)}: {flight_number or 'N/A'}",
-            f"  Was: {old_rego}",
-            f"  Now: {new_rego} ({tr_aircraft(ac_name, lang)} / {ac_type})",
-            f"  {t('arrival_section', lang)}: {arrival_str} (Local)",
-        ]
-        if interesting:
-            lines.append(f"\n  <b>{interesting}</b>")
         try:
             await context.bot.send_message(chat_id=dest_chat_id, text="\n".join(lines), parse_mode="HTML")
         except Exception as exc:
@@ -992,14 +982,13 @@ async def _send_disappeared_notice(
 ) -> None:
     tz = pytz.timezone(cfg.airport_tz)
     arrival_str = datetime.fromtimestamp(arrival_ts).astimezone(tz).strftime("%a %H:%M") if arrival_ts else "N/A"
+    message = (
+        f"<b>No Longer Visible — {notification_type}</b>\n"
+        f"  Registration: {registration}\n"
+        f"  Flight: {flight_number or 'N/A'}\n"
+        f"  Was scheduled: {arrival_str} (Local)"
+    )
     for dest_chat_id in cfg.all_chat_ids:
-        lang = cfg.language_for(dest_chat_id)
-        message = (
-            f"<b>{t('no_longer_visible', lang)} — {notification_type}</b>\n"
-            f"  {t('registration', lang)}: {registration}\n"
-            f"  {t('flight', lang)}: {flight_number or 'N/A'}\n"
-            f"  Was scheduled: {arrival_str} (Local)"
-        )
         try:
             await context.bot.send_message(chat_id=dest_chat_id, text=message, parse_mode="HTML")
         except Exception as exc:
@@ -1012,14 +1001,13 @@ async def _send_cancellation_notice(
 ) -> None:
     tz = pytz.timezone(cfg.airport_tz)
     arrival_str = datetime.fromtimestamp(arrival_ts).astimezone(tz).strftime("%a %H:%M") if arrival_ts else "N/A"
+    message = (
+        f"<b>Cancelled — {notification_type}</b>\n"
+        f"  Registration: {registration}\n"
+        f"  Flight: {flight_number or 'N/A'}\n"
+        f"  Was scheduled: {arrival_str} (Local)"
+    )
     for dest_chat_id in cfg.all_chat_ids:
-        lang = cfg.language_for(dest_chat_id)
-        message = (
-            f"<b>{t('cancelled', lang)} — {notification_type}</b>\n"
-            f"  {t('registration', lang)}: {registration}\n"
-            f"  {t('flight', lang)}: {flight_number or 'N/A'}\n"
-            f"  Was scheduled: {arrival_str} (Local)"
-        )
         try:
             await context.bot.send_message(chat_id=dest_chat_id, text=message, parse_mode="HTML")
         except Exception as exc:
@@ -1032,14 +1020,14 @@ async def _send_diversion_notice(
 ) -> None:
     tz = pytz.timezone(cfg.airport_tz)
     arrival_str = datetime.fromtimestamp(arrival_ts).astimezone(tz).strftime("%a %H:%M") if arrival_ts else "N/A"
+    airport_str = f" to {diverted_airport}" if diverted_airport else ""
+    message = (
+        f"<b>Diverted{airport_str} — {notification_type}</b>\n"
+        f"  Registration: {registration}\n"
+        f"  Flight: {flight_number or 'N/A'}\n"
+        f"  Was scheduled: {arrival_str} (Local)"
+    )
     for dest_chat_id in cfg.all_chat_ids:
-        lang = cfg.language_for(dest_chat_id)
-        message = (
-            f"<b>{t('diverted_to', lang, airport=diverted_airport or '?')} — {notification_type}</b>\n"
-            f"  {t('registration', lang)}: {registration}\n"
-            f"  {t('flight', lang)}: {flight_number or 'N/A'}\n"
-            f"  Was scheduled: {arrival_str} (Local)"
-        )
         try:
             await context.bot.send_message(chat_id=dest_chat_id, text=message, parse_mode="HTML")
         except Exception as exc:

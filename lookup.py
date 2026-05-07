@@ -7,7 +7,6 @@ from datetime import datetime
 import pytz
 from telegram import Update
 from telegram.ext import Application, ConversationHandler, ContextTypes, MessageHandler, filters
-from translations import t, tr_airline, tr_aircraft
 
 log = logging.getLogger(__name__)
 
@@ -57,9 +56,8 @@ async def handle_lookup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     log.info("Lookup: text=%r → registration=%r", text, registration)
 
     cfg = context.bot_data["cfg"]
-    lang = cfg.language_for(update.effective_chat.id)
 
-    lines = [f"<b>{t('lookup_header', lang, registration=registration)}</b>", ""]
+    lines = [f"<b>Lookup: {registration}</b>", ""]
 
     # --- Aircraft details: DB first, FR24 fallback ---
     aircraft_str = ""
@@ -73,8 +71,8 @@ async def handle_lookup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 detail = record["detail"]
                 m = _re.match(r"^(.*?)\s*\(([^)]+)\)\s*$", detail)
                 if m:
-                    operator_str  = m.group(1).strip()
-                    aircraft_str  = m.group(2).strip()
+                    operator_str = m.group(1).strip()
+                    aircraft_str = m.group(2).strip()
                 else:
                     operator_str = detail
                 break
@@ -95,17 +93,13 @@ async def handle_lookup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 aircraft_code = (info.get("model") or {}).get("code") or ""
                 aircraft_name = (info.get("model") or {}).get("text") or ""
                 airline_name  = (info.get("airline") or {}).get("name") or ""
-            aircraft_str = f"{tr_aircraft(aircraft_name, lang)} ({aircraft_code})" if aircraft_name else aircraft_code
-            operator_str = tr_airline(airline_name, lang)
+            aircraft_str = f"{aircraft_name} ({aircraft_code})" if aircraft_name else aircraft_code
+            operator_str = airline_name
         except Exception as exc:
             log.warning("FR24 lookup failed for %s: %s", registration, exc)
-    else:
-        # Translate operator and aircraft from stored detail
-        operator_str = tr_airline(operator_str, lang)
-        aircraft_str = tr_aircraft(aircraft_str, lang) if aircraft_str else aircraft_str
 
     if aircraft_str:
-        lines.append(f"{t('aircraft', lang)}: {aircraft_str}")
+        lines.append(f"Aircraft: {aircraft_str}")
     if operator_str:
         lines.append(f"Operator: {operator_str}")
 
@@ -114,9 +108,9 @@ async def handle_lookup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     # --- Last Seen at airport (sighting_history) ---
     last_seen_ts = cfg.store.get_last_seen(registration)
     if last_seen_ts:
-        lines.append(f"{t('last_seen_at', lang, airport=cfg.airport_iata)}: {_format_seen(last_seen_ts, cfg.airport_iata, cfg.airport_tz)}")
+        lines.append(f"Last Seen at {cfg.airport_iata}: {_format_seen(last_seen_ts, cfg.airport_iata, cfg.airport_tz)}")
     else:
-        lines.append(f"{t('last_seen_at', lang, airport=cfg.airport_iata)}: No record")
+        lines.append(f"Last Seen at {cfg.airport_iata}: No record")
 
     lines.append("")
 
@@ -125,12 +119,12 @@ async def handle_lookup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         sessions = cfg.catalog.get_all_sessions(registration)
         if sessions:
             n = len(sessions)
-            lines.append(t("spotted_times" if n == 1 else "spotted_times_pl", lang, n=n))
+            lines.append(f"Spotted {n} time{'s' if n != 1 else ''}:")
             for dt, apt in sessions:
                 apt_str = f" — {apt}" if apt else ""
                 lines.append(f"  • {dt.strftime('%d %b %Y, %H:%M')}{apt_str}")
         else:
-            lines.append(t("not_photographed", lang))
+            lines.append("Not yet photographed")
 
     lines.append(f"\nhttps://www.flightradar24.com/data/aircraft/{registration.lower()}")
 

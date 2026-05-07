@@ -103,11 +103,6 @@ class AppConfig:
     store: object = field(repr=False, default=None)
     catalog: object = field(repr=False, default=None)
 
-    def language_for(self, chat_id) -> str:
-        """Return the language preference for a given chat_id."""
-        user = self.store.get_user(str(chat_id))
-        return user["language"] if user else "en"
-
     @property
     def all_chat_ids(self) -> List[str]:
         """All registered user chat IDs (admin + secondary)."""
@@ -245,14 +240,11 @@ def main() -> None:
     catalog = find_catalog()
     cfg = build_config(env, fr_api, store, catalog)
 
-    # Seed primary user in DB (preserves existing language preference)
-    primary_language = env.str("PRIMARY_LANGUAGE", default="en")
+    # Seed primary user in DB
     if not store.get_user(cfg.chat_id):
-        store.upsert_user(cfg.chat_id, is_admin=True, language=primary_language)
+        store.upsert_user(cfg.chat_id, is_admin=True)
     else:
-        # Ensure admin flag is set (in case of DB reset)
-        store.upsert_user(cfg.chat_id, is_admin=True,
-                          language=store.get_user(cfg.chat_id)["language"])
+        store.upsert_user(cfg.chat_id, is_admin=True)
 
     log.info(
         "Monitoring %s (%s) — checking every %s min",
@@ -267,7 +259,6 @@ def main() -> None:
             BotCommand("filters",   "Manage watchlists & exclusion list"),
             BotCommand("settings",  "Configure filter intervals, days & windows"),
             BotCommand("status",    "Show bot status and next check times"),
-            BotCommand("language",  "Change your language preference"),
         ])
 
     token = env.str("TELEGRAM_BOT_TOKEN")
