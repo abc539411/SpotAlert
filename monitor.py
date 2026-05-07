@@ -853,8 +853,7 @@ async def check_follow_ups(context, cfg, chat_id: str, current_arrivals: dict,
                     if swap and swap[0] != registration:
                         new_rego, new_flight = swap
                         await _send_aircraft_swap_notice(context, cfg, registration, new_rego, new_flight, flight_number, notification_type, arrival_ts)
-                    else:
-                        await _send_disappeared_notice(context, cfg, registration, flight_number, notification_type, arrival_ts)
+                    # If no confirmed status and no swap, silently remove — likely landed early or FR24 data gap
                     cfg.store.delete_tracked_flight(registration)
 
 
