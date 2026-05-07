@@ -22,10 +22,14 @@ $FILES = @(
     'spot_recommendation.py',
     'weather.py',
     'storage\store.py',
-    'backfill.py'
+    'backfill.py',
+    'users.py'
 )
 
 Write-Host "`nDeploying SpotAlert to Steam Deck..." -ForegroundColor Cyan
+
+# Ensure subdirectories exist on deck
+& $PLINK -ssh $DECK -pw $PASSWORD -hostkey $HOSTKEY "mkdir -p $DEST/storage" 2>&1 | Out-Null
 
 foreach ($file in $FILES) {
     $src_path  = Join-Path $SRC $file

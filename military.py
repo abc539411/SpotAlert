@@ -8,6 +8,7 @@ from typing import List, Optional
 import requests
 from telegram.ext import ContextTypes
 
+
 log = logging.getLogger(__name__)
 
 # ICAO hex address ranges → country name
@@ -118,7 +119,6 @@ def _format_notification(ac: dict, airport_iata: str, dist_nm: float) -> str:
     speed        = ac.get("gs", "N/A")
     country      = _country_from_hex(ac.get("hex", "")) or "Unknown"
 
-    # Show full description if available, otherwise fall back to type code
     aircraft_str = f"{desc} ({ac_type})" if desc else ac_type
 
     hex_code = (ac.get("hex") or "").lower()
@@ -164,10 +164,11 @@ async def check_military(context: ContextTypes.DEFAULT_TYPE) -> None:
             float(ac["lat"]), float(ac["lon"]),
             cfg.airport_lat, cfg.airport_lon,
         )
-        message = _format_notification(ac, cfg.airport_iata, dist_nm)
 
         try:
-            await context.bot.send_message(chat_id=cfg.chat_id, text=message, parse_mode="HTML")
+            message = _format_notification(ac, cfg.airport_iata, dist_nm)
+            for dest_chat_id in cfg.all_chat_ids:
+                await context.bot.send_message(chat_id=dest_chat_id, text=message, parse_mode="HTML")
             cfg.store.mark_military_notified(registration, now_ts)
             log.info("Military notification sent: %s", registration)
         except Exception as exc:

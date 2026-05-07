@@ -71,8 +71,8 @@ async def handle_lookup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 detail = record["detail"]
                 m = _re.match(r"^(.*?)\s*\(([^)]+)\)\s*$", detail)
                 if m:
-                    operator_str  = m.group(1).strip()
-                    aircraft_str  = m.group(2).strip()
+                    operator_str = m.group(1).strip()
+                    aircraft_str = m.group(2).strip()
                 else:
                     operator_str = detail
                 break
@@ -89,7 +89,6 @@ async def handle_lookup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 aircraft_name = ((data[0].get("aircraft") or {}).get("model") or {}).get("text") or ""
                 airline_name  = (data[0].get("airline") or {}).get("name") or ""
             else:
-                # No flight history — fall back to aircraftInfo (registration-level data)
                 info = (rego_details or {}).get("aircraftInfo") or {}
                 aircraft_code = (info.get("model") or {}).get("code") or ""
                 aircraft_name = (info.get("model") or {}).get("text") or ""
@@ -119,7 +118,8 @@ async def handle_lookup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     if cfg.catalog:
         sessions = cfg.catalog.get_all_sessions(registration)
         if sessions:
-            lines.append(f"Spotted {len(sessions)} time{'s' if len(sessions) != 1 else ''}:")
+            n = len(sessions)
+            lines.append(f"Spotted {n} time{'s' if n != 1 else ''}:")
             for dt, apt in sessions:
                 apt_str = f" — {apt}" if apt else ""
                 lines.append(f"  • {dt.strftime('%d %b %Y, %H:%M')}{apt_str}")

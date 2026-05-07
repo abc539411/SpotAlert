@@ -7,7 +7,7 @@ import os
 import sys
 import time
 from dataclasses import dataclass, field
-from typing import List
+from typing import Dict, List, Optional
 
 import pytz
 from environs import Env
@@ -24,6 +24,7 @@ from lightroom import find_catalog
 from lookup import register_lookup_handler
 from stats import register_stats_handlers
 from spot_recommendation import register_spot_rec_handlers, run_eod_recommendation
+from users import register_user_handlers
 
 log = logging.getLogger(__name__)
 
@@ -101,6 +102,11 @@ class AppConfig:
     fr_api: object = field(repr=False, default=None)
     store: object = field(repr=False, default=None)
     catalog: object = field(repr=False, default=None)
+
+    @property
+    def all_chat_ids(self) -> List[str]:
+        """All registered user chat IDs (admin + secondary)."""
+        return [u["chat_id"] for u in self.store.get_all_users()]
 
 
 def _fetch_airport(fr_api: FlightRadar24API, code: str, retries: int = 3) -> dict:
@@ -233,6 +239,13 @@ def main() -> None:
 
     catalog = find_catalog()
     cfg = build_config(env, fr_api, store, catalog)
+
+    # Seed primary user in DB
+    if not store.get_user(cfg.chat_id):
+        store.upsert_user(cfg.chat_id, is_admin=True)
+    else:
+        store.upsert_user(cfg.chat_id, is_admin=True)
+
     log.info(
         "Monitoring %s (%s) — checking every %s min",
         cfg.airport_name, cfg.airport_iata,
@@ -241,11 +254,11 @@ def main() -> None:
 
     async def _set_commands(application: Application) -> None:
         await application.bot.set_my_commands([
-            BotCommand("spot",     "Check interesting flights or get a spotting recommendation"),
-            BotCommand("stats",    "View spotting stats and notification totals"),
-            BotCommand("filters",  "Manage watchlists & exclusion list"),
-            BotCommand("settings", "Configure filter intervals, days & windows"),
-            BotCommand("status",   "Show bot status and next check times"),
+            BotCommand("spot",      "Check interesting flights or get a spotting recommendation"),
+            BotCommand("stats",     "View spotting stats and notification totals"),
+            BotCommand("filters",   "Manage watchlists & exclusion list"),
+            BotCommand("settings",  "Configure filter intervals, days & windows"),
+            BotCommand("status",    "Show bot status and next check times"),
         ])
 
     token = env.str("TELEGRAM_BOT_TOKEN")
@@ -259,6 +272,7 @@ def main() -> None:
     register_lookup_handler(app)
     register_stats_handlers(app)
     register_spot_rec_handlers(app)
+    register_user_handlers(app)
     # Named so settings.py can reschedule it when the interval changes
     app.job_queue.run_repeating(
         run_check, interval=cfg.check_interval, first=10,

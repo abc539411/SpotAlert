@@ -31,7 +31,8 @@ log = logging.getLogger(__name__)
     SUMMARY_SUBMENU,
     FILTER_CATEGORY_SUBMENU,
     SPOT_REC_SUBMENU,
-) = range(10, 18)
+    USER_SUBMENU,
+) = range(10, 19)
 
 _REMOVE_KB = ReplyKeyboardRemove()
 
@@ -43,8 +44,14 @@ _CATEGORY_KB = ReplyKeyboardMarkup(
         ["Monitoring", "Filters"],
         ["Military", "Spot Periods"],
         ["Spot Recommendation"],
+        ["Users"],
         ["Done"],
     ],
+    resize_keyboard=True,
+)
+
+_USER_KB = ReplyKeyboardMarkup(
+    [["Add User", "Remove User"], ["Back"]],
     resize_keyboard=True,
 )
 
@@ -257,6 +264,9 @@ def _filter_detail(cfg, category: str) -> str:
 
 async def start_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     cfg = context.bot_data["cfg"]
+    if not cfg.store.is_admin(str(update.effective_chat.id)):
+        await update.message.reply_text("You don't have permission to change settings.")
+        return ConversationHandler.END
     await update.message.reply_html(_overview(cfg), reply_markup=_CATEGORY_KB)
     return CATEGORY_SELECT
 
@@ -299,6 +309,10 @@ async def handle_category_select(update: Update, context: ContextTypes.DEFAULT_T
         context.user_data["settings_category"] = "Spot Recommendation"
         await update.message.reply_html(_spot_rec_detail(cfg), reply_markup=_SPOT_REC_KB)
         return SPOT_REC_SUBMENU
+
+    if choice == "Users":
+        await update.message.reply_html(_user_detail(cfg), reply_markup=_USER_KB)
+        return USER_SUBMENU
 
     await update.message.reply_text("Please choose a category from the keyboard.")
     return CATEGORY_SELECT
@@ -553,6 +567,30 @@ async def handle_enter_value(update: Update, context: ContextTypes.DEFAULT_TYPE)
     # Route spot rec fields to dedicated handler
     if category == "Spot Recommendation":
         return await _handle_spot_rec_value(update, context, raw, cfg, store)
+
+    # ----------------------------------------------------------------
+    # User management
+    # ----------------------------------------------------------------
+    if field == "Add User":
+        chat_id = raw.strip()
+        cfg.store.upsert_user(chat_id, is_admin=False, language="en")
+        await update.message.reply_html(
+            f"User <code>{chat_id}</code> added (read-only, English by default).\n"
+            f"They can use /language to change their language.\n\n"
+            + _user_detail(cfg),
+            reply_markup=_USER_KB,
+        )
+        return USER_SUBMENU
+
+    if field == "Remove User":
+        chat_id = raw.strip()
+        removed = cfg.store.delete_user(chat_id)
+        if removed:
+            msg = f"User <code>{chat_id}</code> removed."
+        else:
+            msg = f"User <code>{chat_id}</code> not found (or is admin — cannot remove admin)."
+        await update.message.reply_html(f"{msg}\n\n" + _user_detail(cfg), reply_markup=_USER_KB)
+        return USER_SUBMENU
 
     # ----------------------------------------------------------------
     # Airport code
@@ -1037,6 +1075,46 @@ async def _handle_spot_rec_value(update: Update, context: ContextTypes.DEFAULT_T
     return SPOT_REC_SUBMENU
 
 
+def _user_detail(cfg) -> str:
+    users = cfg.store.get_all_users()
+    lines = ["<b>Users</b>\n"]
+    for u in users:
+        role = "Admin" if u["is_admin"] else "Read-only"
+        lang = "English" if u["language"] == "en" else "中文"
+        lines.append(f"  {u['chat_id']} — {role} — {lang}")
+    if not users:
+        lines.append("  No users configured.")
+    return "\n".join(lines)
+
+
+async def handle_user_submenu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    choice = update.message.text
+    cfg = context.bot_data["cfg"]
+
+    if choice == "Back":
+        await update.message.reply_html(_overview(cfg), reply_markup=_CATEGORY_KB)
+        return CATEGORY_SELECT
+
+    if choice == "Add User":
+        context.user_data["settings_field"] = "Add User"
+        await update.message.reply_text(
+            "Enter the chat ID of the user to add:\n(They can get their chat ID by messaging @userinfobot)",
+            reply_markup=_REMOVE_KB,
+        )
+        return ENTER_VALUE
+
+    if choice == "Remove User":
+        context.user_data["settings_field"] = "Remove User"
+        await update.message.reply_text(
+            "Enter the chat ID of the user to remove:",
+            reply_markup=_REMOVE_KB,
+        )
+        return ENTER_VALUE
+
+    await update.message.reply_html(_user_detail(cfg), reply_markup=_USER_KB)
+    return USER_SUBMENU
+
+
 async def cancel_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text("Settings closed.", reply_markup=_REMOVE_KB)
     return ConversationHandler.END
@@ -1073,6 +1151,9 @@ def register_settings_handlers(app: Application) -> None:
             ],
             SPOT_REC_SUBMENU: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_spot_rec_submenu)
+            ],
+            USER_SUBMENU: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_user_submenu)
             ],
         },
         fallbacks=[CommandHandler("cancel", cancel_settings)],

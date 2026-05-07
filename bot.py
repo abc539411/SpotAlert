@@ -110,6 +110,10 @@ def _parse_fields_from_notification(text: str) -> Tuple[Optional[str], Optional[
 # ------------------------------------------------------------------
 
 async def start_filter_management(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    cfg = context.bot_data["cfg"]
+    if not cfg.store.is_admin(str(update.effective_chat.id)):
+        await update.message.reply_text("You don't have permission to change settings.")
+        return ConversationHandler.END
     await update.message.reply_text(
         "Choose the filter to modify:", reply_markup=_FILTER_KEYBOARD
     )
