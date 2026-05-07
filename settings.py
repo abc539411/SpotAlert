@@ -18,7 +18,6 @@ from telegram.ext import (
 
 from monitor import run_check
 from military import check_military
-from translations import t
 
 log = logging.getLogger(__name__)
 
@@ -266,7 +265,7 @@ def _filter_detail(cfg, category: str) -> str:
 async def start_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     cfg = context.bot_data["cfg"]
     if not cfg.store.is_admin(str(update.effective_chat.id)):
-        await update.message.reply_text(t("permission_denied", cfg.language_for(update.effective_chat.id)))
+        await update.message.reply_text("You don't have permission to change settings.")
         return ConversationHandler.END
     await update.message.reply_html(_overview(cfg), reply_markup=_CATEGORY_KB)
     return CATEGORY_SELECT

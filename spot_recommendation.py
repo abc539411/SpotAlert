@@ -14,7 +14,6 @@ from telegram.ext import Application, CallbackQueryHandler, CommandHandler, Cont
 
 from monitor import _parse_aircraft, _safe_get
 from weather import get_current_weather, get_forecast_weather
-from translations import t
 
 log = logging.getLogger(__name__)
 
@@ -69,16 +68,46 @@ def _sun_times(cfg, date) -> Tuple[int, int]:
     return int(info["sunrise"].timestamp()), int(info["sunset"].timestamp())
 
 
-def _sun_line(sunrise_ts: int, sunset_ts: int, tz, lang: str = "en") -> str:
+def _sun_line(sunrise_ts: int, sunset_ts: int, tz) -> str:
     rise = datetime.fromtimestamp(sunrise_ts).astimezone(tz).strftime("%H:%M")
     sset = datetime.fromtimestamp(sunset_ts).astimezone(tz).strftime("%H:%M")
-    return f"{t('sunrise', lang)}: {rise} · {t('sunset', lang)}: {sset}"
+    return f"Sunrise: {rise} · Sunset: {sset}"
 
 
 def _passes_lighting_gate(arrival_ts: int, sunrise_ts: int, sunset_ts: int) -> bool:
     """Return False if the arrival is after sunset (exclude). Before sunrise is allowed
     since the plane will still be on the ground after sunrise."""
     return arrival_ts <= sunset_ts
+
+
+def _apply_pre_sunrise_gate(
+    qualifying: List["FlightEval"],
+    filtered: List["FlightEval"],
+    sunrise_ts: int,
+    sunset_ts: int,
+    lighting_gate: bool,
+) -> tuple:
+    """Second lighting gate pass — run after _populate_departures so dep_ts is known.
+
+    Pre-sunrise arrivals are only kept if dep_ts is known and falls in daylight.
+    If dep_ts is unknown or also outside daylight, the flight is moved to filtered.
+    Returns (new_qualifying, new_filtered).
+    """
+    if not lighting_gate or not sunrise_ts:
+        return qualifying, filtered
+
+    still_qualifying = []
+    newly_filtered = list(filtered)
+    for e in qualifying:
+        if e.arrival_ts < sunrise_ts:
+            if e.dep_ts and sunrise_ts <= e.dep_ts <= sunset_ts:
+                still_qualifying.append(e)
+            else:
+                e.reason = "arrives before sunrise with no confirmed daylight departure"
+                newly_filtered.append(e)
+        else:
+            still_qualifying.append(e)
+    return still_qualifying, newly_filtered
 
 
 def _interesting_label(arriving_flight: dict, cfg) -> Optional[str]:
@@ -172,6 +201,7 @@ async def check_rolling_recommendation(context: ContextTypes.DEFAULT_TYPE, cfg, 
     interesting = [e for e in evals if e.qualifying]
     filtered    = [e for e in evals if not e.qualifying]
     _populate_departures(interesting, cfg, sunset_ts=sunset_ts, sunrise_ts=sunrise_ts)
+    interesting, filtered = _apply_pre_sunrise_gate(interesting, filtered, sunrise_ts, sunset_ts, cfg.spot_rec_lighting_gate)
     for e in interesting:
         arr_in = window_start <= e.arrival_ts <= window_end
         dep_in = bool(e.dep_ts and window_start <= e.dep_ts <= window_end)
@@ -189,26 +219,26 @@ async def check_rolling_recommendation(context: ContextTypes.DEFAULT_TYPE, cfg, 
     last_arr  = datetime.fromtimestamp(interesting[-1].arrival_ts).astimezone(tz).strftime("%H:%M")
     window_str = first_arr if first_arr == last_arr else f"{first_arr} – {last_arr}"
 
+    n = len(interesting)
+    lines = [
+        f"<b>Head out now — {n} interesting flight{'s' if n != 1 else ''}</b>",
+        f"Window: {window_str}",
+        "",
+    ]
+    for e in interesting:
+        lines.append(_flight_line(e, tz))
+    if filtered:
+        lines.append("")
+        lines.append(f"Also of note — filtered out ({len(filtered)}):")
+        for e in filtered:
+            lines.append(_flight_line(e, tz, include_reason=True))
+    lines.append("")
+    if weather:
+        lines.append(f"Weather: {weather}")
+    lines.append(_sun_line(sunrise_ts, sunset_ts, tz))
+
     sent = False
     for dest_chat_id in cfg.all_chat_ids:
-        lang = cfg.language_for(dest_chat_id)
-        n = len(interesting)
-        lines = [
-            f"<b>{t('head_out_now' if n == 1 else 'head_out_now_pl', lang, n=n)}</b>",
-            f"{t('window', lang)}: {window_str}",
-            "",
-        ]
-        for e in interesting:
-            lines.append(_flight_line(e, tz, lang=lang))
-        if filtered:
-            lines.append("")
-            lines.append(t("also_of_note", lang, n=len(filtered)))
-            for e in filtered:
-                lines.append(_flight_line(e, tz, include_reason=True, lang=lang))
-        lines.append("")
-        if weather:
-            lines.append(f"{t('weather', lang)}: {weather}")
-        lines.append(_sun_line(sunrise_ts, sunset_ts, tz, lang=lang))
         try:
             await context.bot.send_message(chat_id=dest_chat_id, text="\n".join(lines), parse_mode="HTML")
             sent = True
@@ -250,6 +280,9 @@ async def run_eod_recommendation(context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     _populate_departures(qualifying, cfg, sunset_ts=sunset_ts, sunrise_ts=sunrise_ts)
+    qualifying, filtered = _apply_pre_sunrise_gate(qualifying, filtered, sunrise_ts, sunset_ts, cfg.spot_rec_lighting_gate)
+    if not qualifying:
+        return
 
     session_secs = cfg.spot_rec_session_hours * 3600
     best_qualifying = _best_session_window(qualifying, session_secs)
@@ -280,25 +313,24 @@ async def run_eod_recommendation(context: ContextTypes.DEFAULT_TYPE) -> None:
         InlineKeyboardButton("No ✗", callback_data="spot_no"),
     ]])
 
-    for dest_chat_id in cfg.all_chat_ids:
-        lang = cfg.language_for(dest_chat_id)
-        lines = [
-            f"<b>{t('spot_rec_for', lang, day=day_str)}</b>",
-            t("best_window" if n == 1 else "best_window_pl", lang, window=window_str, n=n),
-            "",
-        ]
-        for e in best_qualifying:
-            lines.append(_flight_line(e, tz, lang=lang))
-        if best_filtered:
-            lines.append("")
-            lines.append(t("also_of_note", lang, n=len(best_filtered)))
-            for e in best_filtered:
-                lines.append(_flight_line(e, tz, include_reason=True, lang=lang))
+    lines = [
+        f"<b>Spotting recommendation for {day_str}</b>",
+        f"Best window: {window_str} ({n} interesting flight{'s' if n != 1 else ''})",
+        "",
+    ]
+    for e in best_qualifying:
+        lines.append(_flight_line(e, tz))
+    if best_filtered:
         lines.append("")
-        lines.append(f"{t('weather_tomorrow', lang)}: {weather}" if weather else t("weather_unavailable", lang))
-        lines.append(_sun_line(sunrise_ts, sunset_ts, tz, lang=lang))
+        lines.append(f"Also of note — filtered out ({len(best_filtered)}):")
+        for e in best_filtered:
+            lines.append(_flight_line(e, tz, include_reason=True))
+    lines.append("")
+    lines.append(f"Weather tomorrow: {weather}" if weather else "Weather tomorrow: unavailable")
+    lines.append(_sun_line(sunrise_ts, sunset_ts, tz))
+
+    for dest_chat_id in cfg.all_chat_ids:
         try:
-            # Only show Yes/Maybe/No keyboard to the primary admin chat
             kb = keyboard if cfg.store.is_admin(dest_chat_id) else None
             await context.bot.send_message(
                 chat_id=dest_chat_id, text="\n".join(lines),
@@ -482,7 +514,7 @@ def _evaluate_eod_flights(cfg, tomorrow, sunrise_ts: int, sunset_ts: int) -> Lis
 
 
 def _flight_line(f: "FlightEval", tz, include_reason: bool = False,
-                 scenario_a: bool = False, now_ts: int = 0, lang: str = "en") -> str:
+                 scenario_a: bool = False, now_ts: int = 0) -> str:
     """Format a flight entry for display.
 
     Scenario A (manual): show arr and/or dep times; hide arrival if already passed.
@@ -533,7 +565,6 @@ def _build_detail_message(
     scenario_a: bool = False,
     now_ts: int = 0,
     show_window: bool = True,
-    lang: str = "en",
 ) -> str:
     """Build the detail message for a spot check.
 
@@ -566,54 +597,52 @@ def _build_detail_message(
         window_str = None
 
     n = len(qualifying)
+    flight_word = "flight" if n == 1 else "flights"
 
     # Verdict (only for Best Time to Go)
     if show_verdict:
         if severe_weather:
-            verdict = t("severe_weather", lang, weather=weather)
+            verdict = f"Not recommended — severe weather ({weather})"
         elif n >= threshold:
-            verdict = t("recommended" if n == 1 else "recommended_pl", lang, n=n)
+            verdict = f"Recommended — {n} qualifying {flight_word}"
         else:
-            verdict = t("not_recommended" if n == 1 else "not_recommended_pl", lang, n=n, threshold=threshold)
+            verdict = f"Not recommended — {n} qualifying {flight_word} (need {threshold})"
         lines = [f"<b>{header}</b>", verdict]
     else:
-        count_str = f"{n} interesting {'flight' if n == 1 else 'flights'}"
-        lines = [f"<b>{header}</b>", count_str]
+        lines = [f"<b>{header}</b>", f"{n} interesting {flight_word}"]
     if window_str and show_window:
-        lines.append(f"{t('window', lang)}: {window_str}")
+        lines.append(f"Window: {window_str}")
     lines.append("")
 
     if not qualifying and not filtered:
-        lines.append(f"  {t('no_interesting_flights', lang)}")
+        lines.append("  No interesting flights in this window.")
     else:
-        # Qualifying section — filter out scenario_a flights where arrival passed and no dep
         shown_qualifying = qualifying
         if scenario_a and now_ts > 0:
             shown_qualifying = [e for e in qualifying
                                 if e.arrival_ts >= now_ts or e.dep_ts is not None]
 
         if show_verdict:
-            section = t("would_have_qualified", lang) if severe_weather else t("qualifying", lang, n=len(shown_qualifying))
+            section = "Would have qualified:" if severe_weather else f"Qualifying ({len(shown_qualifying)}):"
         else:
-            section = t("qualifying", lang, n=len(shown_qualifying)) if shown_qualifying else None
+            section = f"Qualifying ({len(shown_qualifying)}):" if shown_qualifying else None
 
         if shown_qualifying and section:
             lines.append(section)
             for e in shown_qualifying:
-                lines.append(_flight_line(e, tz, scenario_a=scenario_a, now_ts=now_ts, lang=lang))
+                lines.append(_flight_line(e, tz, scenario_a=scenario_a, now_ts=now_ts))
 
-        # Filtered section
         if filtered:
             if shown_qualifying:
                 lines.append("")
-            lines.append(t("filtered_out", lang, n=len(filtered)))
+            lines.append(f"Filtered out ({len(filtered)}):")
             for e in filtered:
-                lines.append(_flight_line(e, tz, include_reason=True, scenario_a=scenario_a, now_ts=now_ts, lang=lang))
+                lines.append(_flight_line(e, tz, include_reason=True, scenario_a=scenario_a, now_ts=now_ts))
 
     lines.append("")
-    lines.append(f"{t('weather', lang)}: {weather}" if weather else t("weather_unavailable", lang))
+    lines.append(f"Weather: {weather}" if weather else "Weather: unavailable")
     if sunrise_ts and sunset_ts:
-        lines.append(_sun_line(sunrise_ts, sunset_ts, tz, lang=lang))
+        lines.append(_sun_line(sunrise_ts, sunset_ts, tz))
 
     return "\n".join(lines)
 
@@ -632,13 +661,6 @@ _PERIOD_LABELS = {
     "best":      "Best Time to Go",
 }
 
-# Maps period key → translation string key
-_PERIOD_LABELS_KEY = {
-    "morning":   "morning",
-    "afternoon": "afternoon",
-    "allday":    "all_day",
-    "best":      "best_time",
-}
 
 
 def _day_hour_ts(d, hour: int, tz) -> int:
@@ -647,7 +669,7 @@ def _day_hour_ts(d, hour: int, tz) -> int:
 
 
 async def _run_spot_check(send_fn, context: ContextTypes.DEFAULT_TYPE,
-                          day: str, period: str, lang: str = "en") -> None:
+                          day: str, period: str) -> None:
     cfg = context.bot_data["cfg"]
     tz = pytz.timezone(cfg.airport_tz)
     now = datetime.now(tz)
@@ -656,7 +678,7 @@ async def _run_spot_check(send_fn, context: ContextTypes.DEFAULT_TYPE,
     scenario_a   = (period != "best")  # Scenario A for set periods, Scenario B for Best Time to Go
 
     if day == "today":
-        await send_fn(t("checking", lang))
+        await send_fn("Checking...")
         target_date = now.date()
         sunrise_ts, sunset_ts = _sun_times(cfg, target_date)
 
@@ -682,6 +704,7 @@ async def _run_spot_check(send_fn, context: ContextTypes.DEFAULT_TYPE,
         if period == "best":
             session_secs = cfg.spot_rec_session_hours * 3600
             _populate_departures(all_qualifying, cfg, sunset_ts=sunset_ts, sunrise_ts=sunrise_ts)
+            all_qualifying, all_filtered = _apply_pre_sunrise_gate(all_qualifying, all_filtered, sunrise_ts, sunset_ts, cfg.spot_rec_lighting_gate)
             qualifying   = _best_session_window(all_qualifying, session_secs)
             best_start   = min((e.session_ts for e in qualifying), default=None)
             filtered     = [f for f in all_filtered
@@ -691,16 +714,17 @@ async def _run_spot_check(send_fn, context: ContextTypes.DEFAULT_TYPE,
             qualifying = all_qualifying
             filtered   = all_filtered
             _populate_departures(qualifying + filtered, cfg, sunset_ts=sunset_ts, sunrise_ts=sunrise_ts)
+            qualifying, filtered = _apply_pre_sunrise_gate(qualifying, filtered, sunrise_ts, sunset_ts, cfg.spot_rec_lighting_gate)
 
         weather = get_current_weather(cfg.airport_lat, cfg.airport_lon, cfg.airport_tz)
-        header  = t("spot_check_today", lang, period=t(_PERIOD_LABELS_KEY[period], lang))
+        header  = f"Spot check — Today ({_PERIOD_LABELS[period]})"
         msg = _build_detail_message(qualifying, filtered, cfg.spot_rec_threshold,
                                     weather, cfg.spot_rec_weather_gate,
                                     header, tz, sunrise_ts, sunset_ts, show_verdict=show_verdict,
-                                    scenario_a=scenario_a, now_ts=now_ts, show_window=(period == "best"), lang=lang)
+                                    scenario_a=scenario_a, now_ts=now_ts, show_window=(period == "best"))
 
     else:  # tomorrow
-        await send_fn(t("checking", lang))
+        await send_fn("Checking...")
         tomorrow = (now + timedelta(days=1)).date()
         sunrise_ts, sunset_ts = _sun_times(cfg, tomorrow)
         evals         = _evaluate_eod_flights(cfg, tomorrow, sunrise_ts, sunset_ts)
@@ -710,6 +734,7 @@ async def _run_spot_check(send_fn, context: ContextTypes.DEFAULT_TYPE,
         if period == "best":
             session_secs = cfg.spot_rec_session_hours * 3600
             _populate_departures(all_qualifying, cfg, sunset_ts=sunset_ts, sunrise_ts=sunrise_ts)
+            all_qualifying, all_filtered = _apply_pre_sunrise_gate(all_qualifying, all_filtered, sunrise_ts, sunset_ts, cfg.spot_rec_lighting_gate)
             qualifying   = _best_session_window(all_qualifying, session_secs)
             best_start   = min((e.session_ts for e in qualifying), default=None)
             filtered     = [f for f in all_filtered
@@ -719,6 +744,7 @@ async def _run_spot_check(send_fn, context: ContextTypes.DEFAULT_TYPE,
             qualifying = all_qualifying
             filtered   = all_filtered
             _populate_departures(qualifying + filtered, cfg, sunset_ts=sunset_ts, sunrise_ts=sunrise_ts)
+            qualifying, filtered = _apply_pre_sunrise_gate(qualifying, filtered, sunrise_ts, sunset_ts, cfg.spot_rec_lighting_gate)
         else:
             if period == "morning":
                 ws = sunrise_ts - cfg.summary_morning_pre_sunrise_hours * 3600
@@ -729,42 +755,37 @@ async def _run_spot_check(send_fn, context: ContextTypes.DEFAULT_TYPE,
             qualifying = [e for e in all_qualifying if ws <= e.arrival_ts <= we]
             filtered   = [e for e in all_filtered   if ws <= e.arrival_ts <= we]
             _populate_departures(qualifying + filtered, cfg, sunset_ts=sunset_ts, sunrise_ts=sunrise_ts)
+            qualifying, filtered = _apply_pre_sunrise_gate(qualifying, filtered, sunrise_ts, sunset_ts, cfg.spot_rec_lighting_gate)
 
         weather = get_forecast_weather(cfg.airport_lat, cfg.airport_lon, cfg.airport_tz, day_offset=1)
-        header  = t("spot_check_tomorrow", lang, day=tomorrow.strftime("%A %-d %b"), period=t(_PERIOD_LABELS_KEY[period], lang))
+        header  = f"Spot check — {tomorrow.strftime('%A %-d %b')} ({_PERIOD_LABELS[period]})"
         msg = _build_detail_message(qualifying, filtered, cfg.spot_rec_threshold,
                                     weather, cfg.spot_rec_weather_gate,
                                     header, tz, sunrise_ts, sunset_ts, show_verdict=show_verdict,
-                                    scenario_a=scenario_a, now_ts=now_ts, show_window=(period == "best"), lang=lang)
+                                    scenario_a=scenario_a, now_ts=now_ts, show_window=(period == "best"))
 
     await send_fn(msg, parse_mode="HTML")
 
 
 async def handle_spot_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    cfg = context.bot_data["cfg"]
-    lang = cfg.language_for(update.effective_chat.id)
     keyboard = InlineKeyboardMarkup([[
-        InlineKeyboardButton(t("today", lang),    callback_data="spot_day_today"),
-        InlineKeyboardButton(t("tomorrow", lang), callback_data="spot_day_tomorrow"),
+        InlineKeyboardButton("Today",    callback_data="spot_day_today"),
+        InlineKeyboardButton("Tomorrow", callback_data="spot_day_tomorrow"),
     ]])
-    await update.message.reply_text(t("which_day", lang), reply_markup=keyboard)
+    await update.message.reply_text("Which day?", reply_markup=keyboard)
 
 
 async def handle_spot_day_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
-    cfg = context.bot_data["cfg"]
-    lang = cfg.language_for(query.message.chat_id)
     day = query.data.replace("spot_day_", "")
     context.user_data["spot_day"] = day
-    await query.edit_message_text(t("which_period", lang), reply_markup=_PERIOD_KB)
+    await query.edit_message_text("Which period?", reply_markup=_PERIOD_KB)
 
 
 async def handle_spot_period_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
-    cfg = context.bot_data["cfg"]
-    lang = cfg.language_for(query.message.chat_id)
     period = query.data.replace("spot_period_", "")
     day    = context.user_data.get("spot_day", "today")
     await query.edit_message_reply_markup(reply_markup=None)
@@ -772,7 +793,7 @@ async def handle_spot_period_callback(update: Update, context: ContextTypes.DEFA
     async def send_fn(text, **kwargs):
         await context.bot.send_message(chat_id=query.message.chat_id, text=text, **kwargs)
 
-    await _run_spot_check(send_fn, context, day, period, lang=lang)
+    await _run_spot_check(send_fn, context, day, period)
 
 
 # ------------------------------------------------------------------
@@ -794,16 +815,16 @@ async def _send_spot_followup(context: ContextTypes.DEFAULT_TYPE) -> None:
     evals = _evaluate_rolling_flights(cfg, window_start, window_end, sunrise_ts, sunset_ts)
     qualifying = [e for e in evals if e.qualifying]
     filtered   = [e for e in evals if not e.qualifying]
+    _populate_departures(qualifying, cfg, sunset_ts=sunset_ts, sunrise_ts=sunrise_ts)
+    qualifying, filtered = _apply_pre_sunrise_gate(qualifying, filtered, sunrise_ts, sunset_ts, cfg.spot_rec_lighting_gate)
 
     weather = get_current_weather(cfg.airport_lat, cfg.airport_lon, cfg.airport_tz)
-
+    msg = _build_detail_message(
+        qualifying, filtered, cfg.spot_rec_threshold,
+        weather, cfg.spot_rec_weather_gate,
+        "Spotting update — time to head out", tz, sunrise_ts, sunset_ts,
+    )
     for dest_chat_id in cfg.all_chat_ids:
-        lang = cfg.language_for(dest_chat_id)
-        msg = _build_detail_message(
-            qualifying, filtered, cfg.spot_rec_threshold,
-            weather, cfg.spot_rec_weather_gate,
-            t("spotting_update", lang), tz, sunrise_ts, sunset_ts, lang=lang,
-        )
         try:
             await context.bot.send_message(chat_id=dest_chat_id, text=msg, parse_mode="HTML")
         except Exception as exc:
@@ -827,11 +848,9 @@ async def handle_spot_response(update: Update, context: ContextTypes.DEFAULT_TYP
 
     await query.edit_message_reply_markup(reply_markup=None)
 
-    lang = cfg.language_for(query.message.chat_id)
-
     if query.data == "spot_no":
         cfg.store.save_setting("SPOT_REC_SUPPRESSED_DATE", tomorrow)
-        await query.message.reply_text(t("no_rolling_tomorrow", lang))
+        await query.message.reply_text("Got it — no rolling spotting recommendations tomorrow.")
 
     elif query.data == "spot_yes":
         pending_ts = cfg.store.load_setting("SPOT_REC_PENDING_SESSION_TS")
@@ -849,14 +868,14 @@ async def handle_spot_response(update: Update, context: ContextTypes.DEFAULT_TYP
                 )
                 tz_obj = pytz.timezone(cfg.airport_tz)
                 followup_str = _dt.datetime.fromtimestamp(follow_up_ts).astimezone(tz_obj).strftime("%H:%M")
-                await query.message.reply_text(t("follow_up_scheduled", lang, time=followup_str))
+                await query.message.reply_text(f"See you out there! I'll send you an update at {followup_str}.")
             else:
-                await query.message.reply_text(t("see_you_out_there", lang))
+                await query.message.reply_text("See you out there!")
         else:
-            await query.message.reply_text(t("see_you_out_there", lang))
+            await query.message.reply_text("See you out there!")
 
     else:
-        await query.message.reply_text(t("maybe_see_you", lang))
+        await query.message.reply_text("Maybe see you out there!")
 
 
 # ------------------------------------------------------------------

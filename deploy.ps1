@@ -23,18 +23,13 @@ $FILES = @(
     'weather.py',
     'storage\store.py',
     'backfill.py',
-    'users.py',
-    'translations\__init__.py',
-    'translations\strings.json',
-    'translations\airlines.json',
-    'translations\airports.json',
-    'translations\manufacturers.json'
+    'users.py'
 )
 
 Write-Host "`nDeploying SpotAlert to Steam Deck..." -ForegroundColor Cyan
 
 # Ensure subdirectories exist on deck
-& $PLINK -ssh $DECK -pw $PASSWORD -hostkey $HOSTKEY "mkdir -p $DEST/translations $DEST/storage" 2>&1 | Out-Null
+& $PLINK -ssh $DECK -pw $PASSWORD -hostkey $HOSTKEY "mkdir -p $DEST/storage" 2>&1 | Out-Null
 
 foreach ($file in $FILES) {
     $src_path  = Join-Path $SRC $file
