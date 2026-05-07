@@ -633,12 +633,18 @@ async def run_check(context: ContextTypes.DEFAULT_TYPE) -> None:
             cfg.store.bulk_update_sightings(landed)
 
         # Pass 2: run filters and send notifications
+        # Skip registrations already tracked in notification_record (still pending arrival)
+        # to avoid double-notifying long-haul flights that appear in the schedule 12+ hours early.
+        already_tracked = {r["registration"] for r in cfg.store.get_tracked_flights()}
+
         import asyncio
         for arriving_flight in all_arriving_flights:
             match = _first_matching_filter(arriving_flight, cfg)
             if match is None:
                 continue
             flight, registration, notification_type, on_notified = match
+            if registration in already_tracked:
+                continue
             await _send_notification(
                 context, cfg, chat_id, flight, registration, notification_type, on_notified
             )
