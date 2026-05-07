@@ -10,6 +10,7 @@ from astral import LocationInfo
 from astral.sun import sun
 from telegram.ext import ContextTypes
 
+
 log = logging.getLogger(__name__)
 
 _HOURS = 3600
@@ -264,7 +265,6 @@ def format_notification(
                 )
                 if predicted:
                     pred_fn, confidence, _, _ = predicted
-                    # Step 1: all details from our own DB
                     dep_info = cfg_store.get_predicted_dep_info(pred_fn, airport_iata)
                     sched_ts  = dep_info.get("scheduled_dep_ts") if dep_info else None
                     al_name   = dep_info.get("airline_name")     if dep_info else None
@@ -273,7 +273,6 @@ def format_notification(
                     dest_name = dep_info.get("dest_name")        if dep_info else None
                     dest_iata = dep_info.get("dest_iata")        if dep_info else None
                     dest_icao = dep_info.get("dest_icao")        if dep_info else None
-                    # Step 2: fill any missing fields from FR24 by flight number
                     if fr_api is not None and (sched_ts is None or not al_name or not dest_name):
                         try:
                             fl_data = fr_api.get_flight_by_number(pred_fn)
@@ -629,12 +628,18 @@ async def run_check(context: ContextTypes.DEFAULT_TYPE) -> None:
             cfg.store.bulk_update_sightings(landed)
 
         # Pass 2: run filters and send notifications
+        # Skip registrations already tracked in notification_record (still pending arrival)
+        # to avoid double-notifying long-haul flights that appear in the schedule 12+ hours early.
+        already_tracked = {r["registration"] for r in cfg.store.get_tracked_flights()}
+
         import asyncio
         for arriving_flight in all_arriving_flights:
             match = _first_matching_filter(arriving_flight, cfg)
             if match is None:
                 continue
             flight, registration, notification_type, on_notified = match
+            if registration in already_tracked:
+                continue
             await _send_notification(
                 context, cfg, chat_id, flight, registration, notification_type, on_notified
             )
@@ -670,15 +675,6 @@ async def _send_notification(
     except Exception as exc:
         log.warning("Could not fetch aircraft details for %s: %s", registration, exc)
 
-    message = format_notification(
-        flight, registration, notification_type, rego_details,
-        cfg.airport_iata, cfg.airport_tz, cfg.airport_lat, cfg.airport_lon,
-        catalog=cfg.catalog,
-        cfg_store=cfg.store,
-        dep_pattern_threshold=cfg.departure_pattern_threshold,
-        fr_api=cfg.fr_api,
-    )
-
     now_ts = int(datetime.now().timestamp())
 
     # Record departure pattern for future predictions
@@ -709,19 +705,30 @@ async def _send_notification(
                 dest_name=dest_name, dest_iata=dest_iata, dest_icao=dest_icao,
             )
     try:
-        if photo_url:
+        message = format_notification(
+            flight, registration, notification_type, rego_details,
+            cfg.airport_iata, cfg.airport_tz, cfg.airport_lat, cfg.airport_lon,
+            catalog=cfg.catalog,
+            cfg_store=cfg.store,
+            dep_pattern_threshold=cfg.departure_pattern_threshold,
+            fr_api=cfg.fr_api,
+        )
+        for dest_chat_id in cfg.all_chat_ids:
+            if photo_url:
+                try:
+                    await context.bot.send_photo(
+                        chat_id=dest_chat_id,
+                        photo=photo_url,
+                        caption=f"Aircraft Photo: {registration}",
+                    )
+                except Exception as exc:
+                    log.warning("Could not send photo for %s to %s: %s", registration, dest_chat_id, exc)
             try:
-                await context.bot.send_photo(
-                    chat_id=chat_id,
-                    photo=photo_url,
-                    caption=f"Aircraft Photo: {registration}",
-                )
+                await context.bot.send_message(chat_id=dest_chat_id, text=message, parse_mode="HTML")
             except Exception as exc:
-                log.warning("Could not send photo for %s: %s", registration, exc)
+                log.error("Failed to send notification for %s to %s: %s", registration, dest_chat_id, exc)
 
-        await context.bot.send_message(chat_id=chat_id, text=message, parse_mode="HTML")
-
-        # Write DB records only after confirmed Telegram delivery
+        # Write DB records only after confirmed primary delivery
         on_notified()
         arrival_ts = int(
             _safe_get(flight, "time", "estimated", "arrival", default=None)
@@ -797,15 +804,11 @@ async def check_follow_ups(context, cfg, chat_id: str, current_arrivals: dict,
             # Check FR24 status for confirmed cancellation or diversion
             status_text, diverted_airport = _get_fr24_status(current_flight)
             if status_text == "canceled":
-                await _send_cancellation_notice(
-                    context, cfg, chat_id, registration, flight_number, notification_type, arrival_ts
-                )
+                await _send_cancellation_notice(context, cfg, registration, flight_number, notification_type, arrival_ts)
                 cfg.store.delete_tracked_flight(registration)
                 continue
             elif status_text == "diverted":
-                await _send_diversion_notice(
-                    context, cfg, chat_id, registration, flight_number, notification_type, arrival_ts, diverted_airport
-                )
+                await _send_diversion_notice(context, cfg, registration, flight_number, notification_type, arrival_ts, diverted_airport)
                 cfg.store.delete_tracked_flight(registration)
                 continue
 
@@ -820,9 +823,7 @@ async def check_follow_ups(context, cfg, chat_id: str, current_arrivals: dict,
                     and current_arrival_ts > now_ts
                     and (current_arrival_ts - now_ts) <= cfg.reminder_hours * _HOURS
                     and (original_arr_ts - first_notified_ts) > cfg.reminder_hours * _HOURS):
-                await _send_arrival_reminder(
-                    context, cfg, chat_id, current_flight, registration, notification_type, flight_number
-                )
+                await _send_arrival_reminder(context, cfg, current_flight, registration, notification_type, flight_number)
                 cfg.store.mark_reminder_sent(registration)
 
         else:
@@ -843,23 +844,14 @@ async def check_follow_ups(context, cfg, chat_id: str, current_arrivals: dict,
                             swap = None
                     if swap and swap[0] != registration:
                         new_rego, new_flight = swap
-                        await _send_aircraft_swap_notice(
-                            context, cfg, chat_id,
-                            registration, new_rego, new_flight,
-                            flight_number, notification_type, arrival_ts,
-                        )
-                    else:
-                        await _send_disappeared_notice(
-                            context, cfg, chat_id,
-                            registration, flight_number, notification_type, arrival_ts,
-                        )
+                        await _send_aircraft_swap_notice(context, cfg, registration, new_rego, new_flight, flight_number, notification_type, arrival_ts)
+                    # If no confirmed status and no swap, silently remove — likely landed early or FR24 data gap
                     cfg.store.delete_tracked_flight(registration)
 
 
 async def _send_arrival_reminder(
     context,
     cfg,
-    chat_id: str,
     flight: dict,
     registration: str,
     notification_type: str,
@@ -870,59 +862,61 @@ async def _send_arrival_reminder(
     arrival_ts = int(arr_ts) if arr_ts else 0
     hours_away = round((arrival_ts - now_ts) / _HOURS, 1) if arrival_ts else "?"
     tz = pytz.timezone(cfg.airport_tz)
-    arrival_str = (
-        datetime.fromtimestamp(arrival_ts).astimezone(tz).strftime("%a %H:%M")
-        if arrival_ts else "N/A"
-    )
 
     aircraft = flight.get("aircraft") or {}
-    airline_name = (flight.get("airline") or {}).get("name", "N/A")
-    lines = [
-        f"<b>Arriving Soon — {notification_type}</b>",
-        f"  Flight: {_safe_get(flight, 'identification', 'number', 'default')}",
-        f"  Aircraft: {_safe_get(aircraft, 'model', 'text')} ({_safe_get(aircraft, 'model', 'code')})",
-        f"  Registration: {registration}",
-        f"  Airline: {airline_name}",
-        f"  {arr_label}: {arrival_str} (Local) — in ~{hours_away}h",
-    ]
+    aircraft_text_raw = _safe_get(aircraft, 'model', 'text')
+    airline_name_raw  = (flight.get("airline") or {}).get("name", "N/A")
+    flight_id = _safe_get(flight, "identification", "id", default=None)
 
-    # Next departure — DB lookup: estimated → scheduled → predicted
+    dep_data = None
     if flight_number and cfg.departure_pattern_threshold > 0:
         predicted = cfg.store.get_predicted_departure(flight_number, cfg.airport_iata, cfg.departure_pattern_threshold)
         if predicted:
             dep_fn, confidence, _, _ = predicted
             dep_info = cfg.store.get_predicted_dep_info(dep_fn, cfg.airport_iata)
-            estimated_ts = dep_info.get("estimated_dep_ts") if dep_info else None
-            sched_ts     = dep_info.get("scheduled_dep_ts") if dep_info else None
-            dest_name    = dep_info.get("dest_name") if dep_info else None
-            dest_iata    = dep_info.get("dest_iata") if dep_info else None
-            dest_icao    = dep_info.get("dest_icao") if dep_info else None
-            lines.append("")
-            lines.append("<b>Next Departure:</b>")
-            if estimated_ts:
-                dep_str = datetime.fromtimestamp(estimated_ts).astimezone(tz).strftime("%a %H:%M")
-                lines.append(f"  Estimated: {dep_str} (Local) — {dep_fn}")
-            elif sched_ts:
-                dep_str = datetime.fromtimestamp(sched_ts).astimezone(tz).strftime("%a %H:%M")
-                lines.append(f"  Scheduled: {dep_str} (Local) — {dep_fn}")
-            else:
-                lines.append(f"  Predicted: {dep_fn}")
-            if dest_name:
-                lines.append(f"  To: {dest_name} ({dest_iata}/{dest_icao})")
-            if not estimated_ts and not sched_ts:
-                lines.append(f"  Confidence: {confidence:.0f}%")
+            dep_data = {"dep_fn": dep_fn, "confidence": confidence, "dep_info": dep_info}
 
-    flight_id = _safe_get(flight, "identification", "id", default=None)
+    arrival_str = datetime.fromtimestamp(arrival_ts).astimezone(tz).strftime("%a %H:%M") if arrival_ts else "N/A"
+    lines = [
+        f"<b>Arriving Soon — {notification_type}</b>",
+        f"  Flight: {_safe_get(flight, 'identification', 'number', 'default')}",
+        f"  Aircraft: {aircraft_text_raw} ({_safe_get(aircraft, 'model', 'code')})",
+        f"  Registration: {registration}",
+        f"  Airline: {airline_name_raw}",
+        f"  {arr_label}: {arrival_str} (Local) — in ~{hours_away}h",
+    ]
+    if dep_data:
+        dep_fn     = dep_data["dep_fn"]
+        confidence = dep_data["confidence"]
+        dep_info   = dep_data["dep_info"]
+        estimated_ts = dep_info.get("estimated_dep_ts") if dep_info else None
+        sched_ts     = dep_info.get("scheduled_dep_ts") if dep_info else None
+        dest_name    = dep_info.get("dest_name") if dep_info else None
+        dest_iata    = dep_info.get("dest_iata") if dep_info else None
+        dest_icao    = dep_info.get("dest_icao") if dep_info else None
+        lines.append("")
+        lines.append("<b>Next Departure:</b>")
+        if estimated_ts:
+            dep_str = datetime.fromtimestamp(estimated_ts).astimezone(tz).strftime("%a %H:%M")
+            lines.append(f"  Estimated: {dep_str} (Local) — {dep_fn}")
+        elif sched_ts:
+            dep_str = datetime.fromtimestamp(sched_ts).astimezone(tz).strftime("%a %H:%M")
+            lines.append(f"  Scheduled: {dep_str} (Local) — {dep_fn}")
+        else:
+            lines.append(f"  Predicted: {dep_fn}")
+        if dest_name:
+            lines.append(f"  To: {dest_name} ({dest_iata}/{dest_icao})")
+        if not estimated_ts and not sched_ts:
+            lines.append(f"  Confidence: {confidence:.0f}%")
     if flight_id and flight_id != "N/A":
         lines.append(f"\nhttps://www.flightradar24.com/{flight_id}")
 
-    try:
-        await context.bot.send_message(
-            chat_id=chat_id, text="\n".join(lines), parse_mode="HTML"
-        )
-        log.info("Sent arrival reminder for %s", registration)
-    except Exception as exc:
-        log.error("Failed to send arrival reminder for %s: %s", registration, exc)
+    for dest_chat_id in cfg.all_chat_ids:
+        try:
+            await context.bot.send_message(chat_id=dest_chat_id, text="\n".join(lines), parse_mode="HTML")
+        except Exception as exc:
+            log.error("Failed to send arrival reminder for %s to %s: %s", registration, dest_chat_id, exc)
+    log.info("Sent arrival reminder for %s", registration)
 
 
 def _classify_new_aircraft(flight: dict, registration: str, cfg) -> Optional[str]:
@@ -958,113 +952,74 @@ def _classify_new_aircraft(flight: dict, registration: str, cfg) -> Optional[str
 
 
 async def _send_aircraft_swap_notice(
-    context,
-    cfg,
-    chat_id: str,
-    old_rego: str,
-    new_rego: str,
-    new_flight: dict,
-    flight_number: str,
-    notification_type: str,
-    arrival_ts: int,
+    context, cfg, old_rego, new_rego, new_flight, flight_number, notification_type, arrival_ts,
 ) -> None:
     tz = pytz.timezone(cfg.airport_tz)
-    arrival_str = (
-        datetime.fromtimestamp(arrival_ts).astimezone(tz).strftime("%a %H:%M")
-        if arrival_ts else "N/A"
-    )
+    arrival_str = datetime.fromtimestamp(arrival_ts).astimezone(tz).strftime("%a %H:%M") if arrival_ts else "N/A"
     aircraft = new_flight.get("aircraft") or {}
     ac_type  = _safe_get(aircraft, "model", "code")
     ac_name  = _safe_get(aircraft, "model", "text")
-
+    interesting = _classify_new_aircraft(new_flight, new_rego, cfg)
     lines = [
         f"<b>Aircraft Changed — {notification_type}</b>",
         f"  Flight: {flight_number or 'N/A'}",
         f"  Was: {old_rego}",
         f"  Now: {new_rego} ({ac_name} / {ac_type})",
-        f"  Arrival: {arrival_str} (local)",
+        f"  Arrival: {arrival_str} (Local)",
     ]
-    interesting = _classify_new_aircraft(new_flight, new_rego, cfg)
     if interesting:
         lines.append(f"\n  <b>{interesting}</b>")
-
-    try:
-        await context.bot.send_message(chat_id=chat_id, text="\n".join(lines), parse_mode="HTML")
-        log.info("Sent aircraft swap notice: %s → %s on %s", old_rego, new_rego, flight_number)
-    except Exception as exc:
-        log.error("Failed to send swap notice for %s: %s", flight_number, exc)
+    for dest_chat_id in cfg.all_chat_ids:
+        try:
+            await context.bot.send_message(chat_id=dest_chat_id, text="\n".join(lines), parse_mode="HTML")
+        except Exception as exc:
+            log.error("Failed to send swap notice to %s: %s", dest_chat_id, exc)
+    log.info("Sent aircraft swap notice: %s → %s on %s", old_rego, new_rego, flight_number)
 
 
 async def _send_disappeared_notice(
-    context,
-    cfg,
-    chat_id: str,
-    registration: str,
-    flight_number: str,
-    notification_type: str,
-    arrival_ts: int,
+    context, cfg, registration, flight_number, notification_type, arrival_ts,
 ) -> None:
     tz = pytz.timezone(cfg.airport_tz)
-    arrival_str = (
-        datetime.fromtimestamp(arrival_ts).astimezone(tz).strftime("%a %H:%M")
-        if arrival_ts else "N/A"
-    )
+    arrival_str = datetime.fromtimestamp(arrival_ts).astimezone(tz).strftime("%a %H:%M") if arrival_ts else "N/A"
     message = (
         f"<b>No Longer Visible — {notification_type}</b>\n"
         f"  Registration: {registration}\n"
         f"  Flight: {flight_number or 'N/A'}\n"
-        f"  Was scheduled: {arrival_str} (Local)\n\n"
-        "This flight has dropped off the arrivals board."
+        f"  Was scheduled: {arrival_str} (Local)"
     )
-    try:
-        await context.bot.send_message(chat_id=chat_id, text=message, parse_mode="HTML")
-        log.info("Sent disappeared notice for %s", registration)
-    except Exception as exc:
-        log.error("Failed to send disappeared notice for %s: %s", registration, exc)
+    for dest_chat_id in cfg.all_chat_ids:
+        try:
+            await context.bot.send_message(chat_id=dest_chat_id, text=message, parse_mode="HTML")
+        except Exception as exc:
+            log.error("Failed to send disappeared notice to %s: %s", dest_chat_id, exc)
+    log.info("Sent disappeared notice for %s", registration)
 
 
 async def _send_cancellation_notice(
-    context,
-    cfg,
-    chat_id: str,
-    registration: str,
-    flight_number: str,
-    notification_type: str,
-    arrival_ts: int,
+    context, cfg, registration, flight_number, notification_type, arrival_ts,
 ) -> None:
     tz = pytz.timezone(cfg.airport_tz)
-    arrival_str = (
-        datetime.fromtimestamp(arrival_ts).astimezone(tz).strftime("%a %H:%M")
-        if arrival_ts else "N/A"
-    )
+    arrival_str = datetime.fromtimestamp(arrival_ts).astimezone(tz).strftime("%a %H:%M") if arrival_ts else "N/A"
     message = (
         f"<b>Cancelled — {notification_type}</b>\n"
         f"  Registration: {registration}\n"
         f"  Flight: {flight_number or 'N/A'}\n"
         f"  Was scheduled: {arrival_str} (Local)"
     )
-    try:
-        await context.bot.send_message(chat_id=chat_id, text=message, parse_mode="HTML")
-        log.info("Sent cancellation notice for %s", registration)
-    except Exception as exc:
-        log.error("Failed to send cancellation notice for %s: %s", registration, exc)
+    for dest_chat_id in cfg.all_chat_ids:
+        try:
+            await context.bot.send_message(chat_id=dest_chat_id, text=message, parse_mode="HTML")
+        except Exception as exc:
+            log.error("Failed to send cancellation notice to %s: %s", dest_chat_id, exc)
+    log.info("Sent cancellation notice for %s", registration)
 
 
 async def _send_diversion_notice(
-    context,
-    cfg,
-    chat_id: str,
-    registration: str,
-    flight_number: str,
-    notification_type: str,
-    arrival_ts: int,
-    diverted_airport: str,
+    context, cfg, registration, flight_number, notification_type, arrival_ts, diverted_airport,
 ) -> None:
     tz = pytz.timezone(cfg.airport_tz)
-    arrival_str = (
-        datetime.fromtimestamp(arrival_ts).astimezone(tz).strftime("%a %H:%M")
-        if arrival_ts else "N/A"
-    )
+    arrival_str = datetime.fromtimestamp(arrival_ts).astimezone(tz).strftime("%a %H:%M") if arrival_ts else "N/A"
     airport_str = f" to {diverted_airport}" if diverted_airport else ""
     message = (
         f"<b>Diverted{airport_str} — {notification_type}</b>\n"
@@ -1072,8 +1027,9 @@ async def _send_diversion_notice(
         f"  Flight: {flight_number or 'N/A'}\n"
         f"  Was scheduled: {arrival_str} (Local)"
     )
-    try:
-        await context.bot.send_message(chat_id=chat_id, text=message, parse_mode="HTML")
-        log.info("Sent diversion notice for %s → %s", registration, diverted_airport or "unknown")
-    except Exception as exc:
-        log.error("Failed to send diversion notice for %s: %s", registration, exc)
+    for dest_chat_id in cfg.all_chat_ids:
+        try:
+            await context.bot.send_message(chat_id=dest_chat_id, text=message, parse_mode="HTML")
+        except Exception as exc:
+            log.error("Failed to send diversion notice to %s: %s", dest_chat_id, exc)
+    log.info("Sent diversion notice for %s → %s", registration, diverted_airport or "unknown")
