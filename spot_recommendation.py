@@ -480,6 +480,10 @@ def _evaluate_rolling_flights(cfg, window_start: int, window_end: int,
             continue
 
         registration  = record["registration"]
+
+        if cfg.store.is_excluded(registration):
+            continue
+
         notif_type    = record["notif_type"] or "Interesting"
         extra_info    = record["extra_info"] or ""
         flight_number = record["flight_number"] or ""
