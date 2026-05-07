@@ -548,7 +548,16 @@ def _flight_line(f: "FlightEval", tz, include_reason: bool = False,
         else:
             time_str = f"arr {t}"
 
-    return f"  • {f.registration} — {type_str}{detail_str}{reason_str} — {time_str}"
+    parts = [f"  • {f.registration}"]
+    if type_str:
+        parts.append(type_str)
+    if f.detail:
+        parts.append(f.detail)
+    if include_reason and f.reason:
+        parts.append(f.reason)
+    if time_str and time_str != "—":
+        parts.append(time_str)
+    return " — ".join(parts)
 
 
 def _build_detail_message(
