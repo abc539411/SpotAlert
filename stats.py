@@ -5,6 +5,8 @@ import logging
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
+from monitor import _registration_flag, _iata_flag
+
 log = logging.getLogger(__name__)
 
 
@@ -25,8 +27,11 @@ async def handle_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             )
 
             if s["top_airports"]:
-                apt_str = " · ".join(f"{apt} ({cnt})" for apt, cnt in s["top_airports"])
-                lines.append(f"  Top airports: {apt_str}")
+                apt_parts = []
+                for apt, cnt in s["top_airports"]:
+                    flag = _iata_flag(apt)
+                    apt_parts.append(f"{flag} {apt} ({cnt})" if flag else f"{apt} ({cnt})")
+                lines.append(f"  Top airports: {' · '.join(apt_parts)}")
 
             if s["top_photographed"]:
                 lines.append("")
@@ -34,7 +39,9 @@ async def handle_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                 for reg, count in s["top_photographed"]:
                     airline, ac_type = cfg.catalog.get_aircraft_info(reg)
                     detail = f" — {airline} ({ac_type})" if airline and ac_type else f" — {airline or ac_type}"
-                    lines.append(f"    {reg}{detail} · {count} session{'s' if count != 1 else ''}")
+                    flag = _registration_flag(reg)
+                    reg_str = f"{reg} {flag}" if flag else reg
+                    lines.append(f"    {reg_str}{detail} · {count} session{'s' if count != 1 else ''}")
 
             if s["multi_airport"]:
                 lines.append("")
@@ -42,8 +49,13 @@ async def handle_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                 for reg, apt_count, airports in s["multi_airport"]:
                     airline, ac_type = cfg.catalog.get_aircraft_info(reg)
                     detail = f" — {airline} ({ac_type})" if airline and ac_type else f" — {airline or ac_type}"
-                    apt_list = ", ".join(a.strip() for a in airports.split(","))
-                    lines.append(f"    {reg}{detail} · {apt_list} ({apt_count} airports)")
+                    flag = _registration_flag(reg)
+                    reg_str = f"{reg} {flag}" if flag else reg
+                    apt_list = ", ".join(
+                        f"{_iata_flag(a.strip())} {a.strip()}" if _iata_flag(a.strip()) else a.strip()
+                        for a in airports.split(",")
+                    )
+                    lines.append(f"    {reg_str}{detail} · {apt_list} ({apt_count} airports)")
         else:
             lines.append("<b>My Photos</b>")
             lines.append("  No catalog data available.")
