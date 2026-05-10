@@ -18,6 +18,17 @@ _WMO = {
     95: "Thunderstorm", 96: "Thunderstorm with hail", 99: "Thunderstorm with heavy hail",
 }
 
+_WMO_EMOJI = {
+    0: "☀️", 1: "🌤", 2: "⛅", 3: "☁️",
+    45: "🌫", 48: "🌫",
+    51: "🌦", 53: "🌦", 55: "🌧",
+    61: "🌧", 63: "🌧", 65: "🌧",
+    71: "🌨", 73: "❄️", 75: "❄️", 77: "🌨",
+    80: "🌦", 81: "🌧", 82: "🌧",
+    85: "🌨", 86: "🌨",
+    95: "⛈", 96: "⛈", 99: "⛈",
+}
+
 # Conditions where you physically can't stand outdoors
 _SEVERE = {75, 82, 86, 95, 96, 99}
 
@@ -30,7 +41,9 @@ class WeatherResult:
         self.is_severe = int(code) in _SEVERE
 
     def __str__(self) -> str:
-        return f"{self.description}, {self.temp:.0f}°C"
+        emoji = _WMO_EMOJI.get(int(self.code), "")
+        prefix = f"{emoji} " if emoji else ""
+        return f"{prefix}{self.description}, {self.temp:.0f}°C"
 
 
 def get_current_weather(lat: float, lon: float, tz_name: str) -> Optional[WeatherResult]:
