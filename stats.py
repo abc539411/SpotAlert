@@ -12,6 +12,9 @@ log = logging.getLogger(__name__)
 
 async def handle_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     cfg = context.bot_data["cfg"]
+    if not cfg.store.is_admin(str(update.effective_chat.id)):
+        await update.message.reply_text("You don't have permission to view stats.")
+        return
     lines = ["<b>SpotAlert Stats</b>", ""]
 
     # ----------------------------------------------------------------
