@@ -626,8 +626,9 @@ def _cluster_flights(
             lulls=lulls,
         ))
 
-    # Assign filtered flights to nearest cluster by arrival_ts
+    # Assign filtered flights to nearest cluster and set their lighting zones
     for f in filtered:
+        f.lighting_zone = _flight_lighting_zone(f, **lighting_kwargs)
         best = min(result, key=lambda c: min(
             abs(f.arrival_ts - c.start_ts), abs(f.arrival_ts - c.end_ts)
         ))
