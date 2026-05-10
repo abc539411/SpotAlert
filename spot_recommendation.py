@@ -208,6 +208,7 @@ async def check_rolling_recommendation(context: ContextTypes.DEFAULT_TYPE, cfg, 
         max_gap_secs=cfg.spot_rec_max_gap_hours * 3600,
         notable_lull_secs=cfg.spot_rec_notable_lull_mins * 60,
         max_lulls=cfg.spot_rec_max_lulls,
+        **_lighting_kwargs(cfg, sunrise_ts, sunset_ts),
     )
 
     # Pick the earliest qualifying cluster (I want to go now)
@@ -287,6 +288,7 @@ async def run_eod_recommendation(context: ContextTypes.DEFAULT_TYPE) -> None:
         max_gap_secs=cfg.spot_rec_max_gap_hours * 3600,
         notable_lull_secs=cfg.spot_rec_notable_lull_mins * 60,
         max_lulls=cfg.spot_rec_max_lulls,
+        **_lighting_kwargs(cfg, sunrise_ts, sunset_ts),
     )
 
     eligible = [c for c in clusters if len(c.flights) >= cfg.spot_rec_threshold][:cfg.spot_rec_max_windows]
@@ -376,6 +378,7 @@ class FlightEval:
     dep_time_label: str = ""         # "Predicted", "Scheduled", "Estimated"
     session_ts: Optional[int] = None # event time shown in recommendation
     show_dep: bool = False           # True when both arr and dep fall within the cluster
+    lighting_zone: Optional[str] = None  # 'too_early', 'bad_light', 'too_late', or None (good light)
 
 
 @dataclass
@@ -424,6 +427,74 @@ def _lookup_departure_for_flight(
     return dep_fn, None, "Predicted"
 
 
+_LIGHT_EMOJI = {"too_early": "🌅", "bad_light": "☀️", "too_late": "🌇"}
+
+
+def _lighting_quality(
+    ts: int,
+    sunrise_ts: int,
+    sunset_ts: int,
+    sunrise_buffer_secs: int,
+    sunset_buffer_secs: int,
+    bad_light_start: str,
+    bad_light_end: str,
+    airport_tz: str,
+) -> Optional[str]:
+    """Return lighting zone for a timestamp, or None if lighting is good.
+
+    Priority: too_early > bad_light > too_late
+    (too_early wins because pre-sunrise is the hardest constraint)
+    """
+    if not ts:
+        return None
+    if sunrise_ts and sunrise_buffer_secs and ts < sunrise_ts + sunrise_buffer_secs:
+        return "too_early"
+    if bad_light_start and bad_light_end and airport_tz:
+        try:
+            tz = pytz.timezone(airport_tz)
+            time_str = datetime.fromtimestamp(ts).astimezone(tz).strftime("%H:%M")
+            if bad_light_start <= time_str <= bad_light_end:
+                return "bad_light"
+        except Exception:
+            pass
+    if sunset_ts and sunset_buffer_secs and ts > sunset_ts - sunset_buffer_secs:
+        return "too_late"
+    return None
+
+
+def _flight_lighting_zone(
+    f: "FlightEval",
+    sunrise_ts: int, sunset_ts: int,
+    sunrise_buffer_secs: int, sunset_buffer_secs: int,
+    bad_light_start: str, bad_light_end: str,
+    airport_tz: str,
+) -> Optional[str]:
+    """Return worst lighting zone across arrival and departure timestamps for a flight."""
+    _PRIORITY = {"too_early": 0, "bad_light": 1, "too_late": 2}
+    zones = []
+    for ts in filter(None, [f.arrival_ts, f.dep_ts]):
+        z = _lighting_quality(ts, sunrise_ts, sunset_ts, sunrise_buffer_secs,
+                              sunset_buffer_secs, bad_light_start, bad_light_end, airport_tz)
+        if z:
+            zones.append(z)
+    if not zones:
+        return None
+    return min(zones, key=lambda z: _PRIORITY[z])
+
+
+def _lighting_kwargs(cfg, sunrise_ts: int, sunset_ts: int) -> dict:
+    """Build the lighting quality keyword args for _cluster_flights from cfg."""
+    return dict(
+        sunrise_ts=sunrise_ts,
+        sunset_ts=sunset_ts,
+        sunrise_buffer_secs=cfg.spot_rec_sunrise_buffer_mins * 60,
+        sunset_buffer_secs=cfg.spot_rec_sunset_buffer_mins * 60,
+        bad_light_start=cfg.spot_rec_bad_light_start,
+        bad_light_end=cfg.spot_rec_bad_light_end,
+        airport_tz=cfg.airport_tz,
+    )
+
+
 def _lull_line(lull_start_ts: int, lull_end_ts: int, tz) -> str:
     """Format a notable gap within a cluster as a single display line."""
     duration_mins = (lull_end_ts - lull_start_ts) // 60
@@ -440,11 +511,25 @@ def _cluster_flights(
     max_gap_secs: int,
     notable_lull_secs: int,
     max_lulls: int,
+    sunrise_ts: int = 0,
+    sunset_ts: int = 0,
+    sunrise_buffer_secs: int = 0,
+    sunset_buffer_secs: int = 0,
+    bad_light_start: str = "",
+    bad_light_end: str = "",
+    airport_tz: str = "",
 ) -> List[SpotCluster]:
     """Group qualifying flights into natural activity clusters separated by gaps > max_gap_secs.
 
-    Each cluster gets its filtered flights, notable lulls, and the latest viable start time.
+    Lighting quality is computed per flight and used as a soft tiebreaker
+    when choosing the recommended start time within each cluster.
     """
+    lighting_kwargs = dict(
+        sunrise_ts=sunrise_ts, sunset_ts=sunset_ts,
+        sunrise_buffer_secs=sunrise_buffer_secs, sunset_buffer_secs=sunset_buffer_secs,
+        bad_light_start=bad_light_start, bad_light_end=bad_light_end,
+        airport_tz=airport_tz,
+    )
     if not qualifying:
         if not filtered:
             return []
@@ -489,27 +574,37 @@ def _cluster_flights(
             or (f.dep_ts and cluster_start <= f.dep_ts <= cluster_end)
         ]
 
-        # Set session_ts and show_dep per flight
+        # Set session_ts, show_dep, and lighting_zone per flight
         for f in cluster_flights:
             arr_in = cluster_start <= f.arrival_ts <= cluster_end
             dep_in = bool(f.dep_ts and cluster_start <= f.dep_ts <= cluster_end)
-            f.session_ts = f.arrival_ts if arr_in else f.dep_ts
-            f.show_dep   = arr_in and dep_in
+            f.session_ts    = f.arrival_ts if arr_in else f.dep_ts
+            f.show_dep      = arr_in and dep_in
+            f.lighting_zone = _flight_lighting_zone(f, **lighting_kwargs)
 
-        # Latest viable start: latest event Ei where all flights still catchable
+        # Lighting-aware recommended start:
+        # Among all viable starts (all flights still catchable), prefer the one
+        # that maximises flights in good light, then pick the latest among ties.
         all_events = sorted(set(
             [f.arrival_ts for f in cluster_flights] +
             [f.dep_ts for f in cluster_flights if f.dep_ts]
         ))
-        recommended_start_ts = cluster_start
-        for ei in reversed(all_events):
-            catchable = sum(
-                1 for f in cluster_flights
+        best_start = cluster_start
+        best_good  = -1
+        best_ts    = -1
+        for ei in all_events:
+            catchable = [
+                f for f in cluster_flights
                 if f.arrival_ts >= ei or (f.dep_ts and f.dep_ts >= ei)
-            )
-            if catchable == len(cluster_flights):
-                recommended_start_ts = ei
-                break
+            ]
+            if len(catchable) < len(cluster_flights):
+                continue
+            good_light = sum(1 for f in catchable if f.lighting_zone is None)
+            if good_light > best_good or (good_light == best_good and ei > best_ts):
+                best_good  = good_light
+                best_ts    = ei
+                best_start = ei
+        recommended_start_ts = best_start
 
         # Lull detection: gaps between consecutive event timestamps AFTER recommended start
         # (no point flagging gaps the user won't be there for)
@@ -707,6 +802,11 @@ def _flight_line(f: "FlightEval", tz, include_reason: bool = False,
             time_str = f"dep {t}"
         else:
             time_str = f"arr {t}"
+
+    # Append lighting emoji to time string (soft indicator, not a hard gate)
+    light_emoji = _LIGHT_EMOJI.get(f.lighting_zone or "", "")
+    if light_emoji and time_str and time_str != "—":
+        time_str = f"{time_str} {light_emoji}"
 
     flag = _registration_flag(f.registration)
     reg_str = f"{f.registration}{' ' + flag if flag else ''}"
@@ -1003,6 +1103,7 @@ async def _send_spot_followup(context: ContextTypes.DEFAULT_TYPE) -> None:
         max_gap_secs=cfg.spot_rec_max_gap_hours * 3600,
         notable_lull_secs=cfg.spot_rec_notable_lull_mins * 60,
         max_lulls=cfg.spot_rec_max_lulls,
+        **_lighting_kwargs(cfg, sunrise_ts, sunset_ts),
     )
     # Show the earliest qualifying cluster (same intent as rolling check)
     cluster = next((c for c in clusters if len(c.flights) >= cfg.spot_rec_threshold), None)
