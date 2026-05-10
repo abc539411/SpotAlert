@@ -14,7 +14,7 @@ log = logging.getLogger(__name__)
 
 # Matches a bare registration — must contain at least one hyphen or digit to avoid
 # matching plain words like "Done", "Cancel", "Today" from keyboard menus
-_REGO_RE = re.compile(r"^(?=.*[-\d])[A-Z][A-Z0-9\-]{2,8}$", re.IGNORECASE)
+_REGO_RE = re.compile(r"^(?=.*[-\d])[A-Z0-9][A-Z0-9\-]{2,8}$", re.IGNORECASE)
 
 
 def _extract_registration(text: str) -> str | None:
