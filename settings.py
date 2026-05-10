@@ -75,6 +75,8 @@ _SPOT_REC_KB = ReplyKeyboardMarkup(
         ["Max Spotted Times"],
         ["Max Gap", "Notable Lull"],
         ["Max Lulls", "Max Windows"],
+        ["Sunrise Buffer", "Sunset Buffer"],
+        ["Bad Light Start", "Bad Light End"],
         ["Back"],
     ],
     resize_keyboard=True,
@@ -245,7 +247,10 @@ def _spot_rec_detail(cfg) -> str:
         f"  Max Gap: {cfg.spot_rec_max_gap_hours}h\n"
         f"  Notable Lull: {cfg.spot_rec_notable_lull_mins} min\n"
         f"  Max Lulls: {cfg.spot_rec_max_lulls}\n"
-        f"  Max Windows: {cfg.spot_rec_max_windows}"
+        f"  Max Windows: {cfg.spot_rec_max_windows}\n"
+        f"  🌅 Sunrise Buffer: {cfg.spot_rec_sunrise_buffer_mins} min\n"
+        f"  🌇 Sunset Buffer: {cfg.spot_rec_sunset_buffer_mins} min\n"
+        f"  ☀️ Bad Light: {cfg.spot_rec_bad_light_start or 'off'} – {cfg.spot_rec_bad_light_end or 'off'}"
     )
 
 
@@ -895,6 +900,7 @@ _SPOT_REC_FIELDS = {
     "Enabled", "Day Type", "Travel Time", "Threshold",
     "EOD Hour", "Weather Gate", "Lighting Gate", "Max Spotted Times",
     "Max Gap", "Notable Lull", "Max Lulls", "Max Windows",
+    "Sunrise Buffer", "Sunset Buffer", "Bad Light Start", "Bad Light End",
 }
 
 
@@ -982,6 +988,32 @@ async def handle_spot_rec_submenu(update: Update, context: ContextTypes.DEFAULT_
         await update.message.reply_text(
             f"Current: {cfg.spot_rec_max_windows}\n\n"
             "Maximum number of session options shown in EOD and manual spot checks (max 3).",
+            reply_markup=_REMOVE_KB,
+        )
+    elif choice == "Sunrise Buffer":
+        await update.message.reply_text(
+            f"Current: {cfg.spot_rec_sunrise_buffer_mins} min\n\n"
+            "🌅 Minutes after sunrise still considered poor light. Flights in this window are flagged but not excluded.",
+            reply_markup=_REMOVE_KB,
+        )
+    elif choice == "Sunset Buffer":
+        await update.message.reply_text(
+            f"Current: {cfg.spot_rec_sunset_buffer_mins} min\n\n"
+            "🌇 Minutes before sunset still considered poor light. Flights in this window are flagged but not excluded.",
+            reply_markup=_REMOVE_KB,
+        )
+    elif choice == "Bad Light Start":
+        current = cfg.spot_rec_bad_light_start or "off"
+        await update.message.reply_text(
+            f"Current: {current}\n\n"
+            "☀️ Start of midday bad light window (local time, format HH:MM e.g. 11:00). Send - to disable.",
+            reply_markup=_REMOVE_KB,
+        )
+    elif choice == "Bad Light End":
+        current = cfg.spot_rec_bad_light_end or "off"
+        await update.message.reply_text(
+            f"Current: {current}\n\n"
+            "☀️ End of midday bad light window (local time, format HH:MM e.g. 14:00). Send - to disable.",
             reply_markup=_REMOVE_KB,
         )
 
@@ -1129,6 +1161,52 @@ async def _handle_spot_rec_value(update: Update, context: ContextTypes.DEFAULT_T
             return ENTER_VALUE
         cfg.spot_rec_max_windows = val
         store.save_setting("SPOT_REC_MAX_WINDOWS", str(val))
+
+    elif field == "Sunrise Buffer":
+        try:
+            val = int(raw)
+            if val < 0:
+                raise ValueError
+        except ValueError:
+            await update.message.reply_text("Please enter a non-negative number of minutes.")
+            return ENTER_VALUE
+        cfg.spot_rec_sunrise_buffer_mins = val
+        store.save_setting("SPOT_REC_SUNRISE_BUFFER_MINS", str(val))
+
+    elif field == "Sunset Buffer":
+        try:
+            val = int(raw)
+            if val < 0:
+                raise ValueError
+        except ValueError:
+            await update.message.reply_text("Please enter a non-negative number of minutes.")
+            return ENTER_VALUE
+        cfg.spot_rec_sunset_buffer_mins = val
+        store.save_setting("SPOT_REC_SUNSET_BUFFER_MINS", str(val))
+
+    elif field == "Bad Light Start":
+        import re as _re
+        if raw.strip() in ("-", "off", ""):
+            cfg.spot_rec_bad_light_start = ""
+            store.save_setting("SPOT_REC_BAD_LIGHT_START", "")
+        elif _re.match(r"^\d{2}:\d{2}$", raw.strip()):
+            cfg.spot_rec_bad_light_start = raw.strip()
+            store.save_setting("SPOT_REC_BAD_LIGHT_START", raw.strip())
+        else:
+            await update.message.reply_text("Please enter a time in HH:MM format (e.g. 11:00), or - to disable.")
+            return ENTER_VALUE
+
+    elif field == "Bad Light End":
+        import re as _re
+        if raw.strip() in ("-", "off", ""):
+            cfg.spot_rec_bad_light_end = ""
+            store.save_setting("SPOT_REC_BAD_LIGHT_END", "")
+        elif _re.match(r"^\d{2}:\d{2}$", raw.strip()):
+            cfg.spot_rec_bad_light_end = raw.strip()
+            store.save_setting("SPOT_REC_BAD_LIGHT_END", raw.strip())
+        else:
+            await update.message.reply_text("Please enter a time in HH:MM format (e.g. 14:00), or - to disable.")
+            return ENTER_VALUE
 
     await update.message.reply_html(f"Updated.\n\n{_spot_rec_detail(cfg)}", reply_markup=_SPOT_REC_KB)
     return SPOT_REC_SUBMENU
