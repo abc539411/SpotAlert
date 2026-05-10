@@ -107,6 +107,15 @@ async def handle_lookup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     if operator_str:
         lines.append(f"Operator: {operator_str}")
 
+    # --- Watchlist / exclusion status ---
+    tags = []
+    if cfg.store.is_excluded(registration):
+        tags.append("⛔ Exclusion List")
+    if cfg.store.is_on_rego_watchlist(registration):
+        tags.append("👁 Rego Watchlist")
+    if tags:
+        lines.append(f"Status: {' · '.join(tags)}")
+
     lines.append("")
 
     # --- Last Seen at airport (sighting_history) ---
