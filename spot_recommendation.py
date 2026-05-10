@@ -389,10 +389,16 @@ class SpotCluster:
 
 
 
-def _lookup_departure_for_flight(cfg, arrival_fn: str) -> Tuple[Optional[str], Optional[int], str]:
+def _lookup_departure_for_flight(
+    cfg, arrival_fn: str, arrival_ts: int = 0
+) -> Tuple[Optional[str], Optional[int], str]:
     """Look up departure info for an arrival flight number from DB.
-    Returns (dep_fn, dep_ts, dep_time_label) or (None, None, '').
-    Precedence for dep_ts: estimated → scheduled → None (predicted, no time).
+
+    Priority chain for dep_ts:
+      a) estimated_dep_ts if still in the future
+      b) scheduled_dep_ts if still in the future
+      c) arrival_ts + turnaround_secs (derived from scheduled times, day-agnostic)
+      d) None (caller shows flight number only, no time)
     """
     if not arrival_fn:
         return None, None, ""
@@ -401,11 +407,20 @@ def _lookup_departure_for_flight(cfg, arrival_fn: str) -> Tuple[Optional[str], O
         return None, None, ""
     dep_fn, _, _, _ = predicted
     dep_info = cfg.store.get_predicted_dep_info(dep_fn, cfg.airport_iata)
-    if dep_info:
-        if dep_info.get("estimated_dep_ts"):
-            return dep_fn, dep_info["estimated_dep_ts"], "Estimated"
-        if dep_info.get("scheduled_dep_ts"):
-            return dep_fn, dep_info["scheduled_dep_ts"], "Scheduled"
+    if not dep_info:
+        return dep_fn, None, "Predicted"
+
+    now_ts = int(datetime.now().timestamp())
+    estimated_ts    = dep_info.get("estimated_dep_ts")
+    sched_ts        = dep_info.get("scheduled_dep_ts")
+    turnaround_secs = dep_info.get("turnaround_secs")
+
+    if estimated_ts and estimated_ts > now_ts:
+        return dep_fn, estimated_ts, "Estimated"
+    if sched_ts and sched_ts > now_ts:
+        return dep_fn, sched_ts, "Scheduled"
+    if turnaround_secs and arrival_ts:
+        return dep_fn, arrival_ts + turnaround_secs, "Predicted"
     return dep_fn, None, "Predicted"
 
 
@@ -594,7 +609,7 @@ def _populate_departures(flights: List["FlightEval"], cfg,
     for e in flights:
         if not e.flight_number:
             continue
-        dep_fn, dep_ts, dep_label = _lookup_departure_for_flight(cfg, e.flight_number)
+        dep_fn, dep_ts, dep_label = _lookup_departure_for_flight(cfg, e.flight_number, e.arrival_ts)
         if dep_fn:
             e.dep_fn = dep_fn
             e.dep_time_label = dep_label

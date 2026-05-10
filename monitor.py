@@ -265,19 +265,39 @@ def format_notification(
                 )
                 if predicted:
                     pred_fn, confidence, _, _ = predicted
-                    dep_info = cfg_store.get_predicted_dep_info(pred_fn, airport_iata)
-                    sched_ts  = dep_info.get("scheduled_dep_ts") if dep_info else None
-                    al_name   = dep_info.get("airline_name")     if dep_info else None
-                    al_iata   = dep_info.get("airline_iata")     if dep_info else None
-                    al_icao   = dep_info.get("airline_icao")     if dep_info else None
-                    dest_name = dep_info.get("dest_name")        if dep_info else None
-                    dest_iata = dep_info.get("dest_iata")        if dep_info else None
-                    dest_icao = dep_info.get("dest_icao")        if dep_info else None
-                    if fr_api is not None and (sched_ts is None or not al_name or not dest_name):
+                    dep_info        = cfg_store.get_predicted_dep_info(pred_fn, airport_iata)
+                    sched_ts        = dep_info.get("scheduled_dep_ts") if dep_info else None
+                    turnaround_secs = dep_info.get("turnaround_secs")  if dep_info else None
+                    al_name         = dep_info.get("airline_name")     if dep_info else None
+                    al_iata         = dep_info.get("airline_iata")     if dep_info else None
+                    al_icao         = dep_info.get("airline_icao")     if dep_info else None
+                    dest_name       = dep_info.get("dest_name")        if dep_info else None
+                    dest_iata       = dep_info.get("dest_iata")        if dep_info else None
+                    dest_icao       = dep_info.get("dest_icao")        if dep_info else None
+
+                    now_check = int(datetime.now().timestamp())
+
+                    # a) Stored timestamp still in the future — use directly
+                    if sched_ts and sched_ts > now_check:
+                        dep_display_ts    = sched_ts
+                        dep_display_label = "Predicted"
+                    # b) Stale stored timestamp — derive from scheduled turnaround offset
+                    elif turnaround_secs:
+                        arr_ts_raw     = _safe_get(flight, "time", "scheduled", "arrival", default=None)
+                        arr_ts_for_dep = int(arr_ts_raw) if isinstance(arr_ts_raw, (int, float)) else None
+                        dep_display_ts    = (arr_ts_for_dep + turnaround_secs) if arr_ts_for_dep else None
+                        dep_display_label = "Predicted"
+                    else:
+                        dep_display_ts    = None
+                        dep_display_label = "Predicted"
+
+                    # c) No time yet — try FR24 for current day's schedule (also fills route info)
+                    need_fr24 = (dep_display_ts is None or not al_name or not dest_name)
+                    if fr_api is not None and need_fr24:
                         try:
                             fl_data = fr_api.get_flight_by_number(pred_fn)
-                            if sched_ts is None:
-                                sched_ts = _get_scheduled_dep_ts(fl_data, airport_iata, pred_fn)
+                            if dep_display_ts is None:
+                                dep_display_ts = _get_scheduled_dep_ts(fl_data, airport_iata, pred_fn)
                             if not al_name or not dest_name:
                                 _, _, al_name2, al_iata2, al_icao2, dest_name2, dest_iata2, dest_icao2, _ = _lookup_flight_by_number(
                                     fl_data, pred_fn, airport_tz
@@ -290,11 +310,12 @@ def format_notification(
                                 dest_icao = dest_icao or dest_icao2
                         except Exception:
                             pass
+
                     tz = pytz.timezone(airport_tz)
                     lines += ["", "<b>Next Departure:</b>"]
-                    if sched_ts:
-                        dep_time = datetime.fromtimestamp(sched_ts).astimezone(tz)
-                        lines.append(f"  Predicted: {dep_time.strftime('%a %H:%M')} (Local) — {pred_fn}")
+                    if dep_display_ts:
+                        dep_time = datetime.fromtimestamp(dep_display_ts).astimezone(tz)
+                        lines.append(f"  {dep_display_label}: {dep_time.strftime('%a %H:%M')} (Local) — {pred_fn}")
                     else:
                         lines.append(f"  Predicted: {pred_fn}")
                     if dest_name:
@@ -685,7 +706,10 @@ async def _send_notification(
         )
         if dep_fn:
             sched_dep_ts = _get_scheduled_dep_ts(rego_details, cfg.airport_iata, dep_fn)
-            # Also capture estimated departure time if available
+            # Scheduled arrival time — used with scheduled_dep_ts to compute turnaround_secs
+            sched_arr_ts_raw = _safe_get(flight, "time", "scheduled", "arrival", default=None)
+            sched_arr_ts = int(sched_arr_ts_raw) if isinstance(sched_arr_ts_raw, (int, float)) else None
+            # Estimated departure time
             estimated_dep_ts = None
             for fl in (rego_details or {}).get("data") or []:
                 try:
@@ -701,6 +725,7 @@ async def _send_notification(
                 arrival_fn, dep_fn, cfg.airport_iata, now_ts,
                 scheduled_dep_ts=sched_dep_ts,
                 estimated_dep_ts=estimated_dep_ts,
+                scheduled_arr_ts=sched_arr_ts,
                 airline_name=al_name, airline_iata=al_iata, airline_icao=al_icao,
                 dest_name=dest_name, dest_iata=dest_iata, dest_icao=dest_icao,
             )
@@ -887,27 +912,41 @@ async def _send_arrival_reminder(
         f"  {arr_label}: {arrival_str} (Local) — in ~{hours_away}h",
     ]
     if dep_data:
-        dep_fn     = dep_data["dep_fn"]
-        confidence = dep_data["confidence"]
-        dep_info   = dep_data["dep_info"]
-        estimated_ts = dep_info.get("estimated_dep_ts") if dep_info else None
-        sched_ts     = dep_info.get("scheduled_dep_ts") if dep_info else None
-        dest_name    = dep_info.get("dest_name") if dep_info else None
-        dest_iata    = dep_info.get("dest_iata") if dep_info else None
-        dest_icao    = dep_info.get("dest_icao") if dep_info else None
+        dep_fn          = dep_data["dep_fn"]
+        confidence      = dep_data["confidence"]
+        dep_info        = dep_data["dep_info"]
+        estimated_ts    = dep_info.get("estimated_dep_ts") if dep_info else None
+        sched_ts        = dep_info.get("scheduled_dep_ts") if dep_info else None
+        turnaround_secs = dep_info.get("turnaround_secs")  if dep_info else None
+        dest_name       = dep_info.get("dest_name")        if dep_info else None
+        dest_iata       = dep_info.get("dest_iata")        if dep_info else None
+        dest_icao       = dep_info.get("dest_icao")        if dep_info else None
+
+        # a) Estimated still in the future
+        if estimated_ts and estimated_ts > now_ts:
+            dep_display_ts, dep_display_label = estimated_ts, "Estimated"
+        # b) Scheduled still in the future
+        elif sched_ts and sched_ts > now_ts:
+            dep_display_ts, dep_display_label = sched_ts, "Scheduled"
+        # c) Both stale — derive from turnaround offset using scheduled arrival time
+        elif turnaround_secs:
+            sched_arr_raw  = _safe_get(flight, "time", "scheduled", "arrival", default=None)
+            sched_arr_ts   = int(sched_arr_raw) if isinstance(sched_arr_raw, (int, float)) else None
+            dep_display_ts = (sched_arr_ts + turnaround_secs) if sched_arr_ts else None
+            dep_display_label = "Predicted"
+        else:
+            dep_display_ts, dep_display_label = None, "Predicted"
+
         lines.append("")
         lines.append("<b>Next Departure:</b>")
-        if estimated_ts:
-            dep_str = datetime.fromtimestamp(estimated_ts).astimezone(tz).strftime("%a %H:%M")
-            lines.append(f"  Estimated: {dep_str} (Local) — {dep_fn}")
-        elif sched_ts:
-            dep_str = datetime.fromtimestamp(sched_ts).astimezone(tz).strftime("%a %H:%M")
-            lines.append(f"  Scheduled: {dep_str} (Local) — {dep_fn}")
+        if dep_display_ts:
+            dep_str = datetime.fromtimestamp(dep_display_ts).astimezone(tz).strftime("%a %H:%M")
+            lines.append(f"  {dep_display_label}: {dep_str} (Local) — {dep_fn}")
         else:
             lines.append(f"  Predicted: {dep_fn}")
         if dest_name:
             lines.append(f"  To: {dest_name} ({dest_iata}/{dest_icao})")
-        if not estimated_ts and not sched_ts:
+        if not dep_display_ts:
             lines.append(f"  Confidence: {confidence:.0f}%")
     if flight_id and flight_id != "N/A":
         lines.append(f"\nhttps://www.flightradar24.com/{flight_id}")
