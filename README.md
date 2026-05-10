@@ -26,11 +26,11 @@ All filters run in the following priority order — a flight only ever triggers 
 ### Notifications include
 
 Each notification includes:
-- Flight number, origin airport, airline, aircraft type and registration
+- Flight number, origin airport, airline, aircraft type and registration with 🏳 country flag
 - **Last Spotted** — the date, airport, and number of times you have photographed this aircraft (sourced from your Lightroom catalog — see below)
 - **Last Seen at airport** — the last date this registration was recorded landing at the monitored airport
 - Scheduled and estimated arrival times (local)
-- **Next Departure** — the next outbound flight from the monitored airport, showing estimated/scheduled/predicted time, flight number, and destination; predicted departures are sourced from historical arrival→departure patterns learned by the bot and shown with a confidence percentage
+- **Next Departure** — the next outbound flight from the monitored airport, showing estimated/scheduled/predicted time, flight number, and destination; predicted departures use a three-tier lookup: stored timestamps → turnaround offset (derived from scheduled times) → FR24 API call
 
 ### Military Traffic
 
@@ -41,46 +41,58 @@ Each notification includes:
 
 ### Spot Recommendation
 
-Automatically recommends whether it is worth heading out to spot based on interesting flights in your planned session window. Both arrivals **and** predicted departures are factored in when optimising the session window.
+Automatically recommends whether it is worth heading out to spot based on which interesting aircraft are arriving (and departing) during the day. All recommendation data is read from the bot's own notification record — no additional FR24 API calls are made.
 
-All recommendation data is read from the bot's own notification record — no additional FR24 API calls are made during a spot check.
+**Activity clustering** — flights are grouped into natural sessions based on gaps between events. A gap larger than the configured **Max Gap** threshold means "you'd go home between those flights" — separate sessions. Smaller gaps within a session can be flagged as break time notices (☕ grab a coffee). The algorithm picks the **latest viable start time** within a session so you can sleep in without missing anything.
+
+**Lighting quality indicators** — soft indicators on each flight line (not hard gates):
+- 🌅 arrives shortly after sunrise — light is still low
+- ☀️ arrives in the configurable midday bad-light window — harsh overhead light
+- 🌇 arrives within the sunset buffer — fading light
+
+When choosing between otherwise equal sessions, the algorithm prefers the one with more flights in good light. Within a session, it prefers the start time that keeps the most flights out of bad-light windows.
 
 **Automatic triggers:**
-- **Rolling check** — runs after every arrivals poll during the day; fires if enough interesting flights are within your travel + session window
-- **End-of-day check** — runs once at a configurable hour each evening; reads tomorrow's notified flights from the DB, finds the optimal session window, and sends a recommendation with Yes/Maybe/No response buttons
-  - Tapping **Yes** schedules a follow-up "time to leave" message with an updated flight list
-  - Tapping **No** suppresses rolling recommendations the next day
+- **Rolling check** — runs after every arrivals poll during the day; fires if enough interesting flights are within the next qualifying session cluster; cooldown uses the Max Gap interval
+- **End-of-day check** — runs once at a configurable hour each evening; clusters tomorrow's notified flights, finds the best session(s), and sends a recommendation
+  - **Single qualifying session** → Yes/Maybe/No buttons; tapping Yes schedules a "time to leave" follow-up message
+  - **Multiple qualifying sessions** → inline keyboard with one button per session + Maybe/No; tapping a session button commits to that window
+  - Tapping **No** suppresses rolling recommendations for the next day
 
 **Manual `/spot` command:**
 - Choose **Today** or **Tomorrow**, then select a period:
-  - **Morning / Afternoon / All Day** — shows all interesting flights in that period with both arrival and predicted departure times per aircraft (Scenario A)
-  - **Best Time to Go** — finds the session window that fits the most interesting flights, considering both arrivals and predicted departures, and shows the single best time per aircraft (Scenario B)
+  - **Morning / Afternoon / All Day** — shows all interesting flights in that period with both arrival and predicted departure times per aircraft
+  - **Best Time to Go** — clusters all flights and shows all qualifying sessions; filtered-out flights shown as strikethrough within their session
 
 **Filters applied to all checks:**
-- **Lighting gate** — flights arriving after sunset are excluded; pre-sunrise arrivals are only kept if a confirmed daylight departure exists, otherwise filtered out
+- **Lighting gate** (hard) — flights arriving after sunset are excluded; pre-sunrise arrivals kept only if a confirmed daylight departure exists
 - **Day gate** — automatic checks only run on qualifying days (any day, weekends only, or public holidays)
-- **Weather gate** — automatic checks are suppressed when severe weather is forecast; manual checks always show weather alongside the verdict
-- **Spotted times** — aircraft you have already photographed too many times at this airport can be excluded (configurable threshold)
+- **Weather gate** — automatic checks suppressed when severe weather is forecast; manual checks always run and show weather with emoji (☀️ 🌤 🌧 ⛈ etc.)
+- **Spotted times** — aircraft photographed too many times at this airport can be excluded (configurable threshold)
 - **Exclusion list** — registrations on the exclusion list are never surfaced in recommendations or notifications
 
 ### Multi-User Support
 
 Multiple Telegram users can receive notifications from the same bot instance:
 
-- **Admin** — full access to `/settings`, `/filters`, and all management commands
-- **Read-only users** — receive all notifications and can use `/spot`, `/stats`, and registration lookups; cannot change settings
+- **Admin** — full access to `/settings`, `/filters`, `/stats`, and all management commands
+- **Read-only users** — receive all notifications and can use `/spot` and registration lookups; cannot change settings or view stats
 
 Users are managed via `/settings → Users`. Notifications are broadcast to all registered users simultaneously.
 
 ### Registration Lookup
 
-Type any aircraft registration directly into the chat (e.g. `VH-XQU`) to instantly retrieve:
-- Last Seen at the monitored airport
-- Full spotted history from your Lightroom catalog (date, time, airport — per spotting session)
+Type any aircraft registration directly into the chat (e.g. `VH-XQU` or `9V-SWI`) to instantly retrieve:
+- Country flag emoji derived from registration prefix
+- Whether the registration is on the **Exclusion List** or **Rego Watchlist**
 - Aircraft type and operator (from the bot's own records first, FR24 fallback)
+- Last Seen at the monitored airport
+- Full Lightroom spotting history: every session where this registration was photographed, showing date, time, and airport
+- Link to the FR24 aircraft page
 
-### Spotting Stats (`/stats`)
+### Spotting Stats (`/stats`) — Admin only
 
+- Country flags shown next to all registrations and airport codes
 - Total unique aircraft photographed and total spotting sessions
 - Top airports by number of trips
 - Top 5 most-photographed aircraft (with operator and type)
@@ -92,14 +104,14 @@ Type any aircraft registration directly into the chat (e.g. `VH-XQU`) to instant
 | Command | Description |
 |---|---|
 | `/spot` | Check interesting flights or get a spotting recommendation — choose day and period |
-| `/stats` | View spotting stats and notification totals |
+| `/stats` | View spotting stats and notification totals (admin only) |
 | `/filters` | Manage watchlists and exclusion list |
 | `/settings` | Configure all app settings at runtime |
 | `/status` | Show host system info and next scheduled check times |
 
 ### Runtime Configuration
 
-All settings are adjustable via `/settings` in Telegram — airport, check intervals, reminder hours, filter thresholds, arrival windows, active days, military settings, spot period definitions, and full spot recommendation configuration. Changes persist across restarts.
+All settings are adjustable via `/settings` in Telegram. Changes take effect immediately and persist across restarts.
 
 ---
 
@@ -172,10 +184,14 @@ Key settings:
 | `MILITARY_RADIUS_NM` | Search radius around the airport (nautical miles, max 250) | 50 |
 | `MILITARY_MAX_ALT_FT` | Maximum altitude to consider a military aircraft "on approach" | 5000 |
 | `SPOT_REC_ENABLED` | Enable the spot recommendation feature | false |
-| `SPOT_REC_TRAVEL_MINS` | Minutes to travel from home to the airport | 30 |
-| `SPOT_REC_SESSION_HOURS` | Typical spotting session length in hours | 5 |
-| `SPOT_REC_THRESHOLD` | Minimum interesting arrivals to trigger a recommendation | 3 |
+| `SPOT_REC_TRAVEL_MINS` | Minutes to travel from home to airport | 30 |
+| `SPOT_REC_MAX_GAP_HOURS` | Gap (hours) between events that splits into separate sessions; also rolling cooldown | 3 |
+| `SPOT_REC_THRESHOLD` | Minimum interesting flights required for a recommendation | 3 |
 | `SPOT_REC_EOD_HOUR` | Local hour (0–23) to send the end-of-day recommendation | 20 |
+| `SPOT_REC_SUNRISE_BUFFER_MINS` | Minutes after sunrise still flagged as poor light (🌅) | 30 |
+| `SPOT_REC_SUNSET_BUFFER_MINS` | Minutes before sunset still flagged as poor light (🌇) | 30 |
+| `SPOT_REC_BAD_LIGHT_START` | Local HH:MM start of midday bad-light window (☀️); empty = disabled | — |
+| `SPOT_REC_BAD_LIGHT_END` | Local HH:MM end of midday bad-light window | — |
 
 All settings can also be changed at runtime via `/settings` in Telegram.
 
@@ -198,7 +214,7 @@ A SQLite database is created at `config/filters/spotalert.db` on first run. It s
 - Exclusion list
 - Follow-up tracking (reminders, aircraft swaps, cancellations)
 - Sighting history — actual landing timestamps for registrations seen at the airport
-- **Departure patterns** — historical arrival→departure flight number pairings with observation counts, scheduled/estimated departure times, airline, and destination; used to predict next departures and factor them into spot recommendations
+- **Departure patterns** — historical arrival→departure flight number pairings with observation counts, scheduled/estimated departure timestamps, turnaround offset (for predicting future departures), airline, and destination
 - Registered users (admin + read-only)
 - Any settings changed via the bot
 
