@@ -153,9 +153,11 @@ class SqliteStore:
             """)
             fdp_cols = {row[1] for row in conn.execute("PRAGMA table_info(flight_departure_pattern)").fetchall()}
             for col, typ in [
-                ("scheduled_dep_ts", "INTEGER"), ("estimated_dep_ts", "INTEGER"),
-                ("airline_name", "TEXT"), ("airline_iata", "TEXT"), ("airline_icao", "TEXT"),
-                ("dest_name", "TEXT"), ("dest_iata", "TEXT"), ("dest_icao", "TEXT"),
+                ("scheduled_dep_ts",  "INTEGER"), ("estimated_dep_ts", "INTEGER"),
+                ("airline_name",      "TEXT"),    ("airline_iata",     "TEXT"),
+                ("airline_icao",      "TEXT"),    ("dest_name",        "TEXT"),
+                ("dest_iata",         "TEXT"),    ("dest_icao",        "TEXT"),
+                ("scheduled_arr_ts",  "INTEGER"), ("turnaround_secs",  "INTEGER"),
             ]:
                 if col not in fdp_cols:
                     conn.execute(f"ALTER TABLE flight_departure_pattern ADD COLUMN {col} {typ} DEFAULT NULL")
@@ -652,37 +654,48 @@ class SqliteStore:
                                   airport_iata: str, now_ts: int,
                                   scheduled_dep_ts: Optional[int] = None,
                                   estimated_dep_ts: Optional[int] = None,
+                                  scheduled_arr_ts: Optional[int] = None,
                                   airline_name: Optional[str] = None,
                                   airline_iata: Optional[str] = None,
                                   airline_icao: Optional[str] = None,
                                   dest_name: Optional[str] = None,
                                   dest_iata: Optional[str] = None,
                                   dest_icao: Optional[str] = None) -> None:
-        """Increment the observation count for an arrival→departure flight number pairing."""
+        """Increment the observation count for an arrival→departure flight number pairing.
+
+        turnaround_secs is computed from scheduled times only (not actual) so that
+        day-to-day variance in real departure times doesn't corrupt the offset.
+        """
+        turnaround_secs: Optional[int] = None
+        if scheduled_dep_ts and scheduled_arr_ts:
+            turnaround_secs = scheduled_dep_ts - scheduled_arr_ts
+
         with self._connect() as conn:
             conn.execute(
                 """
                 INSERT INTO flight_departure_pattern
                     (arrival_flight_number, departure_flight_number, airport_iata, count, last_seen_ts,
-                     scheduled_dep_ts, estimated_dep_ts, airline_name, airline_iata, airline_icao,
-                     dest_name, dest_iata, dest_icao)
-                VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     scheduled_dep_ts, estimated_dep_ts, scheduled_arr_ts, turnaround_secs,
+                     airline_name, airline_iata, airline_icao, dest_name, dest_iata, dest_icao)
+                VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(arrival_flight_number, departure_flight_number, airport_iata)
                 DO UPDATE SET
-                    count            = count + 1,
-                    last_seen_ts     = excluded.last_seen_ts,
-                    scheduled_dep_ts = COALESCE(excluded.scheduled_dep_ts, scheduled_dep_ts),
-                    estimated_dep_ts = COALESCE(excluded.estimated_dep_ts, estimated_dep_ts),
-                    airline_name     = COALESCE(excluded.airline_name, airline_name),
-                    airline_iata     = COALESCE(excluded.airline_iata, airline_iata),
-                    airline_icao     = COALESCE(excluded.airline_icao, airline_icao),
-                    dest_name        = COALESCE(excluded.dest_name, dest_name),
-                    dest_iata        = COALESCE(excluded.dest_iata, dest_iata),
-                    dest_icao        = COALESCE(excluded.dest_icao, dest_icao)
+                    count             = count + 1,
+                    last_seen_ts      = excluded.last_seen_ts,
+                    scheduled_dep_ts  = COALESCE(excluded.scheduled_dep_ts, scheduled_dep_ts),
+                    estimated_dep_ts  = COALESCE(excluded.estimated_dep_ts, estimated_dep_ts),
+                    scheduled_arr_ts  = COALESCE(excluded.scheduled_arr_ts, scheduled_arr_ts),
+                    turnaround_secs   = COALESCE(excluded.turnaround_secs, turnaround_secs),
+                    airline_name      = COALESCE(excluded.airline_name, airline_name),
+                    airline_iata      = COALESCE(excluded.airline_iata, airline_iata),
+                    airline_icao      = COALESCE(excluded.airline_icao, airline_icao),
+                    dest_name         = COALESCE(excluded.dest_name, dest_name),
+                    dest_iata         = COALESCE(excluded.dest_iata, dest_iata),
+                    dest_icao         = COALESCE(excluded.dest_icao, dest_icao)
                 """,
                 (arrival_fn.strip(), departure_fn.strip(), airport_iata.strip(), now_ts,
-                 scheduled_dep_ts, estimated_dep_ts, airline_name, airline_iata, airline_icao,
-                 dest_name, dest_iata, dest_icao),
+                 scheduled_dep_ts, estimated_dep_ts, scheduled_arr_ts, turnaround_secs,
+                 airline_name, airline_iata, airline_icao, dest_name, dest_iata, dest_icao),
             )
 
     def update_departure_timestamps(self, arrival_fn: str, departure_fn: str,
@@ -720,7 +733,8 @@ class SqliteStore:
         with self._connect() as conn:
             row = conn.execute(
                 """
-                SELECT scheduled_dep_ts, estimated_dep_ts, airline_name, airline_iata, airline_icao,
+                SELECT scheduled_dep_ts, estimated_dep_ts, turnaround_secs,
+                       airline_name, airline_iata, airline_icao,
                        dest_name, dest_iata, dest_icao
                 FROM flight_departure_pattern
                 WHERE departure_flight_number = ? AND airport_iata = ?
@@ -733,6 +747,7 @@ class SqliteStore:
             return {
                 "scheduled_dep_ts": row["scheduled_dep_ts"],
                 "estimated_dep_ts": row["estimated_dep_ts"],
+                "turnaround_secs":  row["turnaround_secs"],
                 "airline_name":     row["airline_name"],
                 "airline_iata":     row["airline_iata"],
                 "airline_icao":     row["airline_icao"],
