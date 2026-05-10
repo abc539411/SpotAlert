@@ -18,6 +18,80 @@ _DAYS  = 86400
 
 
 # ------------------------------------------------------------------
+# Country flag helpers
+# ------------------------------------------------------------------
+
+def _flag_emoji(country_code: str) -> str:
+    """Convert ISO 2-letter country code to flag emoji."""
+    if len(country_code) != 2:
+        return ""
+    return "".join(chr(0x1F1E6 + ord(c) - ord("A")) for c in country_code.upper())
+
+
+# Prefix → ISO country code. Longer prefixes listed before shorter ones that
+# share the same start (e.g. DQ- before D-) so startswith checks work correctly.
+_REG_PREFIXES: list = [
+    ("VH-", "AU"), ("VN-", "VN"), ("VT-", "IN"), ("VQ-", "GB"),
+    ("HS-", "TH"), ("HZ-", "SA"),
+    ("PK-", "ID"), ("PH-", "NL"), ("P2-", "PG"),
+    ("A7-", "QA"), ("A6-", "AE"), ("A9C", "BH"), ("AP-", "PK"),
+    ("4R-", "LK"), ("4X-", "IL"),
+    ("9V-", "SG"), ("9M-", "MY"), ("9H-", "MT"), ("9G-", "GH"),
+    ("ZK-", "NZ"), ("ZS-", "ZA"),
+    ("CC-", "CL"),
+    ("OE-", "AT"), ("OH-", "FI"), ("OK-", "CZ"), ("OM-", "SK"),
+    ("OY-", "DK"), ("OD-", "LB"),
+    ("LN-", "NO"), ("LX-", "LU"), ("LY-", "LT"), ("LZ-", "BG"),
+    ("SE-", "SE"), ("SX-", "GR"), ("SU-", "EG"), ("SP-", "PL"), ("S2-", "BD"),
+    ("EC-", "ES"), ("EI-", "IE"), ("EP-", "IR"), ("ET-", "ET"),
+    ("ES-", "EE"), ("EY-", "AZ"),
+    ("TC-", "TR"), ("TS-", "TN"),
+    ("UR-", "UA"), ("UK-", "UZ"), ("UP-", "KZ"),
+    ("RA-", "RU"), ("RF-", "RU"),
+    ("RP-", "PH"),
+    ("DQ-", "FJ"), ("D-",  "DE"),
+    ("F-",  "FR"),
+    ("G-",  "GB"),
+    ("CS-", "PT"), ("CN-", "MA"),
+    ("JY-", "JO"),
+    ("YR-", "RO"), ("YL-", "LV"), ("YA-", "AF"),
+    ("5N-", "NG"), ("5Y-", "KE"),
+    ("7T-", "DZ"),
+    ("XU-", "KH"),
+]
+
+
+def _registration_flag(registration: str) -> str:
+    """Return a country flag emoji for an aircraft registration, or '' if unknown."""
+    r = registration.upper().strip()
+
+    # B- prefix: China / Hong Kong / Macau distinguished by first suffix character
+    if r.startswith("B-"):
+        suffix = r[2:]
+        if suffix and suffix[0] in "HKLM":
+            return _flag_emoji("HK")
+        if suffix and suffix[0] == "0":
+            return _flag_emoji("MO")
+        return _flag_emoji("CN")
+
+    # N prefix — USA (N followed by digit or letter, no dash)
+    if len(r) > 1 and r[0] == "N" and r[1] != "-" and r[1].isalnum():
+        return _flag_emoji("US")
+
+    # JA (Japan) and HL (Korea) — no dash
+    if r.startswith("JA"):
+        return _flag_emoji("JP")
+    if r.startswith("HL"):
+        return _flag_emoji("KR")
+
+    for prefix, cc in _REG_PREFIXES:
+        if r.startswith(prefix):
+            return _flag_emoji(cc)
+
+    return ""
+
+
+# ------------------------------------------------------------------
 # Flight status / time helpers
 # ------------------------------------------------------------------
 
@@ -902,12 +976,13 @@ async def _send_arrival_reminder(
             dep_info = cfg.store.get_predicted_dep_info(dep_fn, cfg.airport_iata)
             dep_data = {"dep_fn": dep_fn, "confidence": confidence, "dep_info": dep_info}
 
+    flag = _registration_flag(registration)
     arrival_str = datetime.fromtimestamp(arrival_ts).astimezone(tz).strftime("%a %H:%M") if arrival_ts else "N/A"
     lines = [
         f"<b>Arriving Soon — {notification_type}</b>",
         f"  Flight: {_safe_get(flight, 'identification', 'number', 'default')}",
         f"  Aircraft: {aircraft_text_raw} ({_safe_get(aircraft, 'model', 'code')})",
-        f"  Registration: {registration}",
+        f"  Registration: {registration}{' ' + flag if flag else ''}",
         f"  Airline: {airline_name_raw}",
         f"  {arr_label}: {arrival_str} (Local) — in ~{hours_away}h",
     ]
@@ -1000,11 +1075,13 @@ async def _send_aircraft_swap_notice(
     ac_type  = _safe_get(aircraft, "model", "code")
     ac_name  = _safe_get(aircraft, "model", "text")
     interesting = _classify_new_aircraft(new_flight, new_rego, cfg)
+    old_flag = _registration_flag(old_rego)
+    new_flag = _registration_flag(new_rego)
     lines = [
         f"<b>Aircraft Changed — {notification_type}</b>",
         f"  Flight: {flight_number or 'N/A'}",
-        f"  Was: {old_rego}",
-        f"  Now: {new_rego} ({ac_name} / {ac_type})",
+        f"  Was: {old_rego}{' ' + old_flag if old_flag else ''}",
+        f"  Now: {new_rego}{' ' + new_flag if new_flag else ''} ({ac_name} / {ac_type})",
         f"  Arrival: {arrival_str} (Local)",
     ]
     if interesting:
@@ -1041,9 +1118,10 @@ async def _send_cancellation_notice(
 ) -> None:
     tz = pytz.timezone(cfg.airport_tz)
     arrival_str = datetime.fromtimestamp(arrival_ts).astimezone(tz).strftime("%a %H:%M") if arrival_ts else "N/A"
+    flag = _registration_flag(registration)
     message = (
         f"<b>Cancelled — {notification_type}</b>\n"
-        f"  Registration: {registration}\n"
+        f"  Registration: {registration}{' ' + flag if flag else ''}\n"
         f"  Flight: {flight_number or 'N/A'}\n"
         f"  Was scheduled: {arrival_str} (Local)"
     )
@@ -1060,10 +1138,11 @@ async def _send_diversion_notice(
 ) -> None:
     tz = pytz.timezone(cfg.airport_tz)
     arrival_str = datetime.fromtimestamp(arrival_ts).astimezone(tz).strftime("%a %H:%M") if arrival_ts else "N/A"
+    flag = _registration_flag(registration)
     airport_str = f" to {diverted_airport}" if diverted_airport else ""
     message = (
         f"<b>Diverted{airport_str} — {notification_type}</b>\n"
-        f"  Registration: {registration}\n"
+        f"  Registration: {registration}{' ' + flag if flag else ''}\n"
         f"  Flight: {flight_number or 'N/A'}\n"
         f"  Was scheduled: {arrival_str} (Local)"
     )
