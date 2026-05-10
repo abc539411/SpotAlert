@@ -8,6 +8,8 @@ import pytz
 from telegram import Update
 from telegram.ext import Application, ConversationHandler, ContextTypes, MessageHandler, filters
 
+from monitor import _registration_flag
+
 log = logging.getLogger(__name__)
 
 # Matches a bare registration — must contain at least one hyphen or digit to avoid
@@ -57,7 +59,9 @@ async def handle_lookup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
     cfg = context.bot_data["cfg"]
 
-    lines = [f"<b>Lookup: {registration}</b>", ""]
+    flag = _registration_flag(registration)
+    header = f"{registration}{' ' + flag if flag else ''}"
+    lines = [f"<b>Lookup: {header}</b>", ""]
 
     # --- Aircraft details: DB first, FR24 fallback ---
     aircraft_str = ""
