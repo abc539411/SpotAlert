@@ -61,6 +61,107 @@ _REG_PREFIXES: list = [
 ]
 
 
+_IATA_COUNTRY: dict = {
+    # Australia & Pacific
+    "SYD": "AU", "MEL": "AU", "BNE": "AU", "PER": "AU", "ADL": "AU",
+    "CBR": "AU", "OOL": "AU", "CNS": "AU", "HBA": "AU", "DRW": "AU",
+    "TSV": "AU", "MKY": "AU", "LST": "AU", "HTI": "AU",
+    "AKL": "NZ", "CHC": "NZ", "WLG": "NZ", "ZQN": "NZ", "DUD": "NZ",
+    "NAN": "FJ", "SUV": "FJ",
+    "POM": "PG", "LAE": "PG",
+    "HIR": "SB", "VLI": "VU",
+    "PPT": "PF",
+    # East & Southeast Asia
+    "SIN": "SG",
+    "HKG": "HK",
+    "MFM": "MO",
+    "NRT": "JP", "HND": "JP", "KIX": "JP", "ITM": "JP", "NGO": "JP", "CTS": "JP",
+    "ICN": "KR", "GMP": "KR", "PUS": "KR", "CJU": "KR",
+    "PEK": "CN", "PKX": "CN", "PVG": "CN", "SHA": "CN", "CAN": "CN",
+    "CTU": "CN", "SZX": "CN", "XIY": "CN", "KMG": "CN", "CSX": "CN",
+    "WUH": "CN", "NKG": "CN", "HGH": "CN", "TNA": "CN", "CKG": "CN",
+    "TPE": "TW", "TSA": "TW", "KHH": "TW",
+    "MNL": "PH", "CEB": "PH", "DVO": "PH",
+    "CGK": "ID", "DPS": "ID", "SUB": "ID", "UPG": "ID", "MDC": "ID",
+    "KUL": "MY", "BKI": "MY", "KCH": "MY", "PEN": "MY",
+    "BKK": "TH", "DMK": "TH", "CNX": "TH", "HKT": "TH", "HDY": "TH",
+    "HAN": "VN", "SGN": "VN", "DAD": "VN",
+    "RGN": "MM",
+    "PNH": "KH", "REP": "KH",
+    "VTE": "LA",
+    # South Asia
+    "DEL": "IN", "BOM": "IN", "MAA": "IN", "BLR": "IN", "CCU": "IN",
+    "HYD": "IN", "AMD": "IN", "COK": "IN",
+    "CMB": "LK",
+    "DAC": "BD", "CGP": "BD",
+    "KTM": "NP",
+    "KHI": "PK", "LHE": "PK", "ISB": "PK",
+    "MLE": "MV",
+    # Middle East & Central Asia
+    "DXB": "AE", "AUH": "AE", "SHJ": "AE",
+    "DOH": "QA",
+    "BAH": "BH",
+    "MCT": "OM",
+    "KWI": "KW",
+    "AMM": "JO", "AQJ": "JO",
+    "BEY": "LB",
+    "RUH": "SA", "JED": "SA", "DMM": "SA",
+    "TLV": "IL",
+    "IST": "TR", "SAW": "TR", "AYT": "TR",
+    "GYD": "AZ",
+    "TAS": "UZ",
+    "ALA": "KZ",
+    # Africa
+    "JNB": "ZA", "CPT": "ZA", "DUR": "ZA",
+    "NBO": "KE", "MBA": "KE",
+    "ADD": "ET",
+    "LOS": "NG", "ABV": "NG",
+    "ACC": "GH",
+    "CMN": "MA", "RAK": "MA",
+    "ALG": "DZ",
+    "CAI": "EG", "HRG": "EG",
+    # Europe
+    "LHR": "GB", "LGW": "GB", "MAN": "GB", "EDI": "GB", "STN": "GB",
+    "CDG": "FR", "ORY": "FR", "NCE": "FR",
+    "FRA": "DE", "MUC": "DE", "DUS": "DE", "BER": "DE",
+    "AMS": "NL", "EIN": "NL",
+    "MAD": "ES", "BCN": "ES", "AGP": "ES",
+    "FCO": "IT", "MXP": "IT", "VCE": "IT",
+    "ZRH": "CH", "GVA": "CH",
+    "VIE": "AT",
+    "BRU": "BE",
+    "ARN": "SE", "GOT": "SE",
+    "CPH": "DK",
+    "HEL": "FI",
+    "OSL": "NO", "BGO": "NO",
+    "LIS": "PT", "OPO": "PT",
+    "OTP": "RO",
+    "WAW": "PL", "KRK": "PL",
+    "PRG": "CZ",
+    "BUD": "HU",
+    "ATH": "GR", "SKG": "GR",
+    "SVO": "RU", "DME": "RU", "LED": "RU",
+    "KBP": "UA",
+    # Americas
+    "LAX": "US", "SFO": "US", "JFK": "US", "ORD": "US", "MIA": "US",
+    "SEA": "US", "HNL": "US", "DFW": "US", "ATL": "US", "DEN": "US",
+    "LAS": "US", "PHX": "US", "IAH": "US", "BOS": "US", "EWR": "US",
+    "YVR": "CA", "YYZ": "CA", "YUL": "CA", "YYC": "CA", "YEG": "CA",
+    "GRU": "BR", "GIG": "BR", "BSB": "BR", "FOR": "BR",
+    "SCL": "CL",
+    "BOG": "CO",
+    "LIM": "PE",
+    "MEX": "MX", "CUN": "MX",
+    "EZE": "AR", "AEP": "AR",
+}
+
+
+def _iata_flag(iata: str) -> str:
+    """Return a country flag emoji for an airport IATA code, or '' if unknown."""
+    cc = _IATA_COUNTRY.get((iata or "").upper().strip(), "")
+    return _flag_emoji(cc) if cc else ""
+
+
 def _registration_flag(registration: str) -> str:
     """Return a country flag emoji for an aircraft registration, or '' if unknown."""
     r = registration.upper().strip()
