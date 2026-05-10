@@ -18,9 +18,10 @@ All filters run in the following priority order — a flight only ever triggers 
 
 ### Follow-up Notifications
 
-- **Arrival reminder** — sends a reminder when a notified flight is within a configurable number of hours of arrival; can be disabled by setting `REMINDER_HOURS = 0`
-- **Aircraft changed** — if a notified registration disappears from the board but the same flight number reappears under a different registration, an "Aircraft Changed" notice is sent; if the new aircraft matches any filter that is noted in the alert
-- **Cancellation/diversion alert** — if a notified flight genuinely disappears from the arrivals board, you are alerted
+- **Arrival reminder** — sends a reminder when a notified flight is within a configurable number of hours of arrival; only fires if the flight was originally scheduled far enough in advance to be worth a reminder; can be disabled by setting `REMINDER_HOURS = 0`
+- **Aircraft changed** — if a notified registration disappears from the board but the same flight number reappears under a different registration on the same day, an "Aircraft Changed" notice is sent; if the new aircraft matches any filter, that is noted in the alert
+- **Cancellation** — triggered by the FR24 confirmed cancellation status, not by the flight disappearing from the board
+- **Diversion** — triggered by the FR24 confirmed diversion status, including the divert destination airport
 
 ### Notifications include
 
@@ -34,7 +35,7 @@ Each notification includes:
 ### Military Traffic
 
 - Monitors nearby military aircraft via the [adsb.fi](https://opendata.adsb.fi) open data API — no API key required
-- Notifies when a military aircraft is on approach within a configurable radius and below a configurable altitude threshold; aircraft on the ground are excluded
+- Notifies when a military aircraft is on approach within a configurable radius and below a configurable altitude threshold; aircraft already on the ground are excluded
 - Notification includes country of origin (derived from ICAO hex address), registration, callsign, aircraft type, altitude, speed, distance, and a direct link to the aircraft on globe.adsb.fi
 - Runs on its own check interval, independent of the main arrivals check
 
@@ -47,7 +48,7 @@ All recommendation data is read from the bot's own notification record — no ad
 **Automatic triggers:**
 - **Rolling check** — runs after every arrivals poll during the day; fires if enough interesting flights are within your travel + session window
 - **End-of-day check** — runs once at a configurable hour each evening; reads tomorrow's notified flights from the DB, finds the optimal session window, and sends a recommendation with Yes/Maybe/No response buttons
-  - Tapping **Yes** schedules a follow-up "time to leave" message, with an updated flight list
+  - Tapping **Yes** schedules a follow-up "time to leave" message with an updated flight list
   - Tapping **No** suppresses rolling recommendations the next day
 
 **Manual `/spot` command:**
@@ -56,18 +57,27 @@ All recommendation data is read from the bot's own notification record — no ad
   - **Best Time to Go** — finds the session window that fits the most interesting flights, considering both arrivals and predicted departures, and shows the single best time per aircraft (Scenario B)
 
 **Filters applied to all checks:**
-- **Lighting gate** — flights arriving after sunset are excluded; predicted departure times outside daylight are hidden
+- **Lighting gate** — flights arriving after sunset are excluded; pre-sunrise arrivals are only kept if a confirmed daylight departure exists, otherwise filtered out
 - **Day gate** — automatic checks only run on qualifying days (any day, weekends only, or public holidays)
-- **Weather gate** — automatic checks are suppressed when severe weather is forecast; manual checks always show weather with a verdict
-- **Spotted times** — aircraft you have photographed too many times at this airport can be excluded (configurable threshold)
-- **Cancellation/swap detection** — the monitor continuously updates the notification record; cancelled, diverted, or swapped flights are removed before the recommendation reads it
+- **Weather gate** — automatic checks are suppressed when severe weather is forecast; manual checks always show weather alongside the verdict
+- **Spotted times** — aircraft you have already photographed too many times at this airport can be excluded (configurable threshold)
+- **Exclusion list** — registrations on the exclusion list are never surfaced in recommendations or notifications
+
+### Multi-User Support
+
+Multiple Telegram users can receive notifications from the same bot instance:
+
+- **Admin** — full access to `/settings`, `/filters`, and all management commands
+- **Read-only users** — receive all notifications and can use `/spot`, `/stats`, and registration lookups; cannot change settings
+
+Users are managed via `/settings → Users`. Notifications are broadcast to all registered users simultaneously.
 
 ### Registration Lookup
 
 Type any aircraft registration directly into the chat (e.g. `VH-XQU`) to instantly retrieve:
 - Last Seen at the monitored airport
 - Full spotted history from your Lightroom catalog (date, time, airport — per spotting session)
-- Aircraft type and operator from FR24
+- Aircraft type and operator (from the bot's own records first, FR24 fallback)
 
 ### Spotting Stats (`/stats`)
 
@@ -81,8 +91,7 @@ Type any aircraft registration directly into the chat (e.g. `VH-XQU`) to instant
 
 | Command | Description |
 |---|---|
-| `/spot` | Check if it is recommended to go spotting — choose day (today/tomorrow) and period (Morning/Afternoon/All Day/Best Time to Go) |
-| `/summary` | View notified flights for today or tomorrow by time period |
+| `/spot` | Check interesting flights or get a spotting recommendation — choose day and period |
 | `/stats` | View spotting stats and notification totals |
 | `/filters` | Manage watchlists and exclusion list |
 | `/settings` | Configure all app settings at runtime |
@@ -90,7 +99,7 @@ Type any aircraft registration directly into the chat (e.g. `VH-XQU`) to instant
 
 ### Runtime Configuration
 
-All settings are adjustable via `/settings` in Telegram — airport, check intervals, reminder hours, filter thresholds, arrival windows, active days, military settings, summary period definitions, and full spot recommendation configuration. Changes persist across restarts.
+All settings are adjustable via `/settings` in Telegram — airport, check intervals, reminder hours, filter thresholds, arrival windows, active days, military settings, spot period definitions, and full spot recommendation configuration. Changes persist across restarts.
 
 ---
 
@@ -100,7 +109,7 @@ SpotAlert can read your Adobe Lightroom catalog to enrich notifications and look
 
 To enable this feature, place your `.lrcat` file in the `lightroom/` folder. SpotAlert opens it read-only and never modifies it.
 
-Aircraft metadata (registration, airline, aircraft type, airport) must be tagged in Lightroom using the [AircraftMetadata Lightroom Plugin](https://github.com/aviationphoto/AircraftMetadata-Lightroom-Plugin) by [aviationphoto](https://github.com/aviationphoto). 
+Aircraft metadata (registration, airline, aircraft type, airport) must be tagged in Lightroom using the [AircraftMetadata Lightroom Plugin](https://github.com/aviationphoto/AircraftMetadata-Lightroom-Plugin) by [aviationphoto](https://github.com/aviationphoto).
 
 ---
 
@@ -154,9 +163,11 @@ Key settings:
 |---|---|---|
 | `AIRPORT_CODE` | IATA or ICAO code of the airport to monitor | — |
 | `CHECK_INTERVAL_MINUTES` | How often to poll FR24 for arrivals | 30 |
+| `ARRIVALS_TO_FETCH` | How many arrivals to scan per cycle (100 per page) | 200 |
 | `REMINDER_HOURS` | Hours before arrival to send a reminder; 0 = disabled | 12 |
 | `SPECIAL_LIVERY_KEYWORDS` | Comma-separated keywords matched against airline name | Livery,livery,Sticker,sticker |
 | `RARE_PLANE_MIN_ABSENCE_DAYS` | Days a combo must be absent before being considered rare | 7 |
+| `DEPARTURE_PATTERN_THRESHOLD` | Minimum confidence % to show a predicted departure; 0 = disabled | 80 |
 | `MILITARY_CHECK_INTERVAL_MINUTES` | How often to check for military traffic | 15 |
 | `MILITARY_RADIUS_NM` | Search radius around the airport (nautical miles, max 250) | 50 |
 | `MILITARY_MAX_ALT_FT` | Maximum altitude to consider a military aircraft "on approach" | 5000 |
@@ -187,7 +198,8 @@ A SQLite database is created at `config/filters/spotalert.db` on first run. It s
 - Exclusion list
 - Follow-up tracking (reminders, aircraft swaps, cancellations)
 - Sighting history — actual landing timestamps for registrations seen at the airport
-- **Departure patterns** — historical arrival→departure flight number pairings with observation counts, scheduled departure times, airline, and destination; used to predict next departures and factor them into spot recommendations
+- **Departure patterns** — historical arrival→departure flight number pairings with observation counts, scheduled/estimated departure times, airline, and destination; used to predict next departures and factor them into spot recommendations
+- Registered users (admin + read-only)
 - Any settings changed via the bot
 
 A daily backup is saved automatically to `config/filters/backups/`, keeping the last 7 copies.
@@ -226,4 +238,4 @@ This project is released under the [MIT License](LICENSE).
 
 **adsb.fi open data** — Military aircraft data is sourced from [opendata.adsb.fi](https://opendata.adsb.fi). This data is provided for **personal, non-commercial use only**. See [adsb.fi](https://adsb.fi) for their full terms of use.
 
-**AircraftMetadata Lightroom Plugin** — Aircraft metadata fields read from the Lightroom catalog (registration, airline, aircraft type, airport) are created by the [AircraftMetadata Lightroom Plugin](https://github.com/aviationphoto/AircraftMetadata-Lightroom-Plugin) by [aviationphoto](https://github.com/aviationphoto). 
+**AircraftMetadata Lightroom Plugin** — Aircraft metadata fields read from the Lightroom catalog (registration, airline, aircraft type, airport) are created by the [AircraftMetadata Lightroom Plugin](https://github.com/aviationphoto/AircraftMetadata-Lightroom-Plugin) by [aviationphoto](https://github.com/aviationphoto).

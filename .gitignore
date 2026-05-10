@@ -8,7 +8,8 @@ config/filters/
 # Logs
 logs/
 
-# Deployment scripts (may contain credentials)
+# Deployment scripts (contain credentials)
+deploy/
 deploy_deck.py
 
 # Personal planning notes
