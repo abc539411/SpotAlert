@@ -90,12 +90,15 @@ class AppConfig:
     spot_rec_enabled: bool = False
     spot_rec_day_type: str = "Any"       # "Any" or "WeekendPublicHoliday"
     spot_rec_travel_mins: int = 30
-    spot_rec_session_hours: int = 5
     spot_rec_threshold: int = 3
     spot_rec_eod_hour: int = 20
     spot_rec_weather_gate: bool = True
     spot_rec_lighting_gate: bool = True
     spot_rec_max_spotted_times: int = 0   # 0 = disabled
+    spot_rec_max_gap_hours: int = 3       # gap between events that splits into separate clusters
+    spot_rec_notable_lull_mins: int = 60  # gap within a cluster worth flagging as a lull
+    spot_rec_max_lulls: int = 2           # max lull notices shown per cluster
+    spot_rec_max_windows: int = 3         # max clusters offered in EOD keyboard / manual display
     departure_pattern_threshold: int = 80  # min % confidence to show a predicted departure
 
     # Dependencies — excluded from repr/comparison
@@ -189,12 +192,15 @@ def build_config(env: Env, fr_api: FlightRadar24API, store: SqliteStore, catalog
         spot_rec_enabled=_s(store, env, "SPOT_REC_ENABLED", default="false").lower() == "true",
         spot_rec_day_type=_s(store, env, "SPOT_REC_DAY_TYPE", default="Any"),
         spot_rec_travel_mins=_si(store, env, "SPOT_REC_TRAVEL_MINS", default="30"),
-        spot_rec_session_hours=_si(store, env, "SPOT_REC_SESSION_HOURS", default="5"),
         spot_rec_threshold=_si(store, env, "SPOT_REC_THRESHOLD", default="3"),
         spot_rec_eod_hour=_si(store, env, "SPOT_REC_EOD_HOUR", default="20"),
         spot_rec_weather_gate=_s(store, env, "SPOT_REC_WEATHER_GATE", default="true").lower() == "true",
         spot_rec_lighting_gate=_s(store, env, "SPOT_REC_LIGHTING_GATE", default="true").lower() == "true",
         spot_rec_max_spotted_times=_si(store, env, "SPOT_REC_MAX_SPOTTED_TIMES", default="0"),
+        spot_rec_max_gap_hours=_si(store, env, "SPOT_REC_MAX_GAP_HOURS", default="3"),
+        spot_rec_notable_lull_mins=_si(store, env, "SPOT_REC_NOTABLE_LULL_MINS", default="60"),
+        spot_rec_max_lulls=_si(store, env, "SPOT_REC_MAX_LULLS", default="2"),
+        spot_rec_max_windows=_si(store, env, "SPOT_REC_MAX_WINDOWS", default="3"),
         departure_pattern_threshold=_si(store, env, "DEPARTURE_PATTERN_THRESHOLD", default="80"),
         fr_api=fr_api,
         store=store,

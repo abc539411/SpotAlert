@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field as dc_field
 from datetime import datetime, timedelta
 from typing import List, Optional, Tuple
 
@@ -185,53 +186,55 @@ async def check_rolling_recommendation(context: ContextTypes.DEFAULT_TYPE, cfg, 
         return
 
     last_ts = cfg.store.load_setting("SPOT_REC_ROLLING_LAST_TS")
-    if last_ts and (now.timestamp() - float(last_ts)) < cfg.spot_rec_session_hours * 3600:
+    if last_ts and (now.timestamp() - float(last_ts)) < cfg.spot_rec_max_gap_hours * 3600:
         return
 
     sunrise_ts, sunset_ts = _sun_times(cfg, today)
 
-    # Don't send after sunset
     if now_ts >= sunset_ts:
         return
 
     window_start = now_ts + cfg.spot_rec_travel_mins * 60
-    window_end = min(window_start + cfg.spot_rec_session_hours * 3600, sunset_ts)
+    window_end   = sunset_ts  # evaluate everything until sunset; clusters define natural sessions
 
     evals = _evaluate_rolling_flights(cfg, window_start, window_end, sunrise_ts, sunset_ts)
-    interesting = [e for e in evals if e.qualifying]
-    filtered    = [e for e in evals if not e.qualifying]
-    _populate_departures(interesting, cfg, sunset_ts=sunset_ts, sunrise_ts=sunrise_ts)
-    interesting, filtered = _apply_pre_sunrise_gate(interesting, filtered, sunrise_ts, sunset_ts, cfg.spot_rec_lighting_gate)
-    for e in interesting:
-        arr_in = window_start <= e.arrival_ts <= window_end
-        dep_in = bool(e.dep_ts and window_start <= e.dep_ts <= window_end)
-        e.session_ts = e.arrival_ts if arr_in else (e.dep_ts or e.arrival_ts)
-        e.show_dep = arr_in and dep_in
+    qualifying = [e for e in evals if e.qualifying]
+    filtered   = [e for e in evals if not e.qualifying]
+    _populate_departures(qualifying + filtered, cfg, sunset_ts=sunset_ts, sunrise_ts=sunrise_ts)
+    qualifying, filtered = _apply_pre_sunrise_gate(qualifying, filtered, sunrise_ts, sunset_ts, cfg.spot_rec_lighting_gate)
 
-    if len(interesting) < cfg.spot_rec_threshold:
+    clusters = _cluster_flights(
+        qualifying, filtered,
+        max_gap_secs=cfg.spot_rec_max_gap_hours * 3600,
+        notable_lull_secs=cfg.spot_rec_notable_lull_mins * 60,
+        max_lulls=cfg.spot_rec_max_lulls,
+    )
+
+    # Pick the earliest qualifying cluster (I want to go now)
+    cluster = next((c for c in clusters if len(c.flights) >= cfg.spot_rec_threshold), None)
+    if cluster is None:
         return
 
     weather = get_current_weather(cfg.airport_lat, cfg.airport_lon, cfg.airport_tz)
     if cfg.spot_rec_weather_gate and weather and weather.is_severe:
         return
 
-    first_arr = datetime.fromtimestamp(interesting[0].arrival_ts).astimezone(tz).strftime("%H:%M")
-    last_arr  = datetime.fromtimestamp(interesting[-1].arrival_ts).astimezone(tz).strftime("%H:%M")
-    window_str = first_arr if first_arr == last_arr else f"{first_arr} – {last_arr}"
+    n = len(cluster.flights)
+    start_str  = datetime.fromtimestamp(cluster.recommended_start_ts).astimezone(tz).strftime("%H:%M")
+    end_str    = datetime.fromtimestamp(cluster.end_ts).astimezone(tz).strftime("%H:%M")
+    window_str = start_str if start_str == end_str else f"{start_str} – {end_str}"
 
-    n = len(interesting)
     lines = [
         f"<b>Head out now — {n} interesting flight{'s' if n != 1 else ''}</b>",
         f"Window: {window_str}",
         "",
     ]
-    for e in interesting:
+    for e in cluster.flights:
         lines.append(_flight_line(e, tz))
-    if filtered:
-        lines.append("")
-        lines.append(f"Also of note — filtered out ({len(filtered)}):")
-        for e in filtered:
-            lines.append(_flight_line(e, tz, include_reason=True))
+    for e in cluster.filtered:
+        lines.append(f"<s>{_flight_line(e, tz, include_reason=True)}</s>")
+    for lull_start_ts, lull_end_ts in cluster.lulls:
+        lines.append(_lull_line(lull_start_ts, lull_end_ts, tz))
     lines.append("")
     if weather:
         lines.append(f"Weather: {weather}")
@@ -247,7 +250,7 @@ async def check_rolling_recommendation(context: ContextTypes.DEFAULT_TYPE, cfg, 
 
     if sent:
         cfg.store.save_setting("SPOT_REC_ROLLING_LAST_TS", str(now_ts))
-        log.info("Sent rolling spot recommendation (%d flights)", len(interesting))
+        log.info("Sent rolling spot recommendation (%d flights)", len(cluster.flights))
 
 
 # ------------------------------------------------------------------
@@ -259,7 +262,6 @@ async def run_eod_recommendation(context: ContextTypes.DEFAULT_TYPE) -> None:
     if not cfg.spot_rec_enabled:
         return
 
-    chat_id = cfg.chat_id
     tz = pytz.timezone(cfg.airport_tz)
     tomorrow = (datetime.now(tz) + timedelta(days=1)).date()
 
@@ -276,58 +278,71 @@ async def run_eod_recommendation(context: ContextTypes.DEFAULT_TYPE) -> None:
 
     qualifying = [e for e in evals if e.qualifying]
     filtered   = [e for e in evals if not e.qualifying]
-    if not qualifying:
-        return
 
-    _populate_departures(qualifying, cfg, sunset_ts=sunset_ts, sunrise_ts=sunrise_ts)
+    _populate_departures(qualifying + filtered, cfg, sunset_ts=sunset_ts, sunrise_ts=sunrise_ts)
     qualifying, filtered = _apply_pre_sunrise_gate(qualifying, filtered, sunrise_ts, sunset_ts, cfg.spot_rec_lighting_gate)
-    if not qualifying:
-        return
 
-    session_secs = cfg.spot_rec_session_hours * 3600
-    best_qualifying = _best_session_window(qualifying, session_secs)
+    clusters = _cluster_flights(
+        qualifying, filtered,
+        max_gap_secs=cfg.spot_rec_max_gap_hours * 3600,
+        notable_lull_secs=cfg.spot_rec_notable_lull_mins * 60,
+        max_lulls=cfg.spot_rec_max_lulls,
+    )
 
-    if len(best_qualifying) < cfg.spot_rec_threshold:
+    eligible = [c for c in clusters if len(c.flights) >= cfg.spot_rec_threshold][:cfg.spot_rec_max_windows]
+    if not eligible:
         return
 
     weather = get_forecast_weather(cfg.airport_lat, cfg.airport_lon, cfg.airport_tz, day_offset=1)
     if cfg.spot_rec_weather_gate and weather and weather.is_severe:
         return
 
-    # Filtered flights within the best window
-    best_start = min(e.session_ts for e in best_qualifying)
-    best_end   = best_start + session_secs
-    best_filtered = [e for e in filtered
-                     if best_start <= e.arrival_ts <= best_end
-                     or (e.dep_ts and best_start <= e.dep_ts <= best_end)]
-
-    first_str = datetime.fromtimestamp(min(e.session_ts for e in best_qualifying)).astimezone(tz).strftime("%H:%M")
-    last_str  = datetime.fromtimestamp(max(e.session_ts for e in best_qualifying)).astimezone(tz).strftime("%H:%M")
-    window_str = first_str if first_str == last_str else f"{first_str} – {last_str}"
     day_str = tomorrow.strftime("%A %-d %b")
-    n = len(best_qualifying)
+    lines = [f"<b>Spotting recommendation for {day_str}</b>", ""]
 
-    keyboard = InlineKeyboardMarkup([[
-        InlineKeyboardButton("Yes ✓", callback_data="spot_yes"),
-        InlineKeyboardButton("Maybe", callback_data="spot_maybe"),
-        InlineKeyboardButton("No ✗", callback_data="spot_no"),
-    ]])
-
-    lines = [
-        f"<b>Spotting recommendation for {day_str}</b>",
-        f"Best window: {window_str} ({n} interesting flight{'s' if n != 1 else ''})",
-        "",
-    ]
-    for e in best_qualifying:
-        lines.append(_flight_line(e, tz))
-    if best_filtered:
+    for i, cluster in enumerate(eligible):
+        start_str = datetime.fromtimestamp(cluster.recommended_start_ts).astimezone(tz).strftime("%H:%M")
+        end_str   = datetime.fromtimestamp(cluster.end_ts).astimezone(tz).strftime("%H:%M")
+        n = len(cluster.flights)
+        if len(eligible) > 1:
+            lines.append(f"<b>Option {i+1} — {start_str} – {end_str} · {n} flight{'s' if n != 1 else ''}</b>")
+        else:
+            window_str = start_str if start_str == end_str else f"{start_str} – {end_str}"
+            lines.append(f"Best window: {window_str} ({n} interesting flight{'s' if n != 1 else ''})")
+        for e in cluster.flights:
+            lines.append(_flight_line(e, tz))
+        for e in cluster.filtered:
+            lines.append(f"<s>{_flight_line(e, tz, include_reason=True)}</s>")
+        for lull_start_ts, lull_end_ts in cluster.lulls:
+            lines.append(_lull_line(lull_start_ts, lull_end_ts, tz))
         lines.append("")
-        lines.append(f"Also of note — filtered out ({len(best_filtered)}):")
-        for e in best_filtered:
-            lines.append(_flight_line(e, tz, include_reason=True))
-    lines.append("")
+
     lines.append(f"Weather tomorrow: {weather}" if weather else "Weather tomorrow: unavailable")
     lines.append(_sun_line(sunrise_ts, sunset_ts, tz))
+
+    # Keyboard: single cluster → Yes/Maybe/No; multiple → window buttons + Maybe/No
+    if len(eligible) == 1:
+        keyboard = InlineKeyboardMarkup([[
+            InlineKeyboardButton("Yes ✓", callback_data="spot_yes"),
+            InlineKeyboardButton("Maybe", callback_data="spot_maybe"),
+            InlineKeyboardButton("No ✗", callback_data="spot_no"),
+        ]])
+    else:
+        window_buttons = []
+        for i, c in enumerate(eligible):
+            s = datetime.fromtimestamp(c.recommended_start_ts).astimezone(tz).strftime("%H:%M")
+            e = datetime.fromtimestamp(c.end_ts).astimezone(tz).strftime("%H:%M")
+            window_buttons.append(InlineKeyboardButton(
+                f"{s}–{e} · {len(c.flights)}✈", callback_data=f"spot_window_{i}"
+            ))
+        keyboard = InlineKeyboardMarkup([
+            window_buttons,
+            [InlineKeyboardButton("Maybe", callback_data="spot_maybe"),
+             InlineKeyboardButton("No ✗", callback_data="spot_no")],
+        ])
+
+    cfg.store.save_setting("SPOT_REC_PENDING_WINDOWS", json.dumps([c.recommended_start_ts for c in eligible]))
+    cfg.store.save_setting("SPOT_REC_PENDING_SESSION_TS", str(eligible[0].recommended_start_ts))
 
     for dest_chat_id in cfg.all_chat_ids:
         try:
@@ -339,8 +354,7 @@ async def run_eod_recommendation(context: ContextTypes.DEFAULT_TYPE) -> None:
         except Exception as exc:
             log.error("Failed to send EOD recommendation to %s: %s", dest_chat_id, exc)
 
-    cfg.store.save_setting("SPOT_REC_PENDING_SESSION_TS", str(best_qualifying[0].arrival_ts))
-    log.info("Sent EOD spot recommendation (%s–%s, %d flights)", first_str, last_str, n)
+    log.info("Sent EOD spot recommendation (%d cluster(s))", len(eligible))
 
 
 # ------------------------------------------------------------------
@@ -360,8 +374,18 @@ class FlightEval:
     dep_fn: Optional[str] = None     # predicted departure flight number
     dep_ts: Optional[int] = None     # departure timestamp
     dep_time_label: str = ""         # "Predicted", "Scheduled", "Estimated"
-    session_ts: Optional[int] = None # time used for Scenario B window optimisation
-    show_dep: bool = False           # True when both arr and dep fall within the session window
+    session_ts: Optional[int] = None # event time shown in recommendation
+    show_dep: bool = False           # True when both arr and dep fall within the cluster
+
+
+@dataclass
+class SpotCluster:
+    flights: List[FlightEval]              # qualifying flights in this cluster
+    filtered: List[FlightEval]             # filtered-out flights near this cluster
+    start_ts: int                          # earliest event in cluster
+    end_ts: int                            # latest event in cluster
+    recommended_start_ts: int              # latest "be at airport by" time (all flights still catchable)
+    lulls: List[Tuple[int, int]] = dc_field(default_factory=list)  # (gap_start_ts, gap_end_ts)
 
 
 
@@ -385,6 +409,180 @@ def _lookup_departure_for_flight(cfg, arrival_fn: str) -> Tuple[Optional[str], O
     return dep_fn, None, "Predicted"
 
 
+def _lull_line(lull_start_ts: int, lull_end_ts: int, tz) -> str:
+    """Format a notable gap within a cluster as a single display line."""
+    duration_mins = (lull_end_ts - lull_start_ts) // 60
+    h, m = divmod(duration_mins, 60)
+    dur_str = f"{h}h {m}min" if h and m else (f"{h}h" if h else f"{m}min")
+    start_str = datetime.fromtimestamp(lull_start_ts).astimezone(tz).strftime("%H:%M")
+    end_str   = datetime.fromtimestamp(lull_end_ts).astimezone(tz).strftime("%H:%M")
+    return f"  ⏸ Break time ({start_str} – {end_str}, {dur_str})"
+
+
+def _cluster_flights(
+    qualifying: List[FlightEval],
+    filtered: List[FlightEval],
+    max_gap_secs: int,
+    notable_lull_secs: int,
+    max_lulls: int,
+) -> List[SpotCluster]:
+    """Group qualifying flights into natural activity clusters separated by gaps > max_gap_secs.
+
+    Each cluster gets its filtered flights, notable lulls, and the latest viable start time.
+    """
+    if not qualifying:
+        if not filtered:
+            return []
+        f_sorted = sorted(filtered, key=lambda x: x.arrival_ts)
+        return [SpotCluster(
+            flights=[],
+            filtered=f_sorted,
+            start_ts=f_sorted[0].arrival_ts,
+            end_ts=f_sorted[-1].arrival_ts,
+            recommended_start_ts=f_sorted[0].arrival_ts,
+        )]
+
+    # Build sorted event list: (timestamp, FlightEval) from qualifying flights only
+    events: List[Tuple[int, FlightEval]] = []
+    for f in qualifying:
+        events.append((f.arrival_ts, f))
+        if f.dep_ts:
+            events.append((f.dep_ts, f))
+    events.sort(key=lambda x: x[0])
+
+    # Greedily group events into clusters by gap threshold
+    raw_clusters: List[List[Tuple[int, FlightEval]]] = []
+    current = [events[0]]
+    for ts, f in events[1:]:
+        if ts - current[-1][0] > max_gap_secs:
+            raw_clusters.append(current)
+            current = [(ts, f)]
+        else:
+            current.append((ts, f))
+    raw_clusters.append(current)
+
+    result: List[SpotCluster] = []
+
+    for raw in raw_clusters:
+        cluster_start = raw[0][0]
+        cluster_end   = raw[-1][0]
+
+        # Flights whose any event falls within this cluster's range
+        cluster_flights = [
+            f for f in qualifying
+            if cluster_start <= f.arrival_ts <= cluster_end
+            or (f.dep_ts and cluster_start <= f.dep_ts <= cluster_end)
+        ]
+
+        # Set session_ts and show_dep per flight
+        for f in cluster_flights:
+            arr_in = cluster_start <= f.arrival_ts <= cluster_end
+            dep_in = bool(f.dep_ts and cluster_start <= f.dep_ts <= cluster_end)
+            f.session_ts = f.arrival_ts if arr_in else f.dep_ts
+            f.show_dep   = arr_in and dep_in
+
+        # Lull detection: gaps between consecutive event timestamps within cluster
+        event_times = sorted({ts for ts, _ in raw})
+        gaps = [
+            (event_times[i+1] - event_times[i], event_times[i], event_times[i+1])
+            for i in range(len(event_times) - 1)
+            if event_times[i+1] - event_times[i] > notable_lull_secs
+        ]
+        gaps.sort(reverse=True)
+        lulls = sorted((s, e) for _, s, e in gaps[:max_lulls])
+
+        # Latest viable start: latest event Ei where all flights still catchable
+        all_events = sorted(set(
+            [f.arrival_ts for f in cluster_flights] +
+            [f.dep_ts for f in cluster_flights if f.dep_ts]
+        ))
+        recommended_start_ts = cluster_start
+        for ei in reversed(all_events):
+            catchable = sum(
+                1 for f in cluster_flights
+                if f.arrival_ts >= ei or (f.dep_ts and f.dep_ts >= ei)
+            )
+            if catchable == len(cluster_flights):
+                recommended_start_ts = ei
+                break
+
+        result.append(SpotCluster(
+            flights=sorted(cluster_flights, key=lambda x: x.arrival_ts),
+            filtered=[],
+            start_ts=cluster_start,
+            end_ts=cluster_end,
+            recommended_start_ts=recommended_start_ts,
+            lulls=lulls,
+        ))
+
+    # Assign filtered flights to nearest cluster by arrival_ts
+    for f in filtered:
+        best = min(result, key=lambda c: min(
+            abs(f.arrival_ts - c.start_ts), abs(f.arrival_ts - c.end_ts)
+        ))
+        best.filtered.append(f)
+
+    for c in result:
+        c.filtered.sort(key=lambda x: x.arrival_ts)
+
+    return result
+
+
+def _build_clusters_message(
+    eligible: List[SpotCluster],
+    all_clusters: List[SpotCluster],
+    weather,
+    weather_gate: bool,
+    header: str,
+    tz,
+    sunrise_ts: int,
+    sunset_ts: int,
+    now_ts: int = 0,
+) -> str:
+    """Build the spot check message for cluster-based (Best Time to Go) mode."""
+    severe_weather = weather_gate and weather and weather.is_severe
+    lines = [f"<b>{header}</b>"]
+
+    clusters_to_show = eligible if eligible else all_clusters
+
+    if severe_weather:
+        lines.append("Not recommended — severe weather")
+    elif not eligible:
+        lines.append("No qualifying sessions found.")
+
+    lines.append("")
+
+    if not clusters_to_show:
+        lines.append("  No interesting flights found.")
+    else:
+        multi = len(clusters_to_show) > 1
+        for i, cluster in enumerate(clusters_to_show):
+            start_str = datetime.fromtimestamp(cluster.recommended_start_ts).astimezone(tz).strftime("%H:%M")
+            end_str   = datetime.fromtimestamp(cluster.end_ts).astimezone(tz).strftime("%H:%M")
+            n = len(cluster.flights)
+            if multi:
+                lines.append(f"<b>Option {i+1} — {start_str} – {end_str} · {n} flight{'s' if n != 1 else ''}</b>")
+            else:
+                window_str = start_str if start_str == end_str else f"{start_str} – {end_str}"
+                lines.append(f"Window: {window_str}")
+
+            for e in cluster.flights:
+                if now_ts > 0 and e.arrival_ts < now_ts and (not e.dep_ts or e.dep_ts < now_ts):
+                    continue
+                lines.append(_flight_line(e, tz))
+            for e in cluster.filtered:
+                lines.append(f"<s>{_flight_line(e, tz, include_reason=True)}</s>")
+            for lull_start_ts, lull_end_ts in cluster.lulls:
+                lines.append(_lull_line(lull_start_ts, lull_end_ts, tz))
+            lines.append("")
+
+    lines.append(f"Weather: {weather}" if weather else "Weather: unavailable")
+    if sunrise_ts and sunset_ts:
+        lines.append(_sun_line(sunrise_ts, sunset_ts, tz))
+
+    return "\n".join(lines)
+
+
 def _populate_departures(flights: List["FlightEval"], cfg,
                          sunset_ts: int = 0, sunrise_ts: int = 0) -> None:
     """Populate dep_fn, dep_ts, dep_time_label on each FlightEval in-place.
@@ -404,64 +602,6 @@ def _populate_departures(flights: List["FlightEval"], cfg,
                     dep_ts = None
             e.dep_ts = dep_ts
 
-
-def _best_session_window(qualifying: List["FlightEval"], session_secs: int) -> List["FlightEval"]:
-    """Find the session window maximising qualifying aircraft count.
-
-    Each aircraft contributes arr_ts and dep_ts (if available) as candidate window starts.
-    Tiebreaker: minimise span across ALL in-window events (both arr and dep counted).
-    Per aircraft: session_ts = arr if arr in window, else dep.
-    show_dep set True when both arr and dep fall within the chosen window.
-    """
-    if not qualifying:
-        return []
-
-    candidates: set = set()
-    for e in qualifying:
-        candidates.add(e.arrival_ts)
-        if e.dep_ts:
-            candidates.add(e.dep_ts)
-
-    best_flights: List["FlightEval"] = []
-    best_span = float("inf")
-    best_ws: Optional[int] = None
-    best_we: Optional[int] = None
-
-    for ws in sorted(candidates):
-        we = ws + session_secs
-        in_window: List["FlightEval"] = []
-        event_times: List[int] = []  # all events (arr + dep) in window for span calculation
-        for e in qualifying:
-            arr_in = ws <= e.arrival_ts <= we
-            dep_in = bool(e.dep_ts and ws <= e.dep_ts <= we)
-            if arr_in or dep_in:
-                in_window.append(e)
-                if arr_in:
-                    event_times.append(e.arrival_ts)
-                if dep_in:
-                    event_times.append(e.dep_ts)
-
-        if not in_window:
-            continue
-
-        span = max(event_times) - min(event_times) if len(event_times) > 1 else 0
-        if len(in_window) > len(best_flights) or (
-            len(in_window) == len(best_flights) and span < best_span
-        ):
-            best_flights = in_window
-            best_span = span
-            best_ws = ws
-            best_we = we
-
-    # Assign session_ts and show_dep for the best window
-    if best_ws is not None:
-        for e in best_flights:
-            arr_in = best_ws <= e.arrival_ts <= best_we
-            dep_in = bool(e.dep_ts and best_ws <= e.dep_ts <= best_we)
-            e.session_ts = e.arrival_ts if arr_in else e.dep_ts
-            e.show_dep = arr_in and dep_in
-
-    return best_flights
 
 
 def _evaluate_rolling_flights(cfg, window_start: int, window_end: int,
@@ -687,8 +827,6 @@ async def _run_spot_check(send_fn, context: ContextTypes.DEFAULT_TYPE,
     tz = pytz.timezone(cfg.airport_tz)
     now = datetime.now(tz)
     now_ts = int(now.timestamp())
-    show_verdict = (period == "best")
-    scenario_a   = (period != "best")  # Scenario A for set periods, Scenario B for Best Time to Go
 
     if day == "today":
         await send_fn("Checking...")
@@ -697,44 +835,45 @@ async def _run_spot_check(send_fn, context: ContextTypes.DEFAULT_TYPE,
 
         if period == "best":
             import datetime as _dt
-            midnight     = int(tz.localize(_dt.datetime.combine(target_date, _dt.time(23, 59, 59))).timestamp())
             window_start = now_ts + cfg.spot_rec_travel_mins * 60
-            window_end   = midnight  # evaluate full remaining day; _best_session_window picks the optimal sub-window
-        elif period == "morning":
-            window_start = sunrise_ts - cfg.summary_morning_pre_sunrise_hours * 3600
-            window_end   = _day_hour_ts(target_date, cfg.summary_morning_end_hour, tz)
-        elif period == "afternoon":
-            window_start = _day_hour_ts(target_date, cfg.summary_afternoon_start_hour, tz)
-            window_end   = sunset_ts + cfg.summary_afternoon_post_sunset_hours * 3600
-        else:  # allday
-            window_start = _day_hour_ts(target_date, 0, tz)
-            window_end   = _day_hour_ts(target_date, 23, tz) + 3599
-
-        evals         = _evaluate_rolling_flights(cfg, window_start, window_end, sunrise_ts, sunset_ts)
-        all_qualifying = [e for e in evals if e.qualifying]
-        all_filtered   = [e for e in evals if not e.qualifying]
-
-        if period == "best":
-            session_secs = cfg.spot_rec_session_hours * 3600
-            _populate_departures(all_qualifying, cfg, sunset_ts=sunset_ts, sunrise_ts=sunrise_ts)
+            window_end   = int(tz.localize(_dt.datetime.combine(target_date, _dt.time(23, 59, 59))).timestamp())
+            evals         = _evaluate_rolling_flights(cfg, window_start, window_end, sunrise_ts, sunset_ts)
+            all_qualifying = [e for e in evals if e.qualifying]
+            all_filtered   = [e for e in evals if not e.qualifying]
+            _populate_departures(all_qualifying + all_filtered, cfg, sunset_ts=sunset_ts, sunrise_ts=sunrise_ts)
             all_qualifying, all_filtered = _apply_pre_sunrise_gate(all_qualifying, all_filtered, sunrise_ts, sunset_ts, cfg.spot_rec_lighting_gate)
-            qualifying   = _best_session_window(all_qualifying, session_secs)
-            best_start   = min((e.session_ts for e in qualifying), default=None)
-            filtered     = [f for f in all_filtered
-                            if best_start and best_start <= f.arrival_ts <= best_start + session_secs]
-            _populate_departures(filtered, cfg, sunset_ts=sunset_ts, sunrise_ts=sunrise_ts)
+            clusters = _cluster_flights(
+                all_qualifying, all_filtered,
+                max_gap_secs=cfg.spot_rec_max_gap_hours * 3600,
+                notable_lull_secs=cfg.spot_rec_notable_lull_mins * 60,
+                max_lulls=cfg.spot_rec_max_lulls,
+            )
+            eligible = [c for c in clusters if len(c.flights) >= cfg.spot_rec_threshold][:cfg.spot_rec_max_windows]
+            weather = get_current_weather(cfg.airport_lat, cfg.airport_lon, cfg.airport_tz)
+            header  = f"Spot check — Today ({_PERIOD_LABELS[period]})"
+            msg = _build_clusters_message(eligible, clusters, weather, cfg.spot_rec_weather_gate,
+                                          header, tz, sunrise_ts, sunset_ts, now_ts=now_ts)
         else:
-            qualifying = all_qualifying
-            filtered   = all_filtered
+            if period == "morning":
+                window_start = sunrise_ts - cfg.summary_morning_pre_sunrise_hours * 3600
+                window_end   = _day_hour_ts(target_date, cfg.summary_morning_end_hour, tz)
+            elif period == "afternoon":
+                window_start = _day_hour_ts(target_date, cfg.summary_afternoon_start_hour, tz)
+                window_end   = sunset_ts + cfg.summary_afternoon_post_sunset_hours * 3600
+            else:  # allday
+                window_start = _day_hour_ts(target_date, 0, tz)
+                window_end   = _day_hour_ts(target_date, 23, tz) + 3599
+            evals      = _evaluate_rolling_flights(cfg, window_start, window_end, sunrise_ts, sunset_ts)
+            qualifying = [e for e in evals if e.qualifying]
+            filtered   = [e for e in evals if not e.qualifying]
             _populate_departures(qualifying + filtered, cfg, sunset_ts=sunset_ts, sunrise_ts=sunrise_ts)
             qualifying, filtered = _apply_pre_sunrise_gate(qualifying, filtered, sunrise_ts, sunset_ts, cfg.spot_rec_lighting_gate)
-
-        weather = get_current_weather(cfg.airport_lat, cfg.airport_lon, cfg.airport_tz)
-        header  = f"Spot check — Today ({_PERIOD_LABELS[period]})"
-        msg = _build_detail_message(qualifying, filtered, cfg.spot_rec_threshold,
-                                    weather, cfg.spot_rec_weather_gate,
-                                    header, tz, sunrise_ts, sunset_ts, show_verdict=show_verdict,
-                                    scenario_a=scenario_a, now_ts=now_ts, show_window=(period == "best"))
+            weather = get_current_weather(cfg.airport_lat, cfg.airport_lon, cfg.airport_tz)
+            header  = f"Spot check — Today ({_PERIOD_LABELS[period]})"
+            msg = _build_detail_message(qualifying, filtered, cfg.spot_rec_threshold,
+                                        weather, cfg.spot_rec_weather_gate,
+                                        header, tz, sunrise_ts, sunset_ts, show_verdict=False,
+                                        scenario_a=True, now_ts=now_ts, show_window=False)
 
     else:  # tomorrow
         await send_fn("Checking...")
@@ -745,19 +884,30 @@ async def _run_spot_check(send_fn, context: ContextTypes.DEFAULT_TYPE,
         all_filtered   = [e for e in evals if not e.qualifying]
 
         if period == "best":
-            session_secs = cfg.spot_rec_session_hours * 3600
-            _populate_departures(all_qualifying, cfg, sunset_ts=sunset_ts, sunrise_ts=sunrise_ts)
+            _populate_departures(all_qualifying + all_filtered, cfg, sunset_ts=sunset_ts, sunrise_ts=sunrise_ts)
             all_qualifying, all_filtered = _apply_pre_sunrise_gate(all_qualifying, all_filtered, sunrise_ts, sunset_ts, cfg.spot_rec_lighting_gate)
-            qualifying   = _best_session_window(all_qualifying, session_secs)
-            best_start   = min((e.session_ts for e in qualifying), default=None)
-            filtered     = [f for f in all_filtered
-                            if best_start and best_start <= f.arrival_ts <= best_start + session_secs]
-            _populate_departures(filtered, cfg, sunset_ts=sunset_ts, sunrise_ts=sunrise_ts)
+            clusters = _cluster_flights(
+                all_qualifying, all_filtered,
+                max_gap_secs=cfg.spot_rec_max_gap_hours * 3600,
+                notable_lull_secs=cfg.spot_rec_notable_lull_mins * 60,
+                max_lulls=cfg.spot_rec_max_lulls,
+            )
+            eligible = [c for c in clusters if len(c.flights) >= cfg.spot_rec_threshold][:cfg.spot_rec_max_windows]
+            weather = get_forecast_weather(cfg.airport_lat, cfg.airport_lon, cfg.airport_tz, day_offset=1)
+            header  = f"Spot check — {tomorrow.strftime('%A %-d %b')} ({_PERIOD_LABELS[period]})"
+            msg = _build_clusters_message(eligible, clusters, weather, cfg.spot_rec_weather_gate,
+                                          header, tz, sunrise_ts, sunset_ts)
         elif period == "allday":
             qualifying = all_qualifying
             filtered   = all_filtered
             _populate_departures(qualifying + filtered, cfg, sunset_ts=sunset_ts, sunrise_ts=sunrise_ts)
             qualifying, filtered = _apply_pre_sunrise_gate(qualifying, filtered, sunrise_ts, sunset_ts, cfg.spot_rec_lighting_gate)
+            weather = get_forecast_weather(cfg.airport_lat, cfg.airport_lon, cfg.airport_tz, day_offset=1)
+            header  = f"Spot check — {tomorrow.strftime('%A %-d %b')} ({_PERIOD_LABELS[period]})"
+            msg = _build_detail_message(qualifying, filtered, cfg.spot_rec_threshold,
+                                        weather, cfg.spot_rec_weather_gate,
+                                        header, tz, sunrise_ts, sunset_ts, show_verdict=False,
+                                        scenario_a=True, now_ts=now_ts, show_window=False)
         else:
             if period == "morning":
                 ws = sunrise_ts - cfg.summary_morning_pre_sunrise_hours * 3600
@@ -769,13 +919,12 @@ async def _run_spot_check(send_fn, context: ContextTypes.DEFAULT_TYPE,
             filtered   = [e for e in all_filtered   if ws <= e.arrival_ts <= we]
             _populate_departures(qualifying + filtered, cfg, sunset_ts=sunset_ts, sunrise_ts=sunrise_ts)
             qualifying, filtered = _apply_pre_sunrise_gate(qualifying, filtered, sunrise_ts, sunset_ts, cfg.spot_rec_lighting_gate)
-
-        weather = get_forecast_weather(cfg.airport_lat, cfg.airport_lon, cfg.airport_tz, day_offset=1)
-        header  = f"Spot check — {tomorrow.strftime('%A %-d %b')} ({_PERIOD_LABELS[period]})"
-        msg = _build_detail_message(qualifying, filtered, cfg.spot_rec_threshold,
-                                    weather, cfg.spot_rec_weather_gate,
-                                    header, tz, sunrise_ts, sunset_ts, show_verdict=show_verdict,
-                                    scenario_a=scenario_a, now_ts=now_ts, show_window=(period == "best"))
+            weather = get_forecast_weather(cfg.airport_lat, cfg.airport_lon, cfg.airport_tz, day_offset=1)
+            header  = f"Spot check — {tomorrow.strftime('%A %-d %b')} ({_PERIOD_LABELS[period]})"
+            msg = _build_detail_message(qualifying, filtered, cfg.spot_rec_threshold,
+                                        weather, cfg.spot_rec_weather_gate,
+                                        header, tz, sunrise_ts, sunset_ts, show_verdict=False,
+                                        scenario_a=True, now_ts=now_ts, show_window=False)
 
     await send_fn(msg, parse_mode="HTML")
 
@@ -823,20 +972,49 @@ async def _send_spot_followup(context: ContextTypes.DEFAULT_TYPE) -> None:
 
     sunrise_ts, sunset_ts = _sun_times(cfg, today)
     window_start = now_ts + cfg.spot_rec_travel_mins * 60
-    window_end = min(window_start + cfg.spot_rec_session_hours * 3600, sunset_ts)
+    window_end   = sunset_ts
 
     evals = _evaluate_rolling_flights(cfg, window_start, window_end, sunrise_ts, sunset_ts)
     qualifying = [e for e in evals if e.qualifying]
     filtered   = [e for e in evals if not e.qualifying]
-    _populate_departures(qualifying, cfg, sunset_ts=sunset_ts, sunrise_ts=sunrise_ts)
+    _populate_departures(qualifying + filtered, cfg, sunset_ts=sunset_ts, sunrise_ts=sunrise_ts)
     qualifying, filtered = _apply_pre_sunrise_gate(qualifying, filtered, sunrise_ts, sunset_ts, cfg.spot_rec_lighting_gate)
 
-    weather = get_current_weather(cfg.airport_lat, cfg.airport_lon, cfg.airport_tz)
-    msg = _build_detail_message(
-        qualifying, filtered, cfg.spot_rec_threshold,
-        weather, cfg.spot_rec_weather_gate,
-        "Spotting update — time to head out", tz, sunrise_ts, sunset_ts,
+    clusters = _cluster_flights(
+        qualifying, filtered,
+        max_gap_secs=cfg.spot_rec_max_gap_hours * 3600,
+        notable_lull_secs=cfg.spot_rec_notable_lull_mins * 60,
+        max_lulls=cfg.spot_rec_max_lulls,
     )
+    # Show the earliest qualifying cluster (same intent as rolling check)
+    cluster = next((c for c in clusters if len(c.flights) >= cfg.spot_rec_threshold), None)
+
+    weather = get_current_weather(cfg.airport_lat, cfg.airport_lon, cfg.airport_tz)
+
+    if cluster:
+        n = len(cluster.flights)
+        start_str  = datetime.fromtimestamp(cluster.recommended_start_ts).astimezone(tz).strftime("%H:%M")
+        end_str    = datetime.fromtimestamp(cluster.end_ts).astimezone(tz).strftime("%H:%M")
+        window_str = start_str if start_str == end_str else f"{start_str} – {end_str}"
+        lines = [
+            f"<b>Spotting update — time to head out</b>",
+            f"Window: {window_str}",
+            "",
+        ]
+        for e in cluster.flights:
+            lines.append(_flight_line(e, tz))
+        for e in cluster.filtered:
+            lines.append(f"<s>{_flight_line(e, tz, include_reason=True)}</s>")
+        for lull_start_ts, lull_end_ts in cluster.lulls:
+            lines.append(_lull_line(lull_start_ts, lull_end_ts, tz))
+        lines.append("")
+        if weather:
+            lines.append(f"Weather: {weather}")
+        lines.append(_sun_line(sunrise_ts, sunset_ts, tz))
+        msg = "\n".join(lines)
+    else:
+        msg = _build_clusters_message([], clusters, weather, cfg.spot_rec_weather_gate,
+                                      "Spotting update — time to head out", tz, sunrise_ts, sunset_ts)
     for dest_chat_id in cfg.all_chat_ids:
         try:
             await context.bot.send_message(chat_id=dest_chat_id, text=msg, parse_mode="HTML")
@@ -850,6 +1028,25 @@ async def _send_spot_followup(context: ContextTypes.DEFAULT_TYPE) -> None:
 # ------------------------------------------------------------------
 # Inline keyboard callback
 # ------------------------------------------------------------------
+
+async def _schedule_spot_followup(context, cfg, session_start: int, query) -> None:
+    """Schedule the spot follow-up message and reply to the user."""
+    import datetime as _dt
+    follow_up_ts = session_start - cfg.spot_rec_travel_mins * 60 - 1800  # 30 min buffer
+    now_ts = int(datetime.now().timestamp())
+    if follow_up_ts > now_ts:
+        follow_up_dt = _dt.datetime.fromtimestamp(follow_up_ts, tz=pytz.utc)
+        for job in context.application.job_queue.get_jobs_by_name("spot_followup"):
+            job.schedule_removal()
+        context.application.job_queue.run_once(
+            _send_spot_followup, when=follow_up_dt, name="spot_followup",
+        )
+        tz_obj = pytz.timezone(cfg.airport_tz)
+        followup_str = _dt.datetime.fromtimestamp(follow_up_ts).astimezone(tz_obj).strftime("%H:%M")
+        await query.message.reply_text(f"See you out there! I'll send you an update at {followup_str}.")
+    else:
+        await query.message.reply_text("See you out there!")
+
 
 async def handle_spot_response(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
@@ -868,26 +1065,22 @@ async def handle_spot_response(update: Update, context: ContextTypes.DEFAULT_TYP
     elif query.data == "spot_yes":
         pending_ts = cfg.store.load_setting("SPOT_REC_PENDING_SESSION_TS")
         if pending_ts:
-            session_start = int(pending_ts)
-            follow_up_ts = session_start - cfg.spot_rec_travel_mins * 60 - 1800  # 30 min buffer
-            now_ts = int(datetime.now().timestamp())
-            if follow_up_ts > now_ts:
-                import datetime as _dt
-                follow_up_dt = _dt.datetime.fromtimestamp(follow_up_ts, tz=pytz.utc)
-                for job in context.application.job_queue.get_jobs_by_name("spot_followup"):
-                    job.schedule_removal()
-                context.application.job_queue.run_once(
-                    _send_spot_followup, when=follow_up_dt, name="spot_followup",
-                )
-                tz_obj = pytz.timezone(cfg.airport_tz)
-                followup_str = _dt.datetime.fromtimestamp(follow_up_ts).astimezone(tz_obj).strftime("%H:%M")
-                await query.message.reply_text(f"See you out there! I'll send you an update at {followup_str}.")
-            else:
-                await query.message.reply_text("See you out there!")
+            await _schedule_spot_followup(context, cfg, int(pending_ts), query)
         else:
             await query.message.reply_text("See you out there!")
 
-    else:
+    elif query.data.startswith("spot_window_"):
+        try:
+            idx = int(query.data.replace("spot_window_", ""))
+            windows_raw = cfg.store.load_setting("SPOT_REC_PENDING_WINDOWS")
+            windows = json.loads(windows_raw) if windows_raw else []
+            session_start = int(windows[idx])
+            cfg.store.save_setting("SPOT_REC_PENDING_SESSION_TS", str(session_start))
+            await _schedule_spot_followup(context, cfg, session_start, query)
+        except (IndexError, ValueError, TypeError):
+            await query.message.reply_text("See you out there!")
+
+    else:  # spot_maybe
         await query.message.reply_text("Maybe see you out there!")
 
 
@@ -896,7 +1089,7 @@ async def handle_spot_response(update: Update, context: ContextTypes.DEFAULT_TYP
 # ------------------------------------------------------------------
 
 def register_spot_rec_handlers(app: Application) -> None:
-    app.add_handler(CallbackQueryHandler(handle_spot_response,       pattern="^spot_(yes|maybe|no)$"))
-    app.add_handler(CallbackQueryHandler(handle_spot_day_callback,   pattern="^spot_day_(today|tomorrow)$"))
-    app.add_handler(CallbackQueryHandler(handle_spot_period_callback, pattern="^spot_period_(morning|afternoon|allday|best)$"))
+    app.add_handler(CallbackQueryHandler(handle_spot_response,        pattern="^spot_(yes|maybe|no|window_\\d+)$"))
+    app.add_handler(CallbackQueryHandler(handle_spot_day_callback,    pattern="^spot_day_(today|tomorrow)$"))
+    app.add_handler(CallbackQueryHandler(handle_spot_period_callback,  pattern="^spot_period_(morning|afternoon|allday|best)$"))
     app.add_handler(CommandHandler("spot", handle_spot_command))
