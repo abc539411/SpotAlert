@@ -13,7 +13,7 @@ from astral.sun import sun
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes
 
-from monitor import _parse_aircraft, _safe_get
+from monitor import _parse_aircraft, _safe_get, _registration_flag
 from weather import get_current_weather, get_forecast_weather
 
 log = logging.getLogger(__name__)
@@ -708,7 +708,9 @@ def _flight_line(f: "FlightEval", tz, include_reason: bool = False,
         else:
             time_str = f"arr {t}"
 
-    parts = [f"  • {f.registration}"]
+    flag = _registration_flag(f.registration)
+    reg_str = f"{f.registration}{' ' + flag if flag else ''}"
+    parts = [f"  • {reg_str}"]
     if type_str:
         parts.append(type_str)
     if f.detail:
