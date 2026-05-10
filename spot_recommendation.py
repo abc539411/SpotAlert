@@ -481,16 +481,6 @@ def _cluster_flights(
             f.session_ts = f.arrival_ts if arr_in else f.dep_ts
             f.show_dep   = arr_in and dep_in
 
-        # Lull detection: gaps between consecutive event timestamps within cluster
-        event_times = sorted({ts for ts, _ in raw})
-        gaps = [
-            (event_times[i+1] - event_times[i], event_times[i], event_times[i+1])
-            for i in range(len(event_times) - 1)
-            if event_times[i+1] - event_times[i] > notable_lull_secs
-        ]
-        gaps.sort(reverse=True)
-        lulls = sorted((s, e) for _, s, e in gaps[:max_lulls])
-
         # Latest viable start: latest event Ei where all flights still catchable
         all_events = sorted(set(
             [f.arrival_ts for f in cluster_flights] +
@@ -505,6 +495,17 @@ def _cluster_flights(
             if catchable == len(cluster_flights):
                 recommended_start_ts = ei
                 break
+
+        # Lull detection: gaps between consecutive event timestamps AFTER recommended start
+        # (no point flagging gaps the user won't be there for)
+        event_times = sorted({ts for ts, _ in raw if ts >= recommended_start_ts})
+        gaps = [
+            (event_times[i+1] - event_times[i], event_times[i], event_times[i+1])
+            for i in range(len(event_times) - 1)
+            if event_times[i+1] - event_times[i] > notable_lull_secs
+        ]
+        gaps.sort(reverse=True)
+        lulls = sorted((s, e) for _, s, e in gaps[:max_lulls])
 
         result.append(SpotCluster(
             flights=sorted(cluster_flights, key=lambda x: x.arrival_ts),
