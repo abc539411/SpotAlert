@@ -742,7 +742,8 @@ async def _send_notification(
             match = re.search(r'\((.+?)\)', airline_name)
             extra_info = match.group(1) if match else airline_name
 
-        airline_raw   = (flight.get("airline") or {}).get("name") or ""
+        airline_raw   = (flight.get("airline") or {}).get("name") or \
+                        (flight.get("owner") or {}).get("name") or ""
         aircraft_code = _safe_get(flight, "aircraft", "model", "code", default="")
         clean_airline = re.sub(r'\s*\(.*?\)', '', airline_raw).strip()
         if clean_airline and aircraft_code:

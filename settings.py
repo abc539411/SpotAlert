@@ -70,9 +70,11 @@ _FILTER_CATEGORY_KB = ReplyKeyboardMarkup(
 _SPOT_REC_KB = ReplyKeyboardMarkup(
     [
         ["Enabled", "Day Type"],
-        ["Travel Time", "Session Length", "Threshold"],
+        ["Travel Time", "Threshold"],
         ["EOD Hour", "Weather Gate", "Lighting Gate"],
         ["Max Spotted Times"],
+        ["Max Gap", "Notable Lull"],
+        ["Max Lulls", "Max Windows"],
         ["Back"],
     ],
     resize_keyboard=True,
@@ -235,12 +237,15 @@ def _spot_rec_detail(cfg) -> str:
         f"  Enabled: {'Yes' if cfg.spot_rec_enabled else 'No'}\n"
         f"  Day Type: {cfg.spot_rec_day_type}\n"
         f"  Travel Time: {cfg.spot_rec_travel_mins} min\n"
-        f"  Session Length: {cfg.spot_rec_session_hours}h\n"
         f"  Threshold: {cfg.spot_rec_threshold} planes\n"
         f"  EOD Check: {cfg.spot_rec_eod_hour:02d}:00 local\n"
         f"  Weather Gate: {'On' if cfg.spot_rec_weather_gate else 'Off'}\n"
         f"  Lighting Gate: {'On' if cfg.spot_rec_lighting_gate else 'Off'}\n"
-        f"  Max Spotted Times: {max_s}"
+        f"  Max Spotted Times: {max_s}\n"
+        f"  Max Gap: {cfg.spot_rec_max_gap_hours}h\n"
+        f"  Notable Lull: {cfg.spot_rec_notable_lull_mins} min\n"
+        f"  Max Lulls: {cfg.spot_rec_max_lulls}\n"
+        f"  Max Windows: {cfg.spot_rec_max_windows}"
     )
 
 
@@ -887,8 +892,9 @@ async def handle_enter_value(update: Update, context: ContextTypes.DEFAULT_TYPE)
 # ------------------------------------------------------------------
 
 _SPOT_REC_FIELDS = {
-    "Enabled", "Day Type", "Travel Time", "Session Length",
-    "Threshold", "EOD Hour", "Weather Gate", "Lighting Gate", "Max Spotted Times",
+    "Enabled", "Day Type", "Travel Time", "Threshold",
+    "EOD Hour", "Weather Gate", "Lighting Gate", "Max Spotted Times",
+    "Max Gap", "Notable Lull", "Max Lulls", "Max Windows",
 }
 
 
@@ -923,11 +929,6 @@ async def handle_spot_rec_submenu(update: Update, context: ContextTypes.DEFAULT_
             f"Current: {cfg.spot_rec_travel_mins} min\n\nEnter travel time to the airport in minutes:",
             reply_markup=_REMOVE_KB,
         )
-    elif choice == "Session Length":
-        await update.message.reply_text(
-            f"Current: {cfg.spot_rec_session_hours}h\n\nEnter typical spotting session length in hours:",
-            reply_markup=_REMOVE_KB,
-        )
     elif choice == "Threshold":
         await update.message.reply_text(
             f"Current: {cfg.spot_rec_threshold}\n\nMinimum interesting arrivals needed to recommend:",
@@ -956,6 +957,31 @@ async def handle_spot_rec_submenu(update: Update, context: ContextTypes.DEFAULT_
             f"Current: {current}\n\n"
             "If a plane has been photographed at the airport this many times or more, "
             "it won't count as interesting. Enter a number (0 to disable):",
+            reply_markup=_REMOVE_KB,
+        )
+    elif choice == "Max Gap":
+        await update.message.reply_text(
+            f"Current: {cfg.spot_rec_max_gap_hours}h\n\n"
+            "Gap between events (hours) that splits activity into separate sessions.\n"
+            "Also used as the rolling check cooldown interval.",
+            reply_markup=_REMOVE_KB,
+        )
+    elif choice == "Notable Lull":
+        await update.message.reply_text(
+            f"Current: {cfg.spot_rec_notable_lull_mins} min\n\n"
+            "Gap within a session (minutes) worth flagging as a break time.",
+            reply_markup=_REMOVE_KB,
+        )
+    elif choice == "Max Lulls":
+        await update.message.reply_text(
+            f"Current: {cfg.spot_rec_max_lulls}\n\n"
+            "Maximum number of break time notices shown per session (longest gaps first).",
+            reply_markup=_REMOVE_KB,
+        )
+    elif choice == "Max Windows":
+        await update.message.reply_text(
+            f"Current: {cfg.spot_rec_max_windows}\n\n"
+            "Maximum number of session options shown in EOD and manual spot checks (max 3).",
             reply_markup=_REMOVE_KB,
         )
 
@@ -1002,17 +1028,6 @@ async def _handle_spot_rec_value(update: Update, context: ContextTypes.DEFAULT_T
             return ENTER_VALUE
         cfg.spot_rec_travel_mins = val
         store.save_setting("SPOT_REC_TRAVEL_MINS", str(val))
-
-    elif field == "Session Length":
-        try:
-            val = int(raw)
-            if val < 1:
-                raise ValueError
-        except ValueError:
-            await update.message.reply_text("Please enter a positive number of hours.")
-            return ENTER_VALUE
-        cfg.spot_rec_session_hours = val
-        store.save_setting("SPOT_REC_SESSION_HOURS", str(val))
 
     elif field == "Threshold":
         try:
@@ -1070,6 +1085,50 @@ async def _handle_spot_rec_value(update: Update, context: ContextTypes.DEFAULT_T
             return ENTER_VALUE
         cfg.spot_rec_max_spotted_times = val
         store.save_setting("SPOT_REC_MAX_SPOTTED_TIMES", str(val))
+
+    elif field == "Max Gap":
+        try:
+            val = int(raw)
+            if val < 1:
+                raise ValueError
+        except ValueError:
+            await update.message.reply_text("Please enter a positive number of hours.")
+            return ENTER_VALUE
+        cfg.spot_rec_max_gap_hours = val
+        store.save_setting("SPOT_REC_MAX_GAP_HOURS", str(val))
+
+    elif field == "Notable Lull":
+        try:
+            val = int(raw)
+            if val < 1:
+                raise ValueError
+        except ValueError:
+            await update.message.reply_text("Please enter a positive number of minutes.")
+            return ENTER_VALUE
+        cfg.spot_rec_notable_lull_mins = val
+        store.save_setting("SPOT_REC_NOTABLE_LULL_MINS", str(val))
+
+    elif field == "Max Lulls":
+        try:
+            val = int(raw)
+            if val < 0:
+                raise ValueError
+        except ValueError:
+            await update.message.reply_text("Please enter 0 or a positive number.")
+            return ENTER_VALUE
+        cfg.spot_rec_max_lulls = val
+        store.save_setting("SPOT_REC_MAX_LULLS", str(val))
+
+    elif field == "Max Windows":
+        try:
+            val = int(raw)
+            if not 1 <= val <= 3:
+                raise ValueError
+        except ValueError:
+            await update.message.reply_text("Please enter a number between 1 and 3.")
+            return ENTER_VALUE
+        cfg.spot_rec_max_windows = val
+        store.save_setting("SPOT_REC_MAX_WINDOWS", str(val))
 
     await update.message.reply_html(f"Updated.\n\n{_spot_rec_detail(cfg)}", reply_markup=_SPOT_REC_KB)
     return SPOT_REC_SUBMENU

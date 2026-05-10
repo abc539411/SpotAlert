@@ -12,8 +12,9 @@ logs/
 deploy/
 deploy_deck.py
 
-# Personal planning notes
+# Personal planning notes and docs
 to_do.md
+docs/
 
 # Lightroom catalog (personal data, large binary)
 lightroom/*.lrcat
