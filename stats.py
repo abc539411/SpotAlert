@@ -5,7 +5,7 @@ import logging
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
-from monitor import _registration_flag, _iata_flag
+from monitor import _registration_flag, _iata_flag_with_api
 
 log = logging.getLogger(__name__)
 
@@ -29,7 +29,7 @@ async def handle_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             if s["top_airports"]:
                 apt_parts = []
                 for apt, cnt in s["top_airports"]:
-                    flag = _iata_flag(apt)
+                    flag = _iata_flag_with_api(apt, cfg.fr_api)
                     apt_parts.append(f"{flag} {apt} ({cnt})" if flag else f"{apt} ({cnt})")
                 lines.append(f"  Top airports: {' · '.join(apt_parts)}")
 
@@ -52,7 +52,7 @@ async def handle_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                     flag = _registration_flag(reg)
                     reg_str = f"{reg} {flag}" if flag else reg
                     apt_list = ", ".join(
-                        f"{_iata_flag(a.strip())} {a.strip()}" if _iata_flag(a.strip()) else a.strip()
+                        f"{f} {a.strip()}" if (f := _iata_flag_with_api(a.strip(), cfg.fr_api)) else a.strip()
                         for a in airports.split(",")
                     )
                     lines.append(f"    {reg_str}{detail} · {apt_list} ({apt_count} airports)")
