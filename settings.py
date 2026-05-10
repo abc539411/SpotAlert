@@ -32,7 +32,9 @@ log = logging.getLogger(__name__)
     FILTER_CATEGORY_SUBMENU,
     SPOT_REC_SUBMENU,
     USER_SUBMENU,
-) = range(10, 19)
+    LIGHTING_SUBMENU,
+    SESSIONS_SUBMENU,
+) = range(10, 21)
 
 _REMOVE_KB = ReplyKeyboardRemove()
 
@@ -71,12 +73,28 @@ _SPOT_REC_KB = ReplyKeyboardMarkup(
     [
         ["Enabled", "Day Type"],
         ["Travel Time", "Threshold"],
-        ["EOD Hour", "Weather Gate", "Lighting Gate"],
+        ["EOD Hour", "Weather Gate"],
         ["Max Spotted Times"],
-        ["Max Gap", "Notable Lull"],
-        ["Max Lulls", "Max Windows"],
+        ["Lighting →", "Sessions →"],
+        ["Back"],
+    ],
+    resize_keyboard=True,
+)
+
+_LIGHTING_KB = ReplyKeyboardMarkup(
+    [
+        ["Lighting Gate"],
         ["Sunrise Buffer", "Sunset Buffer"],
         ["Bad Light Start", "Bad Light End"],
+        ["Back"],
+    ],
+    resize_keyboard=True,
+)
+
+_SESSIONS_KB = ReplyKeyboardMarkup(
+    [
+        ["Max Gap", "Max Windows"],
+        ["Notable Lull", "Max Lulls"],
         ["Back"],
     ],
     resize_keyboard=True,
@@ -898,9 +916,16 @@ async def handle_enter_value(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 _SPOT_REC_FIELDS = {
     "Enabled", "Day Type", "Travel Time", "Threshold",
-    "EOD Hour", "Weather Gate", "Lighting Gate", "Max Spotted Times",
-    "Max Gap", "Notable Lull", "Max Lulls", "Max Windows",
-    "Sunrise Buffer", "Sunset Buffer", "Bad Light Start", "Bad Light End",
+    "EOD Hour", "Weather Gate", "Max Spotted Times",
+}
+
+_LIGHTING_FIELDS = {
+    "Lighting Gate", "Sunrise Buffer", "Sunset Buffer",
+    "Bad Light Start", "Bad Light End",
+}
+
+_SESSIONS_FIELDS = {
+    "Max Gap", "Max Windows", "Notable Lull", "Max Lulls",
 }
 
 
@@ -911,6 +936,16 @@ async def handle_spot_rec_submenu(update: Update, context: ContextTypes.DEFAULT_
     if choice == "Back":
         await update.message.reply_html(_overview(cfg), reply_markup=_CATEGORY_KB)
         return CATEGORY_SELECT
+
+    if choice == "Lighting →":
+        context.user_data["settings_category"] = "Spot Recommendation"
+        await update.message.reply_html(_spot_rec_detail(cfg), reply_markup=_LIGHTING_KB)
+        return LIGHTING_SUBMENU
+
+    if choice == "Sessions →":
+        context.user_data["settings_category"] = "Spot Recommendation"
+        await update.message.reply_html(_spot_rec_detail(cfg), reply_markup=_SESSIONS_KB)
+        return SESSIONS_SUBMENU
 
     if choice not in _SPOT_REC_FIELDS:
         await update.message.reply_text("Please choose from the keyboard.")
@@ -951,12 +986,6 @@ async def handle_spot_rec_submenu(update: Update, context: ContextTypes.DEFAULT_
             f"Current: {current}\n\nBlock recommendations during severe weather?",
             reply_markup=_ON_OFF_KB,
         )
-    elif choice == "Lighting Gate":
-        current = "On" if cfg.spot_rec_lighting_gate else "Off"
-        await update.message.reply_text(
-            f"Current: {current}\n\nExclude flights arriving after sunset?",
-            reply_markup=_ON_OFF_KB,
-        )
     elif choice == "Max Spotted Times":
         current = str(cfg.spot_rec_max_spotted_times) if cfg.spot_rec_max_spotted_times > 0 else "off"
         await update.message.reply_text(
@@ -965,11 +994,89 @@ async def handle_spot_rec_submenu(update: Update, context: ContextTypes.DEFAULT_
             "it won't count as interesting. Enter a number (0 to disable):",
             reply_markup=_REMOVE_KB,
         )
-    elif choice == "Max Gap":
+
+    return ENTER_VALUE
+
+
+async def handle_lighting_submenu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    choice = update.message.text
+    cfg = context.bot_data["cfg"]
+
+    if choice == "Back":
+        await update.message.reply_html(_spot_rec_detail(cfg), reply_markup=_SPOT_REC_KB)
+        return SPOT_REC_SUBMENU
+
+    if choice not in _LIGHTING_FIELDS:
+        await update.message.reply_text("Please choose from the keyboard.")
+        return LIGHTING_SUBMENU
+
+    context.user_data["settings_field"] = choice
+    context.user_data["settings_category"] = "Spot Recommendation"
+    context.user_data["spot_rec_origin"] = "lighting"
+
+    if choice == "Lighting Gate":
+        current = "On" if cfg.spot_rec_lighting_gate else "Off"
+        await update.message.reply_text(
+            f"Current: {current}\n\nExclude flights arriving after sunset?",
+            reply_markup=_ON_OFF_KB,
+        )
+    elif choice == "Sunrise Buffer":
+        await update.message.reply_text(
+            f"Current: {cfg.spot_rec_sunrise_buffer_mins} min\n\n"
+            "🌅 Minutes after sunrise still considered poor light. Flights flagged but not excluded.",
+            reply_markup=_REMOVE_KB,
+        )
+    elif choice == "Sunset Buffer":
+        await update.message.reply_text(
+            f"Current: {cfg.spot_rec_sunset_buffer_mins} min\n\n"
+            "🌇 Minutes before sunset still considered poor light. Flights flagged but not excluded.",
+            reply_markup=_REMOVE_KB,
+        )
+    elif choice == "Bad Light Start":
+        current = cfg.spot_rec_bad_light_start or "off"
+        await update.message.reply_text(
+            f"Current: {current}\n\n"
+            "☀️ Start of midday bad light window (HH:MM e.g. 11:00). Send - to disable.",
+            reply_markup=_REMOVE_KB,
+        )
+    elif choice == "Bad Light End":
+        current = cfg.spot_rec_bad_light_end or "off"
+        await update.message.reply_text(
+            f"Current: {current}\n\n"
+            "☀️ End of midday bad light window (HH:MM e.g. 14:00). Send - to disable.",
+            reply_markup=_REMOVE_KB,
+        )
+
+    return ENTER_VALUE
+
+
+async def handle_sessions_submenu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    choice = update.message.text
+    cfg = context.bot_data["cfg"]
+
+    if choice == "Back":
+        await update.message.reply_html(_spot_rec_detail(cfg), reply_markup=_SPOT_REC_KB)
+        return SPOT_REC_SUBMENU
+
+    if choice not in _SESSIONS_FIELDS:
+        await update.message.reply_text("Please choose from the keyboard.")
+        return SESSIONS_SUBMENU
+
+    context.user_data["settings_field"] = choice
+    context.user_data["settings_category"] = "Spot Recommendation"
+    context.user_data["spot_rec_origin"] = "sessions"
+
+    if choice == "Max Gap":
         await update.message.reply_text(
             f"Current: {cfg.spot_rec_max_gap_hours}h\n\n"
             "Gap between events (hours) that splits activity into separate sessions.\n"
             "Also used as the rolling check cooldown interval.",
+            reply_markup=_REMOVE_KB,
+        )
+    elif choice == "Max Windows":
+        await update.message.reply_text(
+            f"Current: {cfg.spot_rec_max_windows}\n\n"
+            "Maximum number of session options shown in EOD and manual spot checks (max 3).",
             reply_markup=_REMOVE_KB,
         )
     elif choice == "Notable Lull":
@@ -982,38 +1089,6 @@ async def handle_spot_rec_submenu(update: Update, context: ContextTypes.DEFAULT_
         await update.message.reply_text(
             f"Current: {cfg.spot_rec_max_lulls}\n\n"
             "Maximum number of break time notices shown per session (longest gaps first).",
-            reply_markup=_REMOVE_KB,
-        )
-    elif choice == "Max Windows":
-        await update.message.reply_text(
-            f"Current: {cfg.spot_rec_max_windows}\n\n"
-            "Maximum number of session options shown in EOD and manual spot checks (max 3).",
-            reply_markup=_REMOVE_KB,
-        )
-    elif choice == "Sunrise Buffer":
-        await update.message.reply_text(
-            f"Current: {cfg.spot_rec_sunrise_buffer_mins} min\n\n"
-            "🌅 Minutes after sunrise still considered poor light. Flights in this window are flagged but not excluded.",
-            reply_markup=_REMOVE_KB,
-        )
-    elif choice == "Sunset Buffer":
-        await update.message.reply_text(
-            f"Current: {cfg.spot_rec_sunset_buffer_mins} min\n\n"
-            "🌇 Minutes before sunset still considered poor light. Flights in this window are flagged but not excluded.",
-            reply_markup=_REMOVE_KB,
-        )
-    elif choice == "Bad Light Start":
-        current = cfg.spot_rec_bad_light_start or "off"
-        await update.message.reply_text(
-            f"Current: {current}\n\n"
-            "☀️ Start of midday bad light window (local time, format HH:MM e.g. 11:00). Send - to disable.",
-            reply_markup=_REMOVE_KB,
-        )
-    elif choice == "Bad Light End":
-        current = cfg.spot_rec_bad_light_end or "off"
-        await update.message.reply_text(
-            f"Current: {current}\n\n"
-            "☀️ End of midday bad light window (local time, format HH:MM e.g. 14:00). Send - to disable.",
             reply_markup=_REMOVE_KB,
         )
 
@@ -1101,8 +1176,8 @@ async def _handle_spot_rec_value(update: Update, context: ContextTypes.DEFAULT_T
 
     elif field == "Lighting Gate":
         if raw.lower() == "cancel":
-            await update.message.reply_html(_spot_rec_detail(cfg), reply_markup=_SPOT_REC_KB)
-            return SPOT_REC_SUBMENU
+            await update.message.reply_html(_spot_rec_detail(cfg), reply_markup=_LIGHTING_KB)
+            return LIGHTING_SUBMENU
         val = raw.lower() == "on"
         cfg.spot_rec_lighting_gate = val
         store.save_setting("SPOT_REC_LIGHTING_GATE", "true" if val else "false")
@@ -1208,8 +1283,16 @@ async def _handle_spot_rec_value(update: Update, context: ContextTypes.DEFAULT_T
             await update.message.reply_text("Please enter a time in HH:MM format (e.g. 14:00), or - to disable.")
             return ENTER_VALUE
 
-    await update.message.reply_html(f"Updated.\n\n{_spot_rec_detail(cfg)}", reply_markup=_SPOT_REC_KB)
-    return SPOT_REC_SUBMENU
+    origin = context.user_data.get("spot_rec_origin")
+    if origin == "lighting":
+        await update.message.reply_html(f"Updated.\n\n{_spot_rec_detail(cfg)}", reply_markup=_LIGHTING_KB)
+        return LIGHTING_SUBMENU
+    elif origin == "sessions":
+        await update.message.reply_html(f"Updated.\n\n{_spot_rec_detail(cfg)}", reply_markup=_SESSIONS_KB)
+        return SESSIONS_SUBMENU
+    else:
+        await update.message.reply_html(f"Updated.\n\n{_spot_rec_detail(cfg)}", reply_markup=_SPOT_REC_KB)
+        return SPOT_REC_SUBMENU
 
 
 def _user_detail(cfg) -> str:
@@ -1291,6 +1374,12 @@ def register_settings_handlers(app: Application) -> None:
             ],
             USER_SUBMENU: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_user_submenu)
+            ],
+            LIGHTING_SUBMENU: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_lighting_submenu)
+            ],
+            SESSIONS_SUBMENU: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_sessions_submenu)
             ],
         },
         fallbacks=[CommandHandler("cancel", cancel_settings)],
