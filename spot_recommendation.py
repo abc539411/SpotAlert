@@ -447,7 +447,7 @@ def _lighting_quality(
     """
     if not ts:
         return None
-    if sunrise_ts and sunrise_buffer_secs and ts < sunrise_ts + sunrise_buffer_secs:
+    if sunrise_ts and sunrise_buffer_secs and sunrise_ts <= ts < sunrise_ts + sunrise_buffer_secs:
         return "too_early"
     if bad_light_start and bad_light_end and airport_tz:
         try:
@@ -626,7 +626,7 @@ def _cluster_flights(
             lulls=lulls,
         ))
 
-    # Assign filtered flights to nearest cluster and set their lighting zones
+    # Assign filtered flights to nearest cluster and compute their lighting zones
     for f in filtered:
         f.lighting_zone = _flight_lighting_zone(f, **lighting_kwargs)
         best = min(result, key=lambda c: min(
