@@ -162,6 +162,50 @@ def _iata_flag(iata: str) -> str:
     return _flag_emoji(cc) if cc else ""
 
 
+_IATA_COUNTRY_CACHE: dict = {}  # runtime cache for API-resolved airport countries
+
+
+def _tz_to_country_code(tz_name: str) -> str:
+    """Return ISO country code from timezone name using pytz, or ''."""
+    import pytz as _pytz
+    for code, tzs in _pytz.country_timezones.items():
+        if tz_name in tzs:
+            return code
+    return ""
+
+
+def _iata_flag_with_api(iata: str, fr_api) -> str:
+    """Return country flag emoji for an IATA code.
+
+    Checks the static dict first, then falls back to a FR24 API call
+    (deriving country from the airport's timezone). Results are cached
+    in memory so each unknown code is only resolved once per run.
+    """
+    iata = (iata or "").upper().strip()
+    if not iata:
+        return ""
+
+    flag = _iata_flag(iata)
+    if flag:
+        return flag
+
+    if iata in _IATA_COUNTRY_CACHE:
+        cc = _IATA_COUNTRY_CACHE[iata]
+        return _flag_emoji(cc) if cc else ""
+
+    try:
+        data    = fr_api.get_airport_details(code=iata)
+        details = data["airport"]["pluginData"]["details"]
+        tz_name = (details.get("timezone") or {}).get("name", "")
+        cc      = _tz_to_country_code(tz_name) if tz_name else ""
+    except Exception:
+        cc = ""
+
+    _IATA_COUNTRY_CACHE[iata] = cc
+    _IATA_COUNTRY[iata] = cc  # persist into static dict for this session
+    return _flag_emoji(cc) if cc else ""
+
+
 def _registration_flag(registration: str) -> str:
     """Return a country flag emoji for an aircraft registration, or '' if unknown."""
     r = registration.upper().strip()
