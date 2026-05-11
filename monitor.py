@@ -406,6 +406,7 @@ def format_notification(
     cfg_store=None,
     dep_pattern_threshold: int = 0,
     fr_api=None,
+    extra: Optional[dict] = None,
 ) -> str:
     lines = [f"<b>{notification_type}</b>"]
 
@@ -429,6 +430,17 @@ def format_notification(
     lines.append(f"  Airline: {airline_name} ({airline_iata}/{airline_icao})")
 
     lines.append(f"  Registration: {_safe_get(aircraft, 'registration')}")
+
+    # Route Equipment Change — show what type normally operates this route
+    if notification_type == "Route Equipment Change" and extra:
+        est_type  = extra.get("established_type", "")
+        est_count = extra.get("established_count", 0)
+        est_since = extra.get("established_since", 0)
+        if est_type and est_since:
+            tz_obj    = pytz.timezone(airport_tz)
+            since_str = datetime.fromtimestamp(est_since).astimezone(tz_obj).strftime("%b %Y")
+            lines.append(f"  Established: {est_type} × {est_count} ops since {since_str}")
+
     lines.append("")
 
     if catalog is not None:
@@ -786,29 +798,93 @@ def check_airline_watchlist(arriving_flight: dict, cfg) -> Optional[Tuple]:
     return None
 
 
+def check_route_type_change(arriving_flight: dict, cfg) -> Optional[Tuple]:
+    """Fire when a flight number arrives with a different type than its established equipment."""
+    flight_data = arriving_flight.get("flight") or {}
+
+    # Skip special livery flights — already handled at higher priority
+    airline_name = (flight_data.get("airline") or {}).get("name") or ""
+    if any(keyword in airline_name for keyword in cfg.livery_keywords):
+        return None
+
+    parsed = _parse_aircraft(arriving_flight)
+    if parsed is None:
+        return None
+    registration, aircraft_type, flight = parsed
+
+    if not _passes_schedule_filters(
+        flight, cfg.route_type_days, cfg.route_type_time_filter,
+        cfg.airport_tz, cfg.airport_lat, cfg.airport_lon,
+    ):
+        return None
+    if cfg.store.is_excluded(registration):
+        return None
+
+    flight_number = str(_safe_get(flight, "identification", "number", "default", default=""))
+    if not flight_number or flight_number == "N/A":
+        return None
+
+    established = cfg.store.get_established_route_type(
+        flight_number, cfg.airport_iata,
+        cfg.route_type_lookback_days,
+        cfg.route_type_min_days,
+        cfg.route_type_dominance_x,
+    )
+    if not established:
+        return None
+
+    established_type, established_count, established_since_ts = established
+    if aircraft_type == established_type:
+        return None  # operating as expected
+
+    now_ts = int(datetime.now().timestamp())
+    if not cfg.store.should_notify_route_type_change(
+        flight_number, aircraft_type, cfg.airport_iata, cfg.route_type_renotify_days
+    ):
+        return None
+
+    extra = {
+        "established_type":  established_type,
+        "established_count": established_count,
+        "established_since": established_since_ts,
+    }
+
+    def on_notified(fn=flight_number, at=aircraft_type, iata=cfg.airport_iata, ts=now_ts):
+        cfg.store.mark_route_type_notified(fn, at, iata, ts)
+
+    return flight, registration, on_notified, extra
+
+
 _FILTERS = [
     ("Special Livery",          check_special_livery),
     ("Watchlist Registration",  check_rego_watchlist),
     ("Watchlist Aircraft Type", check_type_watchlist),
     ("Watchlist Airline",       check_airline_watchlist),
     ("Rare Plane/Airline",      check_rare_plane),
+    ("Route Equipment Change",  check_route_type_change),
 ]
 
 
-def _first_matching_filter(
-    arriving_flight: dict, cfg
-) -> Optional[Tuple[dict, str, str, callable]]:
+def _first_matching_filter(arriving_flight: dict, cfg) -> Optional[tuple]:
     """Run filters in priority order; stop at the first match.
 
-    Returns (flight_dict, registration, notification_type, on_notified) or None.
-    check_airline_watchlist returns an optional 4th element to override the type label.
+    Returns (flight_dict, registration, notification_type, on_notified, extra) or None.
+    extra is None for all filters except check_route_type_change which returns a dict
+    with established_type/count/since for use in format_notification.
+    check_airline_watchlist uses result[3] as a string override for the type label.
     """
     for notification_type, check_fn in _FILTERS:
         result = check_fn(arriving_flight, cfg)
         if result is not None:
             flight, registration, on_notified = result[0], result[1], result[2]
-            override_type = result[3] if len(result) > 3 else notification_type
-            return flight, registration, override_type, on_notified
+            # result[3] is either a string (type override) or a dict (extra data)
+            extra = None
+            if len(result) > 3:
+                if isinstance(result[3], dict):
+                    extra = result[3]
+                else:
+                    notification_type = result[3]  # string override (check_airline_watchlist)
+            return flight, registration, notification_type, on_notified, extra
     return None
 
 
@@ -867,6 +943,19 @@ async def run_check(context: ContextTypes.DEFAULT_TYPE) -> None:
         if landed:
             cfg.store.bulk_update_sightings(landed)
 
+        # Record route type history for all landed aircraft (passive learning)
+        route_type_records = []
+        for reg, flight in current_arrivals.items():
+            real_arr = _safe_get(flight, "time", "real", "arrival", default=None)
+            if not isinstance(real_arr, (int, float)):
+                continue
+            fn      = str(_safe_get(flight, "identification", "number", "default", default=""))
+            ac_type = _safe_get(flight, "aircraft", "model", "code", default="")
+            if fn and fn != "N/A" and ac_type and ac_type != "N/A":
+                route_type_records.append((fn, ac_type, cfg.airport_iata, int(real_arr)))
+        if route_type_records:
+            cfg.store.bulk_update_route_types(route_type_records)
+
         # Pass 2: run filters and send notifications
         # Skip registrations already tracked in notification_record (still pending arrival)
         # to avoid double-notifying long-haul flights that appear in the schedule 12+ hours early.
@@ -877,11 +966,12 @@ async def run_check(context: ContextTypes.DEFAULT_TYPE) -> None:
             match = _first_matching_filter(arriving_flight, cfg)
             if match is None:
                 continue
-            flight, registration, notification_type, on_notified = match
+            flight, registration, notification_type, on_notified, extra = match
             if registration in already_tracked:
                 continue
             await _send_notification(
-                context, cfg, chat_id, flight, registration, notification_type, on_notified
+                context, cfg, chat_id, flight, registration, notification_type, on_notified,
+                extra=extra,
             )
             await asyncio.sleep(1)  # avoid Telegram rate limits when sending many at once
 
@@ -902,6 +992,7 @@ async def _send_notification(
     registration: str,
     notification_type: str,
     on_notified: callable,
+    extra: Optional[dict] = None,
 ) -> None:
     log.info("Notifying: %s — %s", notification_type, registration)
 
@@ -956,6 +1047,7 @@ async def _send_notification(
             cfg_store=cfg.store,
             dep_pattern_threshold=cfg.departure_pattern_threshold,
             fr_api=cfg.fr_api,
+            extra=extra,
         )
         for dest_chat_id in cfg.all_chat_ids:
             if photo_url:
