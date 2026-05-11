@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""One-time historical backfill script — run manually after first install.
+"""One-time historical backfill script — run manually after first install or schema changes.
 
 Usage (on the Steam Deck or locally):
     python backfill.py
@@ -8,9 +8,12 @@ Reads config/config.env. Set FR24_USERNAME and FR24_PASSWORD for premium access
 (higher rate limits and deeper history).
 
 Populates three tables:
-  - sighting_history        last time each registration was seen at the airport
-  - rare_plane_history      last time each airline+type combo visited
-  - flight_departure_pattern arrival flight number -> departure flight number pairings
+  - sighting_history          last time each registration was seen at the airport
+  - rare_plane_history        last time each airline+type combo visited
+  - flight_departure_pattern  arrival -> departure pairings with turnaround offset
+                              (scheduled_arr_ts + scheduled_dep_ts used to compute
+                               turnaround_secs so future predicted departure times
+                               are derived from published schedule gaps, not actuals)
 """
 
 from __future__ import annotations
@@ -19,7 +22,6 @@ import logging
 import os
 import sys
 import time
-from datetime import datetime, timedelta
 from typing import Optional
 
 from environs import Env
@@ -47,6 +49,16 @@ def _best_ts(times: dict, kind: str) -> Optional[int]:
     return None
 
 
+def _sched_ts(times: dict, kind: str) -> Optional[int]:
+    t = (times.get("scheduled") or {}).get(kind)
+    return int(t) if isinstance(t, (int, float)) else None
+
+
+def _est_ts(times: dict, kind: str) -> Optional[int]:
+    t = (times.get("estimated") or {}).get(kind)
+    return int(t) if isinstance(t, (int, float)) else None
+
+
 def backfill(
     fr_api: FlightRadar24API,
     store: SqliteStore,
@@ -56,12 +68,15 @@ def backfill(
 ) -> None:
     """Sweep negative pages (historical arrivals) until we hit duplicate or empty data."""
     all_sightings: dict = {}
-    all_rare: dict = {}        # (airline, type) -> latest ts
-    all_patterns: dict = {}    # (arr_fn, dep_fn) -> (dep_ts, sched_ts, al_name, ...)
-    dep_by_rego: dict = {}     # global across all pages so arrival/departure page offsets don't break matching
+    all_rare: dict = {}     # (airline, type) -> latest arr_ts
+    all_patterns: dict = {} # (arr_fn, dep_fn) -> pattern tuple
+
+    # dep_by_rego: rego -> (dep_fn, best_dep_ts, estimated_dep_ts, sched_dep_ts,
+    #                        al_name, al_iata, al_icao, d_name, d_iata, d_icao)
+    dep_by_rego: dict = {}
     seen_registrations: set = set()
 
-    # Pass 1: collect all pages to build global departure lookup and arrivals data
+    # Pass 1: collect all pages — build global departure lookup and arrivals list
     all_pages_arrivals = []
     page = -1
     consecutive_no_new = 0
@@ -79,20 +94,25 @@ def backfill(
             try:
                 fl = dep_entry["flight"]
                 rego = _safe_get(fl, "aircraft", "registration") or ""
-                fn = _safe_get(fl, "identification", "number", "default") or ""
-                dep_ts = _best_ts(fl.get("time") or {}, "departure")
-                if rego and fn and dep_ts:
-                    sched_only = (fl.get("time") or {}).get("scheduled", {}).get("departure")
-                    airline = fl.get("airline") or {}
-                    airline_code = airline.get("code") or {}
-                    dest = (fl.get("airport") or {}).get("destination") or {}
-                    dest_code = dest.get("code") or {}
-                    dep_by_rego[rego] = (
-                        fn, dep_ts,
-                        int(sched_only) if isinstance(sched_only, (int, float)) else None,
-                        airline.get("name"), airline_code.get("iata"), airline_code.get("icao"),
-                        dest.get("name"), dest_code.get("iata"), dest_code.get("icao"),
-                    )
+                fn   = _safe_get(fl, "identification", "number", "default") or ""
+                times = fl.get("time") or {}
+                best_dep = _best_ts(times, "departure")
+                if not (rego and fn and best_dep):
+                    continue
+
+                estimated_dep_ts = _est_ts(times, "departure")
+                sched_dep_ts     = _sched_ts(times, "departure")
+
+                airline    = fl.get("airline") or {}
+                al_code    = airline.get("code") or {}
+                dest       = (fl.get("airport") or {}).get("destination") or {}
+                dest_code  = dest.get("code") or {}
+
+                dep_by_rego[rego] = (
+                    fn, best_dep, estimated_dep_ts, sched_dep_ts,
+                    airline.get("name"), al_code.get("iata"), al_code.get("icao"),
+                    dest.get("name"), dest_code.get("iata"), dest_code.get("icao"),
+                )
             except (KeyError, TypeError):
                 continue
 
@@ -112,7 +132,7 @@ def backfill(
                 seen_registrations.add(r)
 
         all_pages_arrivals.extend(arrivals)
-        log.info("Page %d: %d arrivals, %d new registrations seen", page, len(arrivals), new_this_page)
+        log.info("Page %d: %d arrivals, %d new registrations", page, len(arrivals), new_this_page)
 
         if new_this_page == 0:
             consecutive_no_new += 1
@@ -125,7 +145,7 @@ def backfill(
         page -= 1
         time.sleep(sleep_secs)
 
-    # Pass 2: process all arrivals against the complete global departure lookup
+    # Pass 2: process arrivals against the complete global departure lookup
     for arr_entry in all_pages_arrivals:
         try:
             fl = arr_entry["flight"]
@@ -133,10 +153,12 @@ def backfill(
             if not rego:
                 continue
 
-            airline_icao = _safe_get(fl, "airline", "code", "icao") or ""
+            airline_icao  = _safe_get(fl, "airline", "code", "icao") or ""
             aircraft_type = _safe_get(fl, "aircraft", "model", "code") or ""
-            arr_fn = _safe_get(fl, "identification", "number", "default") or ""
-            arr_ts = _best_ts(fl.get("time") or {}, "arrival")
+            arr_fn        = _safe_get(fl, "identification", "number", "default") or ""
+            times         = fl.get("time") or {}
+            arr_ts        = _best_ts(times, "arrival")
+            sched_arr_ts  = _sched_ts(times, "arrival")
 
             if arr_ts:
                 all_sightings[rego] = max(all_sightings.get(rego, 0), arr_ts)
@@ -146,34 +168,47 @@ def backfill(
                 all_rare[key] = max(all_rare.get(key, 0), arr_ts)
 
             if arr_fn and rego in dep_by_rego:
-                dep_fn, dep_ts, sched_dep_ts, al_name, al_iata, al_icao, d_name, d_iata, d_icao = dep_by_rego[rego]
-                if dep_ts > (arr_ts or 0):
+                dep_fn, best_dep, est_dep_ts, sched_dep_ts, al_name, al_iata, al_icao, d_name, d_iata, d_icao = dep_by_rego[rego]
+                if best_dep > (arr_ts or 0):
                     key = (arr_fn, dep_fn)
-                    prev = all_patterns.get(key, (0, None, None, None, None, None, None, None))
-                    all_patterns[key] = (
-                        max(prev[0], dep_ts),
-                        sched_dep_ts or prev[1],
-                        al_name or prev[2], al_iata or prev[3], al_icao or prev[4],
-                        d_name or prev[5], d_iata or prev[6], d_icao or prev[7],
-                    )
+                    prev = all_patterns.get(key)
+                    if prev is None:
+                        all_patterns[key] = (
+                            best_dep, est_dep_ts, sched_dep_ts, sched_arr_ts,
+                            al_name, al_iata, al_icao, d_name, d_iata, d_icao,
+                        )
+                    else:
+                        all_patterns[key] = (
+                            max(prev[0], best_dep),
+                            est_dep_ts  or prev[1],
+                            sched_dep_ts or prev[2],
+                            sched_arr_ts or prev[3],
+                            al_name or prev[4], al_iata or prev[5], al_icao or prev[6],
+                            d_name  or prev[7], d_iata  or prev[8], d_icao  or prev[9],
+                        )
         except (KeyError, TypeError):
             continue
 
     # Write to DB
     if all_sightings:
         store.bulk_update_sightings(all_sightings)
+
     for (airline, aircraft_type), ts in all_rare.items():
         store.backfill_rare_plane_seen(airline, aircraft_type, ts)
-    for (arr_fn, dep_fn), (dep_ts, sched_ts, al_name, al_iata, al_icao, d_name, d_iata, d_icao) in all_patterns.items():
+
+    for (arr_fn, dep_fn), vals in all_patterns.items():
+        best_dep, est_dep_ts, sched_dep_ts, sched_arr_ts, al_name, al_iata, al_icao, d_name, d_iata, d_icao = vals
         store.record_departure_pattern(
-            arr_fn, dep_fn, airport_iata, dep_ts,
-            scheduled_dep_ts=sched_ts,
+            arr_fn, dep_fn, airport_iata, best_dep,
+            scheduled_dep_ts=sched_dep_ts,
+            estimated_dep_ts=est_dep_ts,
+            scheduled_arr_ts=sched_arr_ts,
             airline_name=al_name, airline_iata=al_iata, airline_icao=al_icao,
             dest_name=d_name, dest_iata=d_iata, dest_icao=d_icao,
         )
 
     log.info(
-        "Backfill complete — %d sightings, %d rare plane records, %d departure patterns written to DB",
+        "Backfill complete — %d sightings, %d rare plane records, %d departure patterns",
         len(all_sightings), len(all_rare), len(all_patterns),
     )
 
