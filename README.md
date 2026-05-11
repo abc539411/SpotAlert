@@ -113,6 +113,11 @@ Type any aircraft registration directly into the chat (e.g. `VH-XQU` or `9V-SWI`
 
 All settings are adjustable via `/settings` in Telegram. Changes take effect immediately and persist across restarts.
 
+The Spot Recommendation section uses a three-level menu to keep it manageable:
+- **Main screen** — core settings (Enabled, Day Type, Travel Time, Threshold, EOD Hour, Weather Gate, Max Spotted Times)
+- **Lighting →** — hard and soft lighting gates (Lighting Gate, Sunrise/Sunset Buffer, Bad Light window)
+- **Sessions →** — cluster algorithm tuning (Max Gap, Max Windows, Notable Lull, Max Lulls)
+
 ---
 
 ## Lightroom Catalog Integration
@@ -185,9 +190,12 @@ Key settings:
 | `MILITARY_MAX_ALT_FT` | Maximum altitude to consider a military aircraft "on approach" | 5000 |
 | `SPOT_REC_ENABLED` | Enable the spot recommendation feature | false |
 | `SPOT_REC_TRAVEL_MINS` | Minutes to travel from home to airport | 30 |
-| `SPOT_REC_MAX_GAP_HOURS` | Gap (hours) between events that splits into separate sessions; also rolling cooldown | 3 |
 | `SPOT_REC_THRESHOLD` | Minimum interesting flights required for a recommendation | 3 |
 | `SPOT_REC_EOD_HOUR` | Local hour (0–23) to send the end-of-day recommendation | 20 |
+| `SPOT_REC_MAX_GAP_HOURS` | Gap (hours) between events that splits into separate sessions; also rolling cooldown | 3 |
+| `SPOT_REC_MAX_WINDOWS` | Max sessions offered in EOD keyboard and manual Best Time to Go (1–3) | 3 |
+| `SPOT_REC_NOTABLE_LULL_MINS` | Gap within a session (minutes) worth flagging as a break time notice | 60 |
+| `SPOT_REC_MAX_LULLS` | Max break time notices shown per session (longest gaps first) | 2 |
 | `SPOT_REC_SUNRISE_BUFFER_MINS` | Minutes after sunrise still flagged as poor light (🌅) | 30 |
 | `SPOT_REC_SUNSET_BUFFER_MINS` | Minutes before sunset still flagged as poor light (🌇) | 30 |
 | `SPOT_REC_BAD_LIGHT_START` | Local HH:MM start of midday bad-light window (☀️); empty = disabled | — |
