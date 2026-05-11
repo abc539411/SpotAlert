@@ -226,7 +226,7 @@ A daily backup is saved automatically to `config/filters/backups/`, keeping the 
 
 ### check_db.py
 
-A standalone script to inspect the contents of the database directly — useful for debugging or reviewing what the bot has recorded.
+   A standalone script to inspect the contents of the database directly — useful for debugging or reviewing what the bot has recorded.
 
 ```bash
 python check_db.py
@@ -234,11 +234,15 @@ python check_db.py
 
 ### backfill.py
 
-A one-time setup script that seeds the database with historical data from FR24 (requires a FR24 premium account). Run it once after first install to bootstrap the departure pattern and rare plane history before the bot has had time to learn from live traffic.
+Seeds the database with historical data from FR24. Run it once after first install to bootstrap departure patterns, rare plane history, and sighting history before the bot has had time to learn from live traffic. Also safe to re-run after schema changes — it uses `INSERT OR REPLACE` / `COALESCE` logic so existing records are updated rather than duplicated.
+
+Extracts scheduled arrival and departure times separately so the `turnaround_secs` offset is computed correctly — this is what allows predicted departure times to remain accurate across weeks even when the stored timestamp becomes stale.
 
 ```bash
 python backfill.py
 ```
+
+A FR24 premium account (`FR24_USERNAME` / `FR24_PASSWORD` in `config/config.env`) gives higher rate limits and deeper history, but the script runs without credentials at reduced depth.
 
 ---
 
