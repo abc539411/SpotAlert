@@ -373,6 +373,21 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_html("\n".join(lines))
 
 
+async def refresh_airframes(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    cfg = context.bot_data["cfg"]
+    if not cfg.store.is_admin(str(update.effective_chat.id)):
+        await update.message.reply_text("Admin only.")
+        return
+    import airframe as _airframe
+    await update.message.reply_text("Downloading OpenSky aircraft database, please wait...")
+    import asyncio
+    count = await asyncio.to_thread(_airframe._download_and_import, cfg.store)
+    if count:
+        await update.message.reply_text(f"Airframe DB refreshed — {count:,} aircraft imported.")
+    else:
+        await update.message.reply_text("Airframe DB refresh failed — check logs.")
+
+
 # ------------------------------------------------------------------
 # Handler registration
 # ------------------------------------------------------------------
@@ -407,3 +422,4 @@ def register_handlers(app: Application) -> None:
     )
     app.add_handler(conversation)
     app.add_handler(CommandHandler("status", status))
+    app.add_handler(CommandHandler("refreshairframes", refresh_airframes))

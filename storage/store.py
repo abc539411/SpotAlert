@@ -189,6 +189,23 @@ class SqliteStore:
                     PRIMARY KEY (flight_number, aircraft_type, airport_iata)
                 )
             """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS airframe_db (
+                    registration  TEXT PRIMARY KEY,
+                    icao24        TEXT,
+                    manufacturer  TEXT,
+                    serial_number TEXT,
+                    built_year    INTEGER,
+                    owner         TEXT,
+                    operator      TEXT,
+                    operator_icao TEXT,
+                    operator_iata TEXT,
+                    fetched_ts    INTEGER NOT NULL
+                )
+            """)
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_airframe_icao24 ON airframe_db(icao24)"
+            )
 
     # ------------------------------------------------------------------
     # App settings (bot-managed, persisted across restarts)
@@ -1044,6 +1061,43 @@ class SqliteStore:
     def _fetch(self, sql: str, params: tuple = ()) -> List[sqlite3.Row]:
         with self._connect() as conn:
             return list(conn.execute(sql, params).fetchall())
+
+    # ------------------------------------------------------------------
+    # Airframe database (OpenSky Network)
+    # ------------------------------------------------------------------
+
+    def get_airframe(self, registration: str, icao24: str = None) -> Optional[dict]:
+        """Return airframe row by registration, or by icao24 if not found."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM airframe_db WHERE registration = ?",
+                (registration.upper(),),
+            ).fetchone()
+            if row is None and icao24:
+                row = conn.execute(
+                    "SELECT * FROM airframe_db WHERE icao24 = ?",
+                    (icao24.lower(),),
+                ).fetchone()
+        return dict(row) if row else None
+
+    def bulk_upsert_airframes(self, records: list) -> None:
+        """INSERT OR REPLACE a batch of airframe rows."""
+        with self._connect() as conn:
+            conn.executemany(
+                """
+                INSERT OR REPLACE INTO airframe_db
+                    (registration, icao24, manufacturer, serial_number, built_year,
+                     owner, operator, operator_icao, operator_iata, fetched_ts)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                records,
+            )
+
+    def airframe_last_updated(self) -> Optional[int]:
+        """Return the most recent fetched_ts in airframe_db, or None if empty."""
+        with self._connect() as conn:
+            row = conn.execute("SELECT MAX(fetched_ts) FROM airframe_db").fetchone()
+        return row[0] if row and row[0] else None
 
 
 def _update_env_file(config_file: str, key: str, value: str) -> None:

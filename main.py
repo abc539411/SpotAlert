@@ -25,6 +25,7 @@ from lookup import register_lookup_handler
 from stats import register_stats_handlers
 from spot_recommendation import register_spot_rec_handlers, run_eod_recommendation
 from users import register_user_handlers
+import airframe
 
 log = logging.getLogger(__name__)
 
@@ -262,6 +263,7 @@ def main() -> None:
     fr_api = FlightRadar24API()
     store = SqliteStore(os.path.join(filters_dir, "spotalert.db"), config_file=config_file)
     store.migrate_from_csv_folder(filters_dir)
+    airframe.maybe_refresh(store)
 
     catalog = find_catalog()
     cfg = build_config(env, fr_api, store, catalog)
