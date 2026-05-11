@@ -68,8 +68,9 @@ def backfill(
 ) -> None:
     """Sweep negative pages (historical arrivals) until we hit duplicate or empty data."""
     all_sightings: dict = {}
-    all_rare: dict = {}     # (airline, type) -> latest arr_ts
-    all_patterns: dict = {} # (arr_fn, dep_fn) -> pattern tuple
+    all_rare: dict = {}       # (airline, type) -> latest arr_ts
+    all_patterns: dict = {}   # (arr_fn, dep_fn) -> pattern tuple
+    all_route_types: dict = {} # (flight_number, aircraft_type) -> (first_ts, last_ts)
 
     # dep_by_rego: rego -> (dep_fn, best_dep_ts, estimated_dep_ts, sched_dep_ts,
     #                        al_name, al_iata, al_icao, d_name, d_iata, d_icao)
@@ -167,6 +168,14 @@ def backfill(
                 key = (airline_icao, aircraft_type)
                 all_rare[key] = max(all_rare.get(key, 0), arr_ts)
 
+            if arr_fn and aircraft_type and arr_ts:
+                key = (arr_fn, aircraft_type)
+                prev = all_route_types.get(key)
+                if prev is None:
+                    all_route_types[key] = (arr_ts, arr_ts)
+                else:
+                    all_route_types[key] = (min(prev[0], arr_ts), max(prev[1], arr_ts))
+
             if arr_fn and rego in dep_by_rego:
                 dep_fn, best_dep, est_dep_ts, sched_dep_ts, al_name, al_iata, al_icao, d_name, d_iata, d_icao = dep_by_rego[rego]
                 if best_dep > (arr_ts or 0):
@@ -196,6 +205,28 @@ def backfill(
     for (airline, aircraft_type), ts in all_rare.items():
         store.backfill_rare_plane_seen(airline, aircraft_type, ts)
 
+    # Write route type history — use executemany via the store's bulk method
+    if all_route_types:
+        records = [
+            (fn, at, airport_iata, first_ts, last_ts)
+            for (fn, at), (first_ts, last_ts) in all_route_types.items()
+        ]
+        # Manually upsert with first_seen_ts support (bulk_update_route_types only tracks count)
+        import sqlite3 as _sqlite3
+        with store._connect() as conn:
+            conn.executemany(
+                """
+                INSERT INTO route_type_history
+                    (flight_number, aircraft_type, airport_iata, count, first_seen_ts, last_seen_ts)
+                VALUES (?, ?, ?, 1, ?, ?)
+                ON CONFLICT(flight_number, aircraft_type, airport_iata) DO UPDATE SET
+                    count        = count + 1,
+                    first_seen_ts = MIN(first_seen_ts, excluded.first_seen_ts),
+                    last_seen_ts  = MAX(last_seen_ts, excluded.last_seen_ts)
+                """,
+                records,
+            )
+
     for (arr_fn, dep_fn), vals in all_patterns.items():
         best_dep, est_dep_ts, sched_dep_ts, sched_arr_ts, al_name, al_iata, al_icao, d_name, d_iata, d_icao = vals
         store.record_departure_pattern(
@@ -208,8 +239,8 @@ def backfill(
         )
 
     log.info(
-        "Backfill complete — %d sightings, %d rare plane records, %d departure patterns",
-        len(all_sightings), len(all_rare), len(all_patterns),
+        "Backfill complete — %d sightings, %d rare plane records, %d departure patterns, %d route type records",
+        len(all_sightings), len(all_rare), len(all_patterns), len(all_route_types),
     )
 
 

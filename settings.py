@@ -63,8 +63,16 @@ _FILTER_CATEGORY_KB = ReplyKeyboardMarkup(
         ["Special Livery", "Rare Plane"],
         ["Rego Watchlist", "Type Watchlist"],
         ["Airline/Op Watchlist"],
+        ["Route Type"],
         ["Back"],
     ],
+    resize_keyboard=True,
+)
+
+_ROUTE_TYPE_FILTER_KB = ReplyKeyboardMarkup(
+    [["Cooldown", "Active Days", "Arrival Window"],
+     ["Min History", "Dominance", "Lookback"],
+     ["Back"]],
     resize_keyboard=True,
 )
 
@@ -192,6 +200,16 @@ _FILTER_META = {
         "db_window":     "AIRLINE_WATCHLIST_ARRIVAL_WINDOW",
         "interval_unit": "hours",
     },
+    "Route Type": {
+        "cfg_interval":   "route_type_renotify_days",
+        "cfg_days":       "route_type_days",
+        "cfg_window":     "route_type_time_filter",
+        "db_interval":    "ROUTE_TYPE_RENOTIFY_DAYS",
+        "db_days":        "ROUTE_TYPE_ACTIVE_DAYS",
+        "db_window":      "ROUTE_TYPE_ARRIVAL_WINDOW",
+        "interval_unit":  "days",
+        "interval_label": "Cooldown",
+    },
 }
 
 # Normalise arrival window user input → internal value
@@ -278,12 +296,19 @@ def _filter_detail(cfg, category: str) -> str:
     days     = getattr(cfg, m["cfg_days"])
     window   = getattr(cfg, m["cfg_window"])
     interval_label = m.get("interval_label", "Re-notify Interval")
-    return (
+    base = (
         f"<b>{category}</b>\n\n"
         f"  {interval_label}: {interval} {m['interval_unit']}\n"
         f"  Active Days: {_days_label(days)}\n"
         f"  Arrival Window: {_window_label(window)}"
     )
+    if category == "Route Type":
+        base += (
+            f"\n  Min History: {cfg.route_type_min_days} days"
+            f"\n  Dominance: {cfg.route_type_dominance_x}×"
+            f"\n  Lookback: {cfg.route_type_lookback_days} days"
+        )
+    return base
 
 
 # ------------------------------------------------------------------
@@ -360,7 +385,12 @@ async def handle_filter_category_submenu(update: Update, context: ContextTypes.D
 
     if choice in _FILTER_META:
         context.user_data["settings_category"] = choice
-        kb = _RARE_PLANE_FILTER_KB if choice == "Rare Plane" else _FILTER_KB
+        if choice == "Rare Plane":
+            kb = _RARE_PLANE_FILTER_KB
+        elif choice == "Route Type":
+            kb = _ROUTE_TYPE_FILTER_KB
+        else:
+            kb = _FILTER_KB
         await update.message.reply_html(_filter_detail(cfg, choice), reply_markup=kb)
         return FILTER_SUBMENU
 
@@ -440,14 +470,36 @@ async def handle_filter_submenu(update: Update, context: ContextTypes.DEFAULT_TY
         await update.message.reply_text("Choose a filter:", reply_markup=_FILTER_CATEGORY_KB)
         return FILTER_CATEGORY_SUBMENU
 
-    if choice not in {"Re-notify Interval", "Min Absence", "Active Days", "Arrival Window"}:
+    _ROUTE_TYPE_EXTRA = {"Min History", "Dominance", "Lookback"}
+    _STANDARD_FIELDS  = {"Re-notify Interval", "Min Absence", "Cooldown", "Active Days", "Arrival Window"}
+
+    if choice not in _STANDARD_FIELDS | _ROUTE_TYPE_EXTRA:
         await update.message.reply_text("Please choose from the keyboard.")
         return FILTER_SUBMENU
 
     context.user_data["settings_field"] = choice
     m = _FILTER_META[category]
 
-    if choice in {"Re-notify Interval", "Min Absence"}:
+    # Route Type extra settings
+    if choice == "Min History":
+        await update.message.reply_text(
+            f"Current: {cfg.route_type_min_days} days\n\n"
+            "Minimum days of history before the filter can fire (prevents false positives on thin data).",
+            reply_markup=_REMOVE_KB,
+        )
+    elif choice == "Dominance":
+        await update.message.reply_text(
+            f"Current: {cfg.route_type_dominance_x}×\n\n"
+            "Dominant type count must be ≥ N× the next most common type. Default 3.",
+            reply_markup=_REMOVE_KB,
+        )
+    elif choice == "Lookback":
+        await update.message.reply_text(
+            f"Current: {cfg.route_type_lookback_days} days\n\n"
+            "How many days of history to consider when determining the established type.",
+            reply_markup=_REMOVE_KB,
+        )
+    elif choice in {"Re-notify Interval", "Min Absence", "Cooldown"}:
         current = getattr(cfg, m["cfg_interval"])
         unit = m["interval_unit"]
         label = m.get("interval_label", "Re-notify Interval")
@@ -848,7 +900,60 @@ async def handle_enter_value(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     m = _FILTER_META[category]
 
-    if field in {"Re-notify Interval", "Min Absence"}:
+    def _filter_kb(cat):
+        if cat == "Rare Plane":
+            return _RARE_PLANE_FILTER_KB
+        if cat == "Route Type":
+            return _ROUTE_TYPE_FILTER_KB
+        return _FILTER_KB
+
+    # Route Type extra fields
+    if field == "Min History":
+        try:
+            value = int(raw)
+            if value < 1:
+                raise ValueError
+        except ValueError:
+            await update.message.reply_text("Please enter a positive number of days.")
+            return ENTER_VALUE
+        cfg.route_type_min_days = value
+        store.save_setting("ROUTE_TYPE_MIN_DAYS", str(value))
+        await update.message.reply_html(
+            f"Updated.\n\n{_filter_detail(cfg, category)}", reply_markup=_ROUTE_TYPE_FILTER_KB
+        )
+        return FILTER_SUBMENU
+
+    if field == "Dominance":
+        try:
+            value = int(raw)
+            if value < 2:
+                raise ValueError
+        except ValueError:
+            await update.message.reply_text("Please enter a whole number of 2 or more.")
+            return ENTER_VALUE
+        cfg.route_type_dominance_x = value
+        store.save_setting("ROUTE_TYPE_DOMINANCE_X", str(value))
+        await update.message.reply_html(
+            f"Updated.\n\n{_filter_detail(cfg, category)}", reply_markup=_ROUTE_TYPE_FILTER_KB
+        )
+        return FILTER_SUBMENU
+
+    if field == "Lookback":
+        try:
+            value = int(raw)
+            if value < 7:
+                raise ValueError
+        except ValueError:
+            await update.message.reply_text("Please enter a number of days (minimum 7).")
+            return ENTER_VALUE
+        cfg.route_type_lookback_days = value
+        store.save_setting("ROUTE_TYPE_LOOKBACK_DAYS", str(value))
+        await update.message.reply_html(
+            f"Updated.\n\n{_filter_detail(cfg, category)}", reply_markup=_ROUTE_TYPE_FILTER_KB
+        )
+        return FILTER_SUBMENU
+
+    if field in {"Re-notify Interval", "Min Absence", "Cooldown"}:
         try:
             value = int(raw)
             if value < 1:
@@ -858,7 +963,7 @@ async def handle_enter_value(update: Update, context: ContextTypes.DEFAULT_TYPE)
             return ENTER_VALUE
         setattr(cfg, m["cfg_interval"], value)
         store.save_setting(m["db_interval"], str(value))
-        kb = _RARE_PLANE_FILTER_KB if category == "Rare Plane" else _FILTER_KB
+        kb = _filter_kb(category)
         await update.message.reply_html(
             f"Updated.\n\n{_filter_detail(cfg, category)}", reply_markup=kb
         )
@@ -878,14 +983,14 @@ async def handle_enter_value(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 return ENTER_VALUE
         setattr(cfg, m["cfg_days"], new_days)
         store.save_setting(m["db_days"], ",".join(new_days))
-        kb = _RARE_PLANE_FILTER_KB if category == "Rare Plane" else _FILTER_KB
+        kb = _filter_kb(category)
         await update.message.reply_html(
             f"Updated.\n\n{_filter_detail(cfg, category)}", reply_markup=kb
         )
         return FILTER_SUBMENU
 
     if field == "Arrival Window":
-        kb = _RARE_PLANE_FILTER_KB if category == "Rare Plane" else _FILTER_KB
+        kb = _filter_kb(category)
         if raw.lower() == "cancel":
             await update.message.reply_html(
                 _filter_detail(cfg, category), reply_markup=kb

@@ -177,6 +177,18 @@ class SqliteStore:
                     language TEXT NOT NULL DEFAULT 'en'
                 )
             """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS route_type_history (
+                    flight_number    TEXT NOT NULL,
+                    aircraft_type    TEXT NOT NULL,
+                    airport_iata     TEXT NOT NULL,
+                    count            INTEGER NOT NULL DEFAULT 1,
+                    first_seen_ts    INTEGER NOT NULL,
+                    last_seen_ts     INTEGER NOT NULL,
+                    last_notified_ts INTEGER DEFAULT NULL,
+                    PRIMARY KEY (flight_number, aircraft_type, airport_iata)
+                )
+            """)
 
     # ------------------------------------------------------------------
     # App settings (bot-managed, persisted across restarts)
@@ -808,6 +820,137 @@ class SqliteStore:
                 (registration.strip(),),
             ).fetchone()
             return int(row["last_seen_ts"]) if row else None
+
+    # ------------------------------------------------------------------
+    # Route type history
+    # ------------------------------------------------------------------
+
+    def bulk_update_route_types(self, records: list) -> None:
+        """Upsert (flight_number, aircraft_type, airport_iata, ts) for landed aircraft.
+
+        Increments count and updates last_seen_ts; preserves first_seen_ts on conflict.
+        """
+        with self._connect() as conn:
+            conn.executemany(
+                """
+                INSERT INTO route_type_history
+                    (flight_number, aircraft_type, airport_iata, count, first_seen_ts, last_seen_ts)
+                VALUES (?, ?, ?, 1, ?, ?)
+                ON CONFLICT(flight_number, aircraft_type, airport_iata) DO UPDATE SET
+                    count        = count + 1,
+                    last_seen_ts = MAX(last_seen_ts, excluded.last_seen_ts)
+                """,
+                [(fn, at, iata, ts, ts) for fn, at, iata, ts in records],
+            )
+
+    def get_established_route_type(
+        self,
+        flight_number: str,
+        airport_iata: str,
+        lookback_days: int,
+        min_days: int,
+        dominance_x: int,
+    ) -> Optional[tuple]:
+        """Return (established_type, count, first_seen_ts) if one type clearly dominates.
+
+        Returns None if there is insufficient history or no single dominant type.
+        Dominant type must have count >= dominance_x * count of the next most common type,
+        and must have first been seen at least min_days ago.
+        """
+        import time as _time
+        now_ts = int(_time.time())
+        cutoff_ts = now_ts - lookback_days * 86400
+        min_age_ts = now_ts - min_days * 86400
+
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT aircraft_type, count, first_seen_ts
+                FROM route_type_history
+                WHERE flight_number = ? AND airport_iata = ? AND last_seen_ts >= ?
+                ORDER BY count DESC
+                """,
+                (flight_number.strip(), airport_iata.strip(), cutoff_ts),
+            ).fetchall()
+
+        if not rows:
+            return None
+
+        dominant = rows[0]
+        dom_type       = dominant["aircraft_type"]
+        dom_count      = dominant["count"]
+        dom_first_seen = dominant["first_seen_ts"]
+
+        # Must have enough history (established for at least min_days)
+        if dom_first_seen > min_age_ts:
+            return None
+
+        # Must clearly dominate — count >= dominance_x × next type's count
+        if len(rows) > 1:
+            second_count = rows[1]["count"]
+            if dom_count < dominance_x * second_count:
+                return None
+
+        return dom_type, dom_count, dom_first_seen
+
+    def should_notify_route_type_change(
+        self,
+        flight_number: str,
+        aircraft_type: str,
+        airport_iata: str,
+        renotify_days: int,
+    ) -> bool:
+        """Return True if this (flight, type) pairing hasn't been notified within the cooldown."""
+        import time as _time
+        cutoff_ts = int(_time.time()) - renotify_days * 86400
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT last_notified_ts FROM route_type_history
+                WHERE flight_number = ? AND aircraft_type = ? AND airport_iata = ?
+                """,
+                (flight_number.strip(), aircraft_type.strip(), airport_iata.strip()),
+            ).fetchone()
+        if not row:
+            return True
+        last_ts = row["last_notified_ts"]
+        return last_ts is None or last_ts < cutoff_ts
+
+    def mark_route_type_notified(
+        self,
+        flight_number: str,
+        aircraft_type: str,
+        airport_iata: str,
+        now_ts: int,
+    ) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE route_type_history SET last_notified_ts = ?
+                WHERE flight_number = ? AND aircraft_type = ? AND airport_iata = ?
+                """,
+                (now_ts, flight_number.strip(), aircraft_type.strip(), airport_iata.strip()),
+            )
+
+    def get_route_type_history(
+        self,
+        flight_number: str,
+        airport_iata: str,
+        lookback_days: int,
+    ) -> list:
+        """Return all type records for a flight number sorted by count desc."""
+        import time as _time
+        cutoff_ts = int(_time.time()) - lookback_days * 86400
+        with self._connect() as conn:
+            return list(conn.execute(
+                """
+                SELECT aircraft_type, count, first_seen_ts, last_seen_ts
+                FROM route_type_history
+                WHERE flight_number = ? AND airport_iata = ? AND last_seen_ts >= ?
+                ORDER BY count DESC
+                """,
+                (flight_number.strip(), airport_iata.strip(), cutoff_ts),
+            ).fetchall())
 
     # ------------------------------------------------------------------
     # Backup

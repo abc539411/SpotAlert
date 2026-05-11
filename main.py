@@ -104,6 +104,12 @@ class AppConfig:
     spot_rec_bad_light_start: str = ""      # HH:MM local — midday bad light window start (☀️); empty = disabled
     spot_rec_bad_light_end: str = ""        # HH:MM local — midday bad light window end
     departure_pattern_threshold: int = 80  # min % confidence to show a predicted departure
+    route_type_min_days: int = 7           # min days of history before filter fires
+    route_type_dominance_x: int = 3        # dominant type must be >= N× next type count
+    route_type_lookback_days: int = 90     # observation window in days
+    route_type_renotify_days: int = 30     # cooldown per (flight, type) pairing
+    route_type_days: List[str] = field(default_factory=list)
+    route_type_time_filter: str = ""
 
     # Dependencies — excluded from repr/comparison
     fr_api: object = field(repr=False, default=None)
@@ -210,6 +216,12 @@ def build_config(env: Env, fr_api: FlightRadar24API, store: SqliteStore, catalog
         spot_rec_bad_light_start=_s(store, env, "SPOT_REC_BAD_LIGHT_START", default=""),
         spot_rec_bad_light_end=_s(store, env, "SPOT_REC_BAD_LIGHT_END", default=""),
         departure_pattern_threshold=_si(store, env, "DEPARTURE_PATTERN_THRESHOLD", default="80"),
+        route_type_min_days=_si(store, env, "ROUTE_TYPE_MIN_DAYS", default="7"),
+        route_type_dominance_x=_si(store, env, "ROUTE_TYPE_DOMINANCE_X", default="3"),
+        route_type_lookback_days=_si(store, env, "ROUTE_TYPE_LOOKBACK_DAYS", default="90"),
+        route_type_renotify_days=_si(store, env, "ROUTE_TYPE_RENOTIFY_DAYS", default="30"),
+        route_type_days=_sl(store, env, "ROUTE_TYPE_ACTIVE_DAYS"),
+        route_type_time_filter=_s(store, env, "ROUTE_TYPE_ARRIVAL_WINDOW"),
         fr_api=fr_api,
         store=store,
         catalog=catalog,

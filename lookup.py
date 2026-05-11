@@ -5,23 +5,53 @@ import re
 from datetime import datetime
 
 import pytz
-from telegram import Update
-from telegram.ext import Application, ConversationHandler, ContextTypes, MessageHandler, filters
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.ext import (
+    Application, CallbackQueryHandler, ConversationHandler,
+    ContextTypes, MessageHandler, filters,
+)
 
 from monitor import _registration_flag
 
 log = logging.getLogger(__name__)
 
-# Matches a bare registration — must contain at least one hyphen or digit to avoid
-# matching plain words like "Done", "Cancel", "Today" from keyboard menus
+# Registration: must contain hyphen or digit, can start with digit (9V-, 4R-), ends with letter or digit
 _REGO_RE = re.compile(r"^(?=.*[-\d])[A-Z0-9][A-Z0-9\-]{2,8}$", re.IGNORECASE)
 
+# Flight number: exactly 2 alphanumeric IATA code + 1-4 digits, nothing else
+_FN_RE = re.compile(r"^[A-Z0-9]{2}\d{1,4}$", re.IGNORECASE)
 
-def _extract_registration(text: str) -> str | None:
-    text = text.strip()
-    if _REGO_RE.match(text):
-        return text.upper()
-    return None
+
+def _is_registration(text: str) -> bool:
+    """Unambiguously a registration: has hyphen, or ends with a letter."""
+    t = text.upper().strip()
+    return "-" in t or (t[-1].isalpha() and not _FN_RE.match(t))
+
+
+def _classify(text: str):
+    """Return ('rego', text), ('fn', text), ('ambiguous', text), or (None, None)."""
+    t = text.strip().upper()
+    is_rego = bool(_REGO_RE.match(t))
+    is_fn   = bool(_FN_RE.match(t))
+
+    if not is_rego and not is_fn:
+        return None, None
+
+    # Unambiguous rego: has hyphen, or ends with letter and can't be flight number
+    if is_rego and ("-" in t or (t[-1].isalpha())):
+        return "rego", t
+
+    # Unambiguous flight number: matches FN but not rego
+    if is_fn and not is_rego:
+        return "fn", t
+
+    # Both match (e.g. HL7732 — Korean registration that also looks like a flight number)
+    if is_fn and is_rego:
+        return "ambiguous", t
+
+    if is_rego:
+        return "rego", t
+    return "fn", t
 
 
 def _format_seen(last_seen_ts: int, airport_iata: str, airport_tz: str) -> str:
@@ -38,36 +68,29 @@ def _format_seen(last_seen_ts: int, airport_iata: str, airport_tz: str) -> str:
     return date_str
 
 
-async def handle_lookup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    text = update.message.text or ""
-    registration = _extract_registration(text)
-    if not registration:
-        return
-
-    # Skip if user is inside an active ConversationHandler
+def _in_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """Return True if the user is inside an active ConversationHandler."""
     for handler_group in context.application.handlers.values():
         for h in handler_group:
             if isinstance(h, ConversationHandler):
                 try:
                     key = h._get_key(update)
                     if h._conversations.get(key) is not None:
-                        return
+                        return True
                 except Exception:
                     pass
+    return False
 
-    log.info("Lookup: text=%r → registration=%r", text, registration)
 
+async def _do_rego_lookup(registration: str, update, context) -> None:
     cfg = context.bot_data["cfg"]
-
     flag = _registration_flag(registration)
     header = f"{registration}{' ' + flag if flag else ''}"
     lines = [f"<b>Lookup: {header}</b>", ""]
 
-    # --- Aircraft details: DB first, FR24 fallback ---
     aircraft_str = ""
     operator_str = ""
 
-    # Check notification_record for stored detail ("Airline (Type)")
     try:
         for record in cfg.store.get_tracked_flights():
             if record["registration"] == registration and record["detail"]:
@@ -83,7 +106,6 @@ async def handle_lookup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     except Exception as exc:
         log.warning("DB detail lookup failed for %s: %s", registration, exc)
 
-    # Fallback to FR24 if DB had nothing
     if not aircraft_str and not operator_str:
         try:
             rego_details = cfg.fr_api.get_rego_details(registration)
@@ -107,7 +129,6 @@ async def handle_lookup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     if operator_str:
         lines.append(f"Operator: {operator_str}")
 
-    # --- Watchlist / exclusion status ---
     tags = []
     if cfg.store.is_excluded(registration):
         tags.append("⛔ Exclusion List")
@@ -118,7 +139,6 @@ async def handle_lookup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
     lines.append("")
 
-    # --- Last Seen at airport (sighting_history) ---
     last_seen_ts = cfg.store.get_last_seen(registration)
     if last_seen_ts:
         lines.append(f"Last Seen at {cfg.airport_iata}: {_format_seen(last_seen_ts, cfg.airport_iata, cfg.airport_tz)}")
@@ -127,7 +147,6 @@ async def handle_lookup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
     lines.append("")
 
-    # --- Spotting sessions (Lightroom catalog) ---
     if cfg.catalog:
         sessions = cfg.catalog.get_all_sessions(registration)
         if sessions:
@@ -141,13 +160,103 @@ async def handle_lookup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
     lines.append(f"\nhttps://www.flightradar24.com/data/aircraft/{registration.lower()}")
 
-    await update.message.reply_html("\n".join(lines))
+    await update.reply_html("\n".join(lines))
+
+
+async def _do_fn_lookup(flight_number: str, update, context) -> None:
+    cfg = context.bot_data["cfg"]
+    rows = cfg.store.get_route_type_history(
+        flight_number, cfg.airport_iata, cfg.route_type_lookback_days
+    )
+
+    lines = [f"<b>Flight {flight_number} at {cfg.airport_iata}</b>", ""]
+
+    if not rows:
+        lines.append("No equipment history recorded yet.")
+        lines.append("History builds automatically as flights arrive.")
+        await update.reply_html("\n".join(lines))
+        return
+
+    total = sum(r["count"] for r in rows)
+    lines.append(f"Equipment history (last {cfg.route_type_lookback_days} days):")
+
+    tz = pytz.timezone(cfg.airport_tz)
+    for r in rows:
+        pct = round(r["count"] / total * 100)
+        since_str = datetime.fromtimestamp(r["first_seen_ts"]).astimezone(tz).strftime("%b %Y")
+        last_str  = datetime.fromtimestamp(r["last_seen_ts"]).astimezone(tz).strftime("%-d %b")
+        lines.append(f"  🛫 {r['aircraft_type']} — {r['count']} ops ({pct}%) · since {since_str} · last {last_str}")
+
+    # Show established type if one exists
+    established = cfg.store.get_established_route_type(
+        flight_number, cfg.airport_iata,
+        cfg.route_type_lookback_days,
+        cfg.route_type_min_days,
+        cfg.route_type_dominance_x,
+    )
+    if established:
+        est_type, est_count, _ = established
+        pct = round(est_count / total * 100)
+        lines.append("")
+        lines.append(f"Established: {est_type} ({pct}% of ops)")
+    elif len(rows) > 1:
+        lines.append("")
+        lines.append("No established type — route is in transition or shows regular variation.")
+
+    await update.reply_html("\n".join(lines))
+
+
+async def handle_lookup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    text = update.message.text or ""
+    kind, value = _classify(text.strip())
+    if kind is None:
+        return
+
+    if _in_conversation(update, context):
+        return
+
+    if kind == "rego":
+        log.info("Lookup: rego=%r", value)
+        await _do_rego_lookup(value, update.message, context)
+
+    elif kind == "fn":
+        log.info("Lookup: flight_number=%r", value)
+        await _do_fn_lookup(value, update.message, context)
+
+    elif kind == "ambiguous":
+        log.info("Lookup: ambiguous=%r", value)
+        keyboard = InlineKeyboardMarkup([[
+            InlineKeyboardButton(f"✈ Registration {value}", callback_data=f"lookup_reg_{value}"),
+            InlineKeyboardButton(f"🔢 Flight {value}",      callback_data=f"lookup_fn_{value}"),
+        ]])
+        await update.message.reply_text(
+            f"Did you mean registration or flight number?",
+            reply_markup=keyboard,
+        )
+
+
+async def handle_lookup_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_reply_markup(reply_markup=None)
+
+    data = query.data  # e.g. "lookup_reg_HL7732" or "lookup_fn_HL7732"
+    if data.startswith("lookup_reg_"):
+        value = data.replace("lookup_reg_", "").upper()
+        log.info("Lookup (disambiguated): rego=%r", value)
+        await _do_rego_lookup(value, query.message, context)
+    elif data.startswith("lookup_fn_"):
+        value = data.replace("lookup_fn_", "").upper()
+        log.info("Lookup (disambiguated): flight_number=%r", value)
+        await _do_fn_lookup(value, query.message, context)
 
 
 def register_lookup_handler(app: Application) -> None:
-    # Group 1 — runs after ConversationHandlers (group 0) so it never
-    # intercepts keyboard replies from /filters, /settings, or /summary.
     app.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, handle_lookup),
+        group=1,
+    )
+    app.add_handler(
+        CallbackQueryHandler(handle_lookup_callback, pattern=r"^lookup_(reg|fn)_.+$"),
         group=1,
     )
