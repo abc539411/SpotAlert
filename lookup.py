@@ -28,6 +28,27 @@ def _is_registration(text: str) -> bool:
     return "-" in t or (t[-1].isalpha() and not _FN_RE.match(t))
 
 
+# Known IATA airline prefixes — if the 2-char prefix matches, treat as flight number without disambiguating
+_KNOWN_AIRLINE_CODES = {
+    # Australian & Pacific
+    "QF", "JQ", "VA", "ZL", "QL", "NZ", "FJ", "SB", "PX",
+    # Southeast Asia
+    "SQ", "TR", "MH", "AK", "D7", "GA", "TG", "PR", "5J", "VN", "VJ", "MI",
+    # East Asia
+    "JL", "NH", "KE", "OZ", "CX", "HX", "CA", "CZ", "MU", "HU", "3U", "HO", "MF", "CI", "BR", "BI",
+    # South Asia / Middle East
+    "AI", "UL", "EK", "EY", "QR", "GF", "WY",
+    # Europe
+    "BA", "AF", "LH", "KL", "TK", "AZ", "IB", "SK", "LX", "OS",
+    # North America
+    "DL", "UA", "AA", "AS", "HA", "AC", "WS",
+    # South America / Africa
+    "LA", "ET", "SU", "AT",
+    # Cargo
+    "5X", "FX",
+}
+
+
 def _classify(text: str):
     """Return ('rego', text), ('fn', text), ('ambiguous', text), or (None, None)."""
     t = text.strip().upper()
@@ -45,8 +66,10 @@ def _classify(text: str):
     if is_fn and not is_rego:
         return "fn", t
 
-    # Both match (e.g. HL7732 — Korean registration that also looks like a flight number)
+    # Both match — resolve via known airline prefix, else ask
     if is_fn and is_rego:
+        if t[:2] in _KNOWN_AIRLINE_CODES:
+            return "fn", t
         return "ambiguous", t
 
     if is_rego:
@@ -90,6 +113,8 @@ async def _do_rego_lookup(registration: str, update, context) -> None:
 
     aircraft_str = ""
     operator_str = ""
+    owner_str = ""
+    fr24_hex = ""
 
     try:
         for record in cfg.store.get_tracked_flights():
@@ -114,6 +139,8 @@ async def _do_rego_lookup(registration: str, update, context) -> None:
                 aircraft_code = ((data[0].get("aircraft") or {}).get("model") or {}).get("code") or ""
                 aircraft_name = ((data[0].get("aircraft") or {}).get("model") or {}).get("text") or ""
                 airline_name  = (data[0].get("airline") or {}).get("name") or ""
+                owner_str     = (data[0].get("owner") or {}).get("name") or ""
+                fr24_hex      = (data[0].get("aircraft") or {}).get("hex") or ""
             else:
                 info = (rego_details or {}).get("aircraftInfo") or {}
                 aircraft_code = (info.get("model") or {}).get("code") or ""
@@ -128,6 +155,29 @@ async def _do_rego_lookup(registration: str, update, context) -> None:
         lines.append(f"Aircraft: {aircraft_str}")
     if operator_str:
         lines.append(f"Operator: {operator_str}")
+
+    # Airframe data from local OpenSky DB (no API call)
+    try:
+        from datetime import datetime as _dt
+        airframe = cfg.store.get_airframe(registration, icao24=fr24_hex or None)
+        if airframe:
+            owner_str = owner_str or airframe.get("owner") or ""
+            parts = []
+            msn = airframe.get("serial_number")
+            built = airframe.get("built_year")
+            if msn:
+                parts.append(f"MSN {msn}")
+            if built:
+                age = _dt.now().year - built
+                parts.append(f"Built {built}")
+                parts.append(f"Age {age} years")
+            if parts:
+                lines.append(f"Airframe: {' · '.join(parts)}")
+    except Exception as exc:
+        log.warning("Airframe lookup failed for %s: %s", registration, exc)
+
+    if owner_str:
+        lines.append(f"Owner: {owner_str}")
 
     tags = []
     if cfg.store.is_excluded(registration):
