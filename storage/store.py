@@ -619,14 +619,6 @@ class SqliteStore:
                 (registration.strip(), flight_number, notif_type,
                  arrival_ts, arrival_ts, first_notified_ts, now_ts, extra_info, detail),
             )
-            conn.execute(
-                """
-                INSERT INTO sighting_history(registration, last_seen_ts) VALUES (?, ?)
-                ON CONFLICT(registration) DO UPDATE
-                SET last_seen_ts = MAX(last_seen_ts, excluded.last_seen_ts)
-                """,
-                (registration.strip(), arrival_ts),
-            )
 
     def get_tracked_flights(self) -> List[sqlite3.Row]:
         return self._fetch("SELECT * FROM notification_record")
