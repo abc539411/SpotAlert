@@ -136,7 +136,7 @@ async def handle_filter_selection(update: Update, context: ContextTypes.DEFAULT_
     context.user_data["selected_filter"] = selected
     view = _get_store(context).get_list_view(selected)
     text, count = _render_list_html(selected, view.columns, view.rows, show_index=True)
-    await update.message.reply_html(text)
+    await update.message.reply_html(text, disable_web_page_preview=True)
 
     keyboard = _OP_KEYBOARD_EMPTY if count == 0 else _OP_KEYBOARD
     await update.message.reply_text("What would you like to do?", reply_markup=keyboard)
@@ -299,13 +299,13 @@ async def receive_delete_entry(update: Update, context: ContextTypes.DEFAULT_TYP
         view_before = store.get_list_view(selected)
         deleted_rows = [view_before.rows[i] for i in indexes]
         deleted_text, _ = _render_list_html("Deleted", view_before.columns, deleted_rows, show_index=False)
-        await update.message.reply_html(deleted_text)
+        await update.message.reply_html(deleted_text, disable_web_page_preview=True)
 
         view_after = store.delete_entries_by_index(selected, indexes)
         updated_text, _ = _render_list_html(
             f"Updated {selected}", view_after.columns, view_after.rows, show_index=True
         )
-        await update.message.reply_html(updated_text)
+        await update.message.reply_html(updated_text, disable_web_page_preview=True)
         await update.message.reply_text("Done!", reply_markup=_REMOVE_KEYBOARD)
     except IndexError:
         await update.message.reply_text("Index out of range. Please try again.")
@@ -328,7 +328,7 @@ async def _complete_with_updated_list(
 ) -> int:
     view = _get_store(context).get_list_view(filter_name)
     text, _ = _render_list_html(f"Updated {filter_name}", view.columns, view.rows, show_index=True)
-    await update.message.reply_html(text)
+    await update.message.reply_html(text, disable_web_page_preview=True)
     await update.message.reply_text("Done!", reply_markup=_REMOVE_KEYBOARD)
     return ConversationHandler.END
 
@@ -374,7 +374,7 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"  Next Arrivals: {next_job('arrivals_check')} (local)",
         f"  Next Military: {next_job('military_check')} (local)",
     ]
-    await update.message.reply_html("\n".join(lines))
+    await update.message.reply_html("\n".join(lines), disable_web_page_preview=True)
 
 
 async def refresh_airframes(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
