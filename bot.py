@@ -57,7 +57,7 @@ def _render_list_html(title: str, columns: list, rows: list, show_index: bool) -
         parts.append(f"\n{'Index: ' + str(idx) if show_index else ''}")
         for col in columns:
             val = row.get(col, '')
-            if col == "registration" and val:
+            if col.lower() == "registration" and val:
                 url = f"https://www.flightradar24.com/data/aircraft/{val.lower()}"
                 val = f'<a href="{url}">{val}</a>'
             parts.append(f"{col}: {val}")
