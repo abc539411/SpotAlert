@@ -934,6 +934,26 @@ async def run_check(context: ContextTypes.DEFAULT_TYPE) -> None:
                     if registration not in current_departures:
                         current_departures[registration] = flight
 
+        # Also fetch page -1 (most-recently-landed flights) to catch aircraft that
+        # landed since the last check and have already rotated off the positive pages.
+        # Used only for passive DB updates — never triggers new notifications.
+        try:
+            hist_data = cfg.fr_api.get_airport_details(code=cfg.airport_code, page=-1)
+            hist_arrivals = (
+                hist_data["airport"]["pluginData"]["schedule"]
+                .get("arrivals", {}).get("data") or []
+            )
+            for arriving_flight in hist_arrivals:
+                parsed = _parse_aircraft(arriving_flight)
+                if not parsed:
+                    continue
+                registration, _, flight = parsed
+                if registration in current_arrivals:
+                    continue  # already seen on positive pages
+                current_arrivals[registration] = flight
+        except Exception as exc:
+            log.debug("Failed to fetch page -1 for passive updates: %s", exc)
+
         # Record actual arrivals — only planes that have landed, using their real arrival time
         landed = {
             reg: int(_safe_get(flight, "time", "real", "arrival"))
