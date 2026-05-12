@@ -442,10 +442,15 @@ async def handle_airport_submenu(update: Update, context: ContextTypes.DEFAULT_T
         return ENTER_VALUE
 
     if choice == "Force Check Now":
+        import asyncio
+        from monitor import run_check as _run_check
+        # Run the check immediately in the background
+        asyncio.create_task(_run_check(context))
+        # Reset the repeating schedule from now
         for job in context.application.job_queue.get_jobs_by_name("arrivals_check"):
             job.schedule_removal()
         context.application.job_queue.run_repeating(
-            run_check, interval=cfg.check_interval, first=0,
+            _run_check, interval=cfg.check_interval, first=cfg.check_interval,
             data=cfg.chat_id, name="arrivals_check",
         )
         tz = pytz.timezone(cfg.airport_tz)
