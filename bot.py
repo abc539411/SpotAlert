@@ -327,10 +327,11 @@ async def _complete_with_updated_list(
     update: Update, context: ContextTypes.DEFAULT_TYPE, filter_name: str
 ) -> int:
     view = _get_store(context).get_list_view(filter_name)
-    text, _ = _render_list_html(f"Updated {filter_name}", view.columns, view.rows, show_index=True)
+    text, count = _render_list_html(f"Updated {filter_name}", view.columns, view.rows, show_index=True)
     await update.message.reply_html(text, disable_web_page_preview=True)
-    await update.message.reply_text("Done!", reply_markup=_REMOVE_KEYBOARD)
-    return ConversationHandler.END
+    keyboard = _OP_KEYBOARD_EMPTY if count == 0 else _OP_KEYBOARD
+    await update.message.reply_text("What would you like to do?", reply_markup=keyboard)
+    return OP_CHOICE
 
 
 # ------------------------------------------------------------------
