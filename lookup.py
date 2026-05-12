@@ -159,9 +159,7 @@ async def _do_rego_lookup(registration: str, update, context) -> None:
                 imgs = (images_list[0].get("images") or {})
                 medium = imgs.get("medium") or imgs.get("thumbnails") or []
                 if medium:
-                    raw_url = medium[0].get("src") or ""
-                    # Upgrade thumbnail (200px _tb) to medium (400px)
-                    photo_url = raw_url.replace("/200/", "/400/").replace("_tb.jpg", ".jpg")
+                    photo_url = medium[0].get("link") or ""
             cfg.store.upsert_airframe_from_fr24(
                 registration,
                 icao24=fr24_hex or None,
@@ -238,8 +236,7 @@ async def _do_rego_lookup(registration: str, update, context) -> None:
                 imgs = (images_list[0].get("images") or {})
                 medium = imgs.get("medium") or imgs.get("thumbnails") or []
                 if medium:
-                    raw_url = medium[0].get("src") or ""
-                    photo_url = raw_url.replace("/200/", "/400/").replace("_tb.jpg", ".jpg")
+                    photo_url = medium[0].get("link") or ""
                     cfg.store.upsert_airframe_from_fr24(registration, photo_url=photo_url)
         except Exception as exc:
             log.warning("Photo fallback lookup failed for %s: %s", registration, exc)
