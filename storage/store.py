@@ -841,6 +841,46 @@ class SqliteStore:
             ).fetchone()
             return int(row["last_seen_ts"]) if row else None
 
+    def get_flight_route(self, flight_number: str, airport_iata: str) -> Optional[dict]:
+        """Return route info for a flight number from departure pattern data.
+
+        For an arrival flight (e.g. DL41): origin=dest_iata, destination=airport_iata
+        For a departure flight (e.g. DL40): origin=airport_iata, destination=dest_iata
+        Returns dict with origin_iata, origin_name, dest_iata, dest_name, or None.
+        """
+        fn = flight_number.strip()
+        iata = airport_iata.strip()
+        with self._connect() as conn:
+            # Check as arrival flight first
+            row = conn.execute(
+                "SELECT dest_iata, dest_name FROM flight_departure_pattern "
+                "WHERE arrival_flight_number = ? AND airport_iata = ? "
+                "ORDER BY last_seen_ts DESC LIMIT 1",
+                (fn, iata),
+            ).fetchone()
+            if row and row["dest_iata"]:
+                return {
+                    "origin_iata": row["dest_iata"],
+                    "origin_name": row["dest_name"] or row["dest_iata"],
+                    "dest_iata":   iata,
+                    "dest_name":   iata,
+                }
+            # Check as departure flight
+            row = conn.execute(
+                "SELECT dest_iata, dest_name FROM flight_departure_pattern "
+                "WHERE departure_flight_number = ? AND airport_iata = ? "
+                "ORDER BY last_seen_ts DESC LIMIT 1",
+                (fn, iata),
+            ).fetchone()
+            if row and row["dest_iata"]:
+                return {
+                    "origin_iata": iata,
+                    "origin_name": iata,
+                    "dest_iata":   row["dest_iata"],
+                    "dest_name":   row["dest_name"] or row["dest_iata"],
+                }
+        return None
+
     # ------------------------------------------------------------------
     # Route type history
     # ------------------------------------------------------------------
