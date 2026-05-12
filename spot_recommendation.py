@@ -613,10 +613,11 @@ def _cluster_flights(
                 best_ts    = ei
                 best_start = ei
         recommended_start_ts = best_start
+        cluster_end_ts = max(f.session_ts for f in cluster_flights)
 
-        # Lull detection: gaps between consecutive event timestamps AFTER recommended start
-        # (no point flagging gaps the user won't be there for)
-        event_times = sorted({ts for ts, _ in raw if ts >= recommended_start_ts})
+        # Lull detection: gaps between consecutive event timestamps within the window
+        # (before recommended_start and after end_ts are irrelevant to the user)
+        event_times = sorted({ts for ts, _ in raw if recommended_start_ts <= ts <= cluster_end_ts})
         gaps = [
             (event_times[i+1] - event_times[i], event_times[i], event_times[i+1])
             for i in range(len(event_times) - 1)
@@ -629,7 +630,7 @@ def _cluster_flights(
             flights=sorted(cluster_flights, key=lambda x: x.arrival_ts),
             filtered=[],
             start_ts=cluster_start,
-            end_ts=max(f.session_ts for f in cluster_flights),
+            end_ts=cluster_end_ts,
             recommended_start_ts=recommended_start_ts,
             lulls=lulls,
         ))
@@ -974,6 +975,7 @@ async def _run_spot_check(send_fn, context: ContextTypes.DEFAULT_TYPE,
                 max_gap_secs=cfg.spot_rec_max_gap_hours * 3600,
                 notable_lull_secs=cfg.spot_rec_notable_lull_mins * 60,
                 max_lulls=cfg.spot_rec_max_lulls,
+                **_lighting_kwargs(cfg, sunrise_ts, sunset_ts),
             )
             eligible = [c for c in clusters if len(c.flights) >= cfg.spot_rec_threshold][:cfg.spot_rec_max_windows]
             weather = get_current_weather(cfg.airport_lat, cfg.airport_lon, cfg.airport_tz)
@@ -1018,6 +1020,7 @@ async def _run_spot_check(send_fn, context: ContextTypes.DEFAULT_TYPE,
                 max_gap_secs=cfg.spot_rec_max_gap_hours * 3600,
                 notable_lull_secs=cfg.spot_rec_notable_lull_mins * 60,
                 max_lulls=cfg.spot_rec_max_lulls,
+                **_lighting_kwargs(cfg, sunrise_ts, sunset_ts),
             )
             eligible = [c for c in clusters if len(c.flights) >= cfg.spot_rec_threshold][:cfg.spot_rec_max_windows]
             weather = get_forecast_weather(cfg.airport_lat, cfg.airport_lon, cfg.airport_tz, day_offset=1)
