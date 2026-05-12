@@ -314,6 +314,8 @@ async def _do_fn_lookup(flight_number: str, update, context) -> None:
         lines.append("")
         lines.append("No established type — route is in transition or shows regular variation.")
 
+    lines.append(f"\nhttps://www.flightradar24.com/data/flights/{flight_number.lower()}")
+
     await update.reply_html("\n".join(lines))
 
 
