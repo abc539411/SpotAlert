@@ -260,7 +260,11 @@ async def _do_rego_lookup(registration: str, update, context) -> None:
     text = "\n".join(lines)
     if photo_url:
         try:
-            await update.reply_photo(photo_url, caption=f"Aircraft Photo: {registration}")
+            await update.reply_photo(
+                photo_url,
+                caption=f'Aircraft Photo: <a href="https://www.flightradar24.com/data/aircraft/{registration.lower()}">{registration}</a>',
+                parse_mode="HTML",
+            )
         except Exception as exc:
             log.warning("Failed to send photo for %s: %s", registration, exc)
     await update.reply_html(text, disable_web_page_preview=True)
@@ -272,7 +276,8 @@ async def _do_fn_lookup(flight_number: str, update, context) -> None:
         flight_number, cfg.airport_iata, cfg.route_type_lookback_days
     )
 
-    lines = [f"<b>Flight {flight_number} at {cfg.airport_iata}</b>", ""]
+    fn_url = f"https://www.flightradar24.com/data/flights/{flight_number.lower()}"
+    lines = [f'<b>Flight <a href="{fn_url}">{flight_number}</a> at {cfg.airport_iata}</b>', ""]
 
     route = cfg.store.get_flight_route(flight_number, cfg.airport_iata)
     if route:

@@ -1107,7 +1107,8 @@ async def _send_notification(
                     await context.bot.send_photo(
                         chat_id=dest_chat_id,
                         photo=photo_url,
-                        caption=f"Aircraft Photo: {registration}",
+                        caption=f'Aircraft Photo: <a href="https://www.flightradar24.com/data/aircraft/{registration.lower()}">{registration}</a>',
+                        parse_mode="HTML",
                     )
                 except Exception as exc:
                     log.warning("Could not send photo for %s to %s: %s", registration, dest_chat_id, exc)
