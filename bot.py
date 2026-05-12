@@ -152,7 +152,7 @@ async def prompt_add_entry(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         )
     elif selected == "Rego Watchlist":
         prompt = (
-            "Enter registration (e.g. VH-OEJ) — airline will be looked up automatically.\n"
+            "Enter registration (e.g. VH-OEJ).\n"
             "Or paste a notification message to auto-fill."
         )
     elif selected == "Airline/Operator Watchlist":
