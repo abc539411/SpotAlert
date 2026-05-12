@@ -389,9 +389,16 @@ def _rego_link(rego: str, flag: str = "") -> str:
     return f'<a href="{url}">{rego}</a>{" " + flag if flag else ""}'
 
 
-def _fn_link(fn: str) -> str:
-    """Return an HTML hyperlink to the FR24 flights page for a flight number."""
-    url = f"https://www.flightradar24.com/data/flights/{fn.lower()}"
+def _fn_link(fn: str, flight_id: str = None) -> str:
+    """Return an HTML hyperlink for a flight number.
+
+    If flight_id is provided, links to the live flight tracker for that
+    specific instance. Otherwise links to the general flights history page.
+    """
+    if flight_id and flight_id not in ("N/A", "N\\A"):
+        url = f"https://www.flightradar24.com/{flight_id}"
+    else:
+        url = f"https://www.flightradar24.com/data/flights/{fn.lower()}"
     return f'<a href="{url}">{fn}</a>'
 
 
@@ -422,8 +429,9 @@ def format_notification(
 ) -> str:
     lines = [f"<b>{notification_type}</b>"]
 
-    fn_raw = _safe_get(flight, 'identification', 'number', 'default')
-    fn_str = _fn_link(fn_raw) if fn_raw and fn_raw != "N/A" else fn_raw
+    fn_raw   = _safe_get(flight, 'identification', 'number', 'default')
+    fn_id    = _safe_get(flight, 'identification', 'id', default=None)
+    fn_str   = _fn_link(fn_raw, flight_id=fn_id) if fn_raw and fn_raw != "N/A" else fn_raw
     lines.append(f"  Flight: {fn_str}")
 
     origin = (flight.get("airport") or {}).get("origin") or {}
@@ -568,13 +576,6 @@ def format_notification(
                     if dest_name:
                         lines.append(f"  To: {dest_name} ({dest_iata}/{dest_icao})")
                     lines.append(f"  Confidence: {confidence:.0f}%")
-
-    flight_id  = _safe_get(flight, "identification", "id", default=None)
-    flight_num = _safe_get(flight, "identification", "number", "default", default=None)
-    if flight_id and flight_id != "N/A":
-        lines.append(f"\nhttps://www.flightradar24.com/{flight_id}")
-    elif flight_num and flight_num != "N/A":
-        lines.append(f"\nhttps://www.flightradar24.com/data/flights/{flight_num}")
 
     return "\n".join(lines)
 
@@ -1269,7 +1270,8 @@ async def _send_arrival_reminder(
     flag = _registration_flag(registration)
     arrival_str = datetime.fromtimestamp(arrival_ts).astimezone(tz).strftime("%a %H:%M") if arrival_ts else "N/A"
     fn_raw = _safe_get(flight, 'identification', 'number', 'default')
-    fn_str = _fn_link(fn_raw) if fn_raw and fn_raw != "N/A" else fn_raw
+    fn_id  = _safe_get(flight, 'identification', 'id', default=None)
+    fn_str = _fn_link(fn_raw, flight_id=fn_id) if fn_raw and fn_raw != "N/A" else fn_raw
     lines = [
         f"<b>Arriving Soon — {notification_type}</b>",
         f"  Flight: {fn_str}",
@@ -1315,9 +1317,6 @@ async def _send_arrival_reminder(
             lines.append(f"  To: {dest_name} ({dest_iata}/{dest_icao})")
         if not dep_display_ts:
             lines.append(f"  Confidence: {confidence:.0f}%")
-    if flight_id and flight_id != "N/A":
-        lines.append(f"\nhttps://www.flightradar24.com/{flight_id}")
-
     for dest_chat_id in cfg.all_chat_ids:
         try:
             await context.bot.send_message(chat_id=dest_chat_id, text="\n".join(lines), parse_mode="HTML", disable_web_page_preview=True)
