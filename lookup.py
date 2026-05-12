@@ -273,6 +273,15 @@ async def _do_fn_lookup(flight_number: str, update, context) -> None:
 
     lines = [f"<b>Flight {flight_number} at {cfg.airport_iata}</b>", ""]
 
+    route = cfg.store.get_flight_route(flight_number, cfg.airport_iata)
+    if route:
+        orig = route["origin_name"] if route["origin_name"] != route["origin_iata"] else route["origin_iata"]
+        dest = route["dest_name"]   if route["dest_name"]   != route["dest_iata"]   else route["dest_iata"]
+        orig_str = f"{orig} ({route['origin_iata']})" if route["origin_name"] != route["origin_iata"] else route["origin_iata"]
+        dest_str = f"{dest} ({route['dest_iata']})"   if route["dest_name"]   != route["dest_iata"]   else route["dest_iata"]
+        lines.append(f"Route: {orig_str} → {dest_str}")
+        lines.append("")
+
     if not rows:
         lines.append("No equipment history recorded yet.")
         lines.append("History builds automatically as flights arrive.")
