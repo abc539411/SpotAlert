@@ -93,12 +93,18 @@ def _format_seen(last_seen_ts: int, airport_iata: str, airport_tz: str) -> str:
 
 def _in_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
     """Return True if the user is inside an active ConversationHandler."""
+    if not update.effective_user or not update.effective_chat:
+        return False
+    uid = update.effective_user.id
+    cid = update.effective_chat.id
+    # Try all common key formats PTB uses across versions
+    candidate_keys = [(cid, uid), (uid,), (cid,), (uid, cid)]
     for handler_group in context.application.handlers.values():
         for h in handler_group:
             if isinstance(h, ConversationHandler):
                 try:
-                    key = h._get_key(update)
-                    if h._conversations.get(key) is not None:
+                    conversations = h._conversations
+                    if any(conversations.get(k) is not None for k in candidate_keys):
                         return True
                 except Exception:
                     pass
