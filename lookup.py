@@ -261,8 +261,6 @@ async def _do_rego_lookup(registration: str, update, context) -> None:
         except Exception as exc:
             log.warning("Photo fallback lookup failed for %s: %s", registration, exc)
 
-    lines.append(f"\nhttps://www.flightradar24.com/data/aircraft/{registration.lower()}")
-
     text = "\n".join(lines)
     if photo_url:
         try:
@@ -330,8 +328,6 @@ async def _do_fn_lookup(flight_number: str, update, context) -> None:
     elif len(rows) > 1:
         lines.append("")
         lines.append("No established type — route is in transition or shows regular variation.")
-
-    lines.append(f"\nhttps://www.flightradar24.com/data/flights/{flight_number.lower()}")
 
     await update.reply_html("\n".join(lines))
 
