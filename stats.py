@@ -43,7 +43,8 @@ async def handle_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                     airline, ac_type = cfg.catalog.get_aircraft_info(reg)
                     detail = f" — {airline} ({ac_type})" if airline and ac_type else f" — {airline or ac_type}"
                     flag = _registration_flag(reg)
-                    reg_str = f"{reg} {flag}" if flag else reg
+                    url = f"https://www.flightradar24.com/data/aircraft/{reg.lower()}"
+                    reg_str = f'<a href="{url}">{reg}</a>{" " + flag if flag else ""}'
                     lines.append(f"    {reg_str}{detail} · {count} session{'s' if count != 1 else ''}")
 
             if s["multi_airport"]:
@@ -53,7 +54,8 @@ async def handle_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                     airline, ac_type = cfg.catalog.get_aircraft_info(reg)
                     detail = f" — {airline} ({ac_type})" if airline and ac_type else f" — {airline or ac_type}"
                     flag = _registration_flag(reg)
-                    reg_str = f"{reg} {flag}" if flag else reg
+                    url = f"https://www.flightradar24.com/data/aircraft/{reg.lower()}"
+                    reg_str = f'<a href="{url}">{reg}</a>{" " + flag if flag else ""}'
                     apt_list = ", ".join(
                         f"{f} {a.strip()}" if (f := _iata_flag_with_api(a.strip(), cfg.fr_api)) else a.strip()
                         for a in airports.split(",")
@@ -81,7 +83,7 @@ async def handle_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         f"({n['rego_hits']} rego · {n['type_hits']} type · {n['airline_hits']} airline)"
     )
 
-    await update.message.reply_html("\n".join(lines))
+    await update.message.reply_html("\n".join(lines), disable_web_page_preview=True)
 
 
 def register_stats_handlers(app: Application) -> None:
