@@ -249,7 +249,7 @@ async def _do_rego_lookup(registration: str, update, context) -> None:
     text = "\n".join(lines)
     if photo_url:
         try:
-            await update.reply_photo(photo_url, caption=None)
+            await update.reply_photo(photo_url, caption=f"Aircraft Photo: {registration}")
         except Exception as exc:
             log.warning("Failed to send photo for %s: %s", registration, exc)
     await update.reply_html(text)
