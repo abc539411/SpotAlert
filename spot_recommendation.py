@@ -827,7 +827,8 @@ def _flight_line(f: "FlightEval", tz, include_reason: bool = False,
             time_str = f"{time_str} {light_emoji}"
 
     flag = _registration_flag(f.registration)
-    reg_str = f"{f.registration}{' ' + flag if flag else ''}"
+    fr24_url = f"https://www.flightradar24.com/data/aircraft/{f.registration.lower()}"
+    reg_str = f'<a href="{fr24_url}">{f.registration}</a>{" " + flag if flag else ""}'
     parts = [f"  • {reg_str}"]
     if type_str:
         parts.append(type_str)
