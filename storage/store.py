@@ -310,21 +310,21 @@ class SqliteStore:
 
     def get_list_view(self, list_name: str) -> TableView:
         if list_name == "Exclusion List":
-            cols = ["Airline", "Registration", "Description"]
+            cols = ["Registration", "Description"]
             rows = self._fetch(
-                "SELECT airline, registration, description FROM exclusion_list ORDER BY id ASC"
+                "SELECT registration, description FROM exclusion_list ORDER BY id ASC"
             )
             return TableView(columns=cols, rows=[
-                {"Airline": r["airline"], "Registration": r["registration"], "Description": r["description"]}
+                {"Registration": r["registration"], "Description": r["description"]}
                 for r in rows
             ])
         if list_name == "Rego Watchlist":
-            cols = ["Airline", "Registration", "Description"]
+            cols = ["Registration", "Description"]
             rows = self._fetch(
-                "SELECT airline, registration, description FROM rego_watchlist ORDER BY id ASC"
+                "SELECT registration, description FROM rego_watchlist ORDER BY id ASC"
             )
             return TableView(columns=cols, rows=[
-                {"Airline": r["airline"], "Registration": r["registration"], "Description": r["description"]}
+                {"Registration": r["registration"], "Description": r["description"]}
                 for r in rows
             ])
         if list_name == "Type Watchlist":
