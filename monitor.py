@@ -934,41 +934,46 @@ async def run_check(context: ContextTypes.DEFAULT_TYPE) -> None:
                     if registration not in current_departures:
                         current_departures[registration] = flight
 
-        # Also fetch page -1 arrivals and departures to catch aircraft that
-        # rotated off the positive pages between checks.
-        # Used only for passive DB updates — never triggers new notifications.
+        # Fetch page -1 arrivals and departures for passive DB updates only.
+        # These are flights with real timestamps that may have rotated off the
+        # positive pages — never fed into the notification pipeline.
+        hist_arrivals: dict = {}   # registration → flight (real arrival only)
+        hist_departures: dict = {} # registration → flight (real departure only)
         try:
             hist_data = cfg.fr_api.get_airport_details(code=cfg.airport_code, page=-1)
             hist_schedule = hist_data["airport"]["pluginData"]["schedule"]
-            for arriving_flight in (hist_schedule.get("arrivals", {}).get("data") or []):
-                parsed = _parse_aircraft(arriving_flight)
+            for entry in (hist_schedule.get("arrivals", {}).get("data") or []):
+                parsed = _parse_aircraft(entry)
                 if not parsed:
                     continue
-                registration, _, flight = parsed
-                if registration not in current_arrivals:
-                    current_arrivals[registration] = flight
-            for dep_flight in (hist_schedule.get("departures", {}).get("data") or []):
-                parsed = _parse_aircraft(dep_flight)
+                reg, _, flight = parsed
+                if isinstance(_safe_get(flight, "time", "real", "arrival", default=None), (int, float)):
+                    hist_arrivals[reg] = flight
+            for entry in (hist_schedule.get("departures", {}).get("data") or []):
+                parsed = _parse_aircraft(entry)
                 if not parsed:
                     continue
-                registration, _, flight = parsed
-                if registration not in current_departures:
-                    current_departures[registration] = flight
+                reg, _, flight = parsed
+                if isinstance(_safe_get(flight, "time", "real", "departure", default=None), (int, float)):
+                    hist_departures[reg] = flight
         except Exception as exc:
             log.debug("Failed to fetch page -1 for passive updates: %s", exc)
 
-        # Record actual arrivals — only planes that have landed, using their real arrival time
-        landed = {
-            reg: int(_safe_get(flight, "time", "real", "arrival"))
-            for reg, flight in current_arrivals.items()
-            if isinstance(_safe_get(flight, "time", "real", "arrival", default=None), (int, float))
-        }
+        # Record sightings — real arrivals from positive pages and page -1
+        landed = {}
+        for reg, flight in current_arrivals.items():
+            real_arr = _safe_get(flight, "time", "real", "arrival", default=None)
+            if isinstance(real_arr, (int, float)):
+                landed[reg] = int(real_arr)
+        for reg, flight in hist_arrivals.items():
+            real_arr = int(_safe_get(flight, "time", "real", "arrival"))
+            landed[reg] = max(landed.get(reg, 0), real_arr)
         if landed:
             cfg.store.bulk_update_sightings(landed)
 
         # Record route type history for arrivals and departures (passive learning)
         route_type_records = []
-        for reg, flight in current_arrivals.items():
+        for reg, flight in {**current_arrivals, **hist_arrivals}.items():
             real_arr = _safe_get(flight, "time", "real", "arrival", default=None)
             if not isinstance(real_arr, (int, float)):
                 continue
@@ -976,7 +981,7 @@ async def run_check(context: ContextTypes.DEFAULT_TYPE) -> None:
             ac_type = _safe_get(flight, "aircraft", "model", "code", default="")
             if fn and fn != "N/A" and ac_type and ac_type != "N/A":
                 route_type_records.append((fn, ac_type, cfg.airport_iata, int(real_arr)))
-        for reg, flight in current_departures.items():
+        for reg, flight in {**current_departures, **hist_departures}.items():
             real_dep = _safe_get(flight, "time", "real", "departure", default=None)
             if not isinstance(real_dep, (int, float)):
                 continue
