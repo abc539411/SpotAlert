@@ -283,8 +283,13 @@ async def _do_fn_lookup(flight_number: str, update, context) -> None:
         lines.append("")
 
     if not rows:
-        lines.append("No equipment history recorded yet.")
-        lines.append("History builds automatically as flights arrive.")
+        if not route:
+            lines.append(f"No record of {flight_number} operating through {cfg.airport_iata}.")
+            lines.append(f"If this flight doesn't serve {cfg.airport_iata}, check the FR24 link below for route details.")
+        else:
+            lines.append("No equipment history recorded yet.")
+            lines.append("History builds automatically as flights arrive.")
+        lines.append(f"\nhttps://www.flightradar24.com/data/flights/{flight_number.lower()}")
         await update.reply_html("\n".join(lines))
         return
 
