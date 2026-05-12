@@ -206,6 +206,9 @@ class SqliteStore:
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_airframe_icao24 ON airframe_db(icao24)"
             )
+            af_cols = {row[1] for row in conn.execute("PRAGMA table_info(airframe_db)").fetchall()}
+            if "photo_url" not in af_cols:
+                conn.execute("ALTER TABLE airframe_db ADD COLUMN photo_url TEXT DEFAULT NULL")
 
     # ------------------------------------------------------------------
     # App settings (bot-managed, persisted across restarts)
@@ -1098,6 +1101,49 @@ class SqliteStore:
         with self._connect() as conn:
             row = conn.execute("SELECT MAX(fetched_ts) FROM airframe_db").fetchone()
         return row[0] if row and row[0] else None
+
+    def upsert_airframe_from_fr24(
+        self,
+        registration: str,
+        icao24: str = None,
+        photo_url: str = None,
+        manufacturer: str = None,
+        serial_number: str = None,
+        built_year: int = None,
+        owner: str = None,
+        operator: str = None,
+        operator_icao: str = None,
+        operator_iata: str = None,
+    ) -> None:
+        """Insert or update airframe_db with FR24-sourced data.
+
+        Uses COALESCE so existing non-null values are never overwritten by nulls,
+        except photo_url which is always refreshed when a new one is provided.
+        """
+        import time as _time
+        now_ts = int(_time.time())
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO airframe_db
+                    (registration, icao24, manufacturer, serial_number, built_year,
+                     owner, operator, operator_icao, operator_iata, photo_url, fetched_ts)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(registration) DO UPDATE SET
+                    icao24        = COALESCE(airframe_db.icao24,        excluded.icao24),
+                    manufacturer  = COALESCE(airframe_db.manufacturer,  excluded.manufacturer),
+                    serial_number = COALESCE(airframe_db.serial_number, excluded.serial_number),
+                    built_year    = COALESCE(airframe_db.built_year,    excluded.built_year),
+                    owner         = COALESCE(airframe_db.owner,         excluded.owner),
+                    operator      = COALESCE(airframe_db.operator,      excluded.operator),
+                    operator_icao = COALESCE(airframe_db.operator_icao, excluded.operator_icao),
+                    operator_iata = COALESCE(airframe_db.operator_iata, excluded.operator_iata),
+                    photo_url     = COALESCE(excluded.photo_url, airframe_db.photo_url),
+                    fetched_ts    = excluded.fetched_ts
+                """,
+                (registration.upper(), icao24, manufacturer, serial_number, built_year,
+                 owner, operator, operator_icao, operator_iata, photo_url, now_ts),
+            )
 
 
 def _update_env_file(config_file: str, key: str, value: str) -> None:
