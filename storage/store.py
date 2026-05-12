@@ -897,7 +897,11 @@ class SqliteStore:
                     (flight_number, aircraft_type, airport_iata, count, first_seen_ts, last_seen_ts)
                 VALUES (?, ?, ?, 1, ?, ?)
                 ON CONFLICT(flight_number, aircraft_type, airport_iata) DO UPDATE SET
-                    count        = count + 1,
+                    count        = CASE
+                                       WHEN excluded.last_seen_ts > route_type_history.last_seen_ts + 14400
+                                       THEN count + 1
+                                       ELSE count
+                                   END,
                     last_seen_ts = MAX(last_seen_ts, excluded.last_seen_ts)
                 """,
                 [(fn, at, iata, ts, ts) for fn, at, iata, ts in records],
