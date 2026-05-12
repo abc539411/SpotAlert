@@ -108,7 +108,8 @@ def _in_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool
 async def _do_rego_lookup(registration: str, update, context) -> None:
     cfg = context.bot_data["cfg"]
     flag = _registration_flag(registration)
-    header = f"{registration}{' ' + flag if flag else ''}"
+    fr24_url = f"https://www.flightradar24.com/data/aircraft/{registration.lower()}"
+    header = f'<a href="{fr24_url}">{registration}</a>{" " + flag if flag else ""}'
     lines = [f"<b>Lookup: {header}</b>", ""]
 
     aircraft_str = ""
