@@ -577,20 +577,25 @@ def _cluster_flights(
                     or (f.dep_ts and cluster_start <= f.dep_ts <= cluster_end)):
                 cluster_flights.append(dc_replace(f))
 
-        # Set session_ts, show_dep, and lighting_zone per cluster copy
+        # Set session_ts, show_dep, and lighting_zone per cluster copy.
+        # Lighting zone is computed only from timestamps that fall within this
+        # cluster (arr_in / dep_in) so out-of-cluster departures don't dilute it.
+        _PRIORITY = {"too_early": 0, "bad_light": 1, "too_late": 2}
         for f in cluster_flights:
             arr_in = cluster_start <= f.arrival_ts <= cluster_end
             dep_in = bool(f.dep_ts and cluster_start <= f.dep_ts <= cluster_end)
-            f.session_ts    = f.arrival_ts if arr_in else f.dep_ts
-            f.show_dep      = arr_in and dep_in
-            f.lighting_zone = _flight_lighting_zone(f, **lighting_kwargs)
+            f.session_ts = f.arrival_ts if arr_in else f.dep_ts
+            f.show_dep   = arr_in and dep_in
+            check_ts = ([f.arrival_ts] if arr_in else []) + ([f.dep_ts] if dep_in and f.dep_ts else [])
+            zones = [z for ts in check_ts if (z := _lighting_quality(ts, **lighting_kwargs))]
+            f.lighting_zone = min(zones, key=lambda z: _PRIORITY[z]) if zones else None
 
-        # Lighting-aware recommended start:
-        # Among all viable starts (all flights still catchable), prefer the one
-        # that maximises flights in good light, then pick the latest among ties.
+        # Recommended start: latest time you can arrive and still catch every flight.
+        # A flight is only catchable via its dep_ts when the departure is actually
+        # within this cluster (show_dep=True); out-of-cluster departures don't count.
         all_events = sorted(set(
             [f.arrival_ts for f in cluster_flights] +
-            [f.dep_ts for f in cluster_flights if f.dep_ts]
+            [f.dep_ts for f in cluster_flights if f.dep_ts and f.show_dep]
         ))
         best_start = cluster_start
         best_good  = -1
@@ -598,7 +603,7 @@ def _cluster_flights(
         for ei in all_events:
             catchable = [
                 f for f in cluster_flights
-                if f.arrival_ts >= ei or (f.dep_ts and f.dep_ts >= ei)
+                if f.arrival_ts >= ei or (f.show_dep and f.dep_ts and f.dep_ts >= ei)
             ]
             if len(catchable) < len(cluster_flights):
                 continue
@@ -624,7 +629,7 @@ def _cluster_flights(
             flights=sorted(cluster_flights, key=lambda x: x.arrival_ts),
             filtered=[],
             start_ts=cluster_start,
-            end_ts=cluster_end,
+            end_ts=max(f.session_ts for f in cluster_flights),
             recommended_start_ts=recommended_start_ts,
             lulls=lulls,
         ))
