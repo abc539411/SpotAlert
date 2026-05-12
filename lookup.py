@@ -131,6 +131,10 @@ async def _do_rego_lookup(registration: str, update, context) -> None:
     except Exception as exc:
         log.warning("DB detail lookup failed for %s: %s", registration, exc)
 
+    # Photo: check airframe_db first (fast, no API call)
+    airframe_pre = cfg.store.get_airframe(registration)
+    photo_url = (airframe_pre or {}).get("photo_url") or ""
+
     if not aircraft_str and not operator_str:
         try:
             rego_details = cfg.fr_api.get_rego_details(registration)
@@ -148,6 +152,23 @@ async def _do_rego_lookup(registration: str, update, context) -> None:
                 airline_name  = (info.get("airline") or {}).get("name") or ""
             aircraft_str = f"{aircraft_name} ({aircraft_code})" if aircraft_name else aircraft_code
             operator_str = airline_name
+
+            # Extract photo URL from aircraftImages and upsert into airframe_db
+            images_list = (rego_details or {}).get("aircraftImages") or []
+            if images_list:
+                imgs = (images_list[0].get("images") or {})
+                medium = imgs.get("medium") or imgs.get("thumbnails") or []
+                if medium:
+                    raw_url = medium[0].get("src") or ""
+                    # Upgrade thumbnail (200px _tb) to medium (400px)
+                    photo_url = raw_url.replace("/200/", "/400/").replace("_tb.jpg", ".jpg")
+            cfg.store.upsert_airframe_from_fr24(
+                registration,
+                icao24=fr24_hex or None,
+                photo_url=photo_url or None,
+                owner=owner_str or None,
+                operator=airline_name or None,
+            )
         except Exception as exc:
             log.warning("FR24 lookup failed for %s: %s", registration, exc)
 
@@ -208,9 +229,30 @@ async def _do_rego_lookup(registration: str, update, context) -> None:
         else:
             lines.append("Not yet photographed")
 
+    # If no photo yet, make a targeted FR24 call just for the image
+    if not photo_url:
+        try:
+            rego_details = cfg.fr_api.get_rego_details(registration)
+            images_list = (rego_details or {}).get("aircraftImages") or []
+            if images_list:
+                imgs = (images_list[0].get("images") or {})
+                medium = imgs.get("medium") or imgs.get("thumbnails") or []
+                if medium:
+                    raw_url = medium[0].get("src") or ""
+                    photo_url = raw_url.replace("/200/", "/400/").replace("_tb.jpg", ".jpg")
+                    cfg.store.upsert_airframe_from_fr24(registration, photo_url=photo_url)
+        except Exception as exc:
+            log.warning("Photo fallback lookup failed for %s: %s", registration, exc)
+
     lines.append(f"\nhttps://www.flightradar24.com/data/aircraft/{registration.lower()}")
 
-    await update.reply_html("\n".join(lines))
+    text = "\n".join(lines)
+    if photo_url:
+        try:
+            await update.reply_photo(photo_url, caption=None)
+        except Exception as exc:
+            log.warning("Failed to send photo for %s: %s", registration, exc)
+    await update.reply_html(text)
 
 
 async def _do_fn_lookup(flight_number: str, update, context) -> None:
