@@ -112,6 +112,7 @@ async def _do_rego_lookup(registration: str, update, context) -> None:
     lines = [f"<b>Lookup: {header}</b>", ""]
 
     aircraft_str = ""
+    aircraft_name = ""
     operator_str = ""
     owner_str = ""
     fr24_hex = ""
@@ -192,6 +193,12 @@ async def _do_rego_lookup(registration: str, update, context) -> None:
                 airframe_str = f"Airframe: {' · '.join(parts)}"
     except Exception as exc:
         log.warning("Airframe lookup failed for %s: %s", registration, exc)
+
+    # Fall back to first word of FR24 model name (e.g. "Airbus A380-842" → "Airbus")
+    if not manufacturer_str and aircraft_name:
+        first_word = aircraft_name.split()[0]
+        if first_word.isalpha():
+            manufacturer_str = first_word
 
     if aircraft_str:
         lines.append(f"Aircraft: {aircraft_str}")
