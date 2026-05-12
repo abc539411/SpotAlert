@@ -262,7 +262,7 @@ async def _do_rego_lookup(registration: str, update, context) -> None:
             await update.reply_photo(photo_url, caption=f"Aircraft Photo: {registration}")
         except Exception as exc:
             log.warning("Failed to send photo for %s: %s", registration, exc)
-    await update.reply_html(text)
+    await update.reply_html(text, disable_web_page_preview=True)
 
 
 async def _do_fn_lookup(flight_number: str, update, context) -> None:
@@ -290,7 +290,7 @@ async def _do_fn_lookup(flight_number: str, update, context) -> None:
             lines.append("No equipment history recorded yet.")
             lines.append("History builds automatically as flights arrive.")
         lines.append(f"\nhttps://www.flightradar24.com/data/flights/{flight_number.lower()}")
-        await update.reply_html("\n".join(lines))
+        await update.reply_html("\n".join(lines), disable_web_page_preview=True)
         return
 
     total = sum(r["count"] for r in rows)
