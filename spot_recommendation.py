@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass, field as dc_field
+from dataclasses import dataclass, field as dc_field, replace as dc_replace
 from datetime import datetime, timedelta
 from typing import List, Optional, Tuple
 
@@ -567,14 +567,17 @@ def _cluster_flights(
         cluster_start = raw[0][0]
         cluster_end   = raw[-1][0]
 
-        # Flights whose any event falls within this cluster's range
-        cluster_flights = [
-            f for f in qualifying
-            if cluster_start <= f.arrival_ts <= cluster_end
-            or (f.dep_ts and cluster_start <= f.dep_ts <= cluster_end)
-        ]
+        # Flights whose any event falls within this cluster's range.
+        # Copy each FlightEval so per-cluster fields (session_ts, show_dep,
+        # lighting_zone) don't clobber state when a flight spans two clusters
+        # (e.g. arrives in cluster 1 but departs in cluster 2).
+        cluster_flights = []
+        for f in qualifying:
+            if (cluster_start <= f.arrival_ts <= cluster_end
+                    or (f.dep_ts and cluster_start <= f.dep_ts <= cluster_end)):
+                cluster_flights.append(dc_replace(f))
 
-        # Set session_ts, show_dep, and lighting_zone per flight
+        # Set session_ts, show_dep, and lighting_zone per cluster copy
         for f in cluster_flights:
             arr_in = cluster_start <= f.arrival_ts <= cluster_end
             dep_in = bool(f.dep_ts and cluster_start <= f.dep_ts <= cluster_end)
