@@ -244,7 +244,7 @@ async def check_rolling_recommendation(context: ContextTypes.DEFAULT_TYPE, cfg, 
     sent = False
     for dest_chat_id in cfg.all_chat_ids:
         try:
-            await context.bot.send_message(chat_id=dest_chat_id, text="\n".join(lines), parse_mode="HTML")
+            await context.bot.send_message(chat_id=dest_chat_id, text="\n".join(lines), parse_mode="HTML", disable_web_page_preview=True)
             sent = True
         except Exception as exc:
             log.error("Failed to send rolling spot recommendation to %s: %s", dest_chat_id, exc)
@@ -351,7 +351,7 @@ async def run_eod_recommendation(context: ContextTypes.DEFAULT_TYPE) -> None:
             kb = keyboard if cfg.store.is_admin(dest_chat_id) else None
             await context.bot.send_message(
                 chat_id=dest_chat_id, text="\n".join(lines),
-                parse_mode="HTML", reply_markup=kb,
+                parse_mode="HTML", reply_markup=kb, disable_web_page_preview=True,
             )
         except Exception as exc:
             log.error("Failed to send EOD recommendation to %s: %s", dest_chat_id, exc)
@@ -1080,7 +1080,7 @@ async def _run_spot_check(send_fn, context: ContextTypes.DEFAULT_TYPE,
                                         scenario_a=True, now_ts=now_ts, show_window=False,
                                         lighting_kwargs=_lighting_kwargs(cfg, sunrise_ts, sunset_ts))
 
-    await send_fn(msg, parse_mode="HTML")
+    await send_fn(msg, parse_mode="HTML", disable_web_page_preview=True)
 
 
 async def handle_spot_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1172,7 +1172,7 @@ async def _send_spot_followup(context: ContextTypes.DEFAULT_TYPE) -> None:
                                       "Spotting update — time to head out", tz, sunrise_ts, sunset_ts)
     for dest_chat_id in cfg.all_chat_ids:
         try:
-            await context.bot.send_message(chat_id=dest_chat_id, text=msg, parse_mode="HTML")
+            await context.bot.send_message(chat_id=dest_chat_id, text=msg, parse_mode="HTML", disable_web_page_preview=True)
         except Exception as exc:
             log.error("Failed to send spot follow-up to %s: %s", dest_chat_id, exc)
 
