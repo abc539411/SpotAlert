@@ -934,23 +934,26 @@ async def run_check(context: ContextTypes.DEFAULT_TYPE) -> None:
                     if registration not in current_departures:
                         current_departures[registration] = flight
 
-        # Also fetch page -1 (most-recently-landed flights) to catch aircraft that
-        # landed since the last check and have already rotated off the positive pages.
+        # Also fetch page -1 arrivals and departures to catch aircraft that
+        # rotated off the positive pages between checks.
         # Used only for passive DB updates — never triggers new notifications.
         try:
             hist_data = cfg.fr_api.get_airport_details(code=cfg.airport_code, page=-1)
-            hist_arrivals = (
-                hist_data["airport"]["pluginData"]["schedule"]
-                .get("arrivals", {}).get("data") or []
-            )
-            for arriving_flight in hist_arrivals:
+            hist_schedule = hist_data["airport"]["pluginData"]["schedule"]
+            for arriving_flight in (hist_schedule.get("arrivals", {}).get("data") or []):
                 parsed = _parse_aircraft(arriving_flight)
                 if not parsed:
                     continue
                 registration, _, flight = parsed
-                if registration in current_arrivals:
-                    continue  # already seen on positive pages
-                current_arrivals[registration] = flight
+                if registration not in current_arrivals:
+                    current_arrivals[registration] = flight
+            for dep_flight in (hist_schedule.get("departures", {}).get("data") or []):
+                parsed = _parse_aircraft(dep_flight)
+                if not parsed:
+                    continue
+                registration, _, flight = parsed
+                if registration not in current_departures:
+                    current_departures[registration] = flight
         except Exception as exc:
             log.debug("Failed to fetch page -1 for passive updates: %s", exc)
 
@@ -963,7 +966,7 @@ async def run_check(context: ContextTypes.DEFAULT_TYPE) -> None:
         if landed:
             cfg.store.bulk_update_sightings(landed)
 
-        # Record route type history for all landed aircraft (passive learning)
+        # Record route type history for arrivals and departures (passive learning)
         route_type_records = []
         for reg, flight in current_arrivals.items():
             real_arr = _safe_get(flight, "time", "real", "arrival", default=None)
@@ -973,6 +976,14 @@ async def run_check(context: ContextTypes.DEFAULT_TYPE) -> None:
             ac_type = _safe_get(flight, "aircraft", "model", "code", default="")
             if fn and fn != "N/A" and ac_type and ac_type != "N/A":
                 route_type_records.append((fn, ac_type, cfg.airport_iata, int(real_arr)))
+        for reg, flight in current_departures.items():
+            real_dep = _safe_get(flight, "time", "real", "departure", default=None)
+            if not isinstance(real_dep, (int, float)):
+                continue
+            fn      = str(_safe_get(flight, "identification", "number", "default", default=""))
+            ac_type = _safe_get(flight, "aircraft", "model", "code", default="")
+            if fn and fn != "N/A" and ac_type and ac_type != "N/A":
+                route_type_records.append((fn, ac_type, cfg.airport_iata, int(real_dep)))
         if route_type_records:
             cfg.store.bulk_update_route_types(route_type_records)
 
