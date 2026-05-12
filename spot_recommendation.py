@@ -378,7 +378,9 @@ class FlightEval:
     dep_time_label: str = ""         # "Predicted", "Scheduled", "Estimated"
     session_ts: Optional[int] = None # event time shown in recommendation
     show_dep: bool = False           # True when both arr and dep fall within the cluster
-    lighting_zone: Optional[str] = None  # 'too_early', 'bad_light', 'too_late', or None (good light)
+    lighting_zone: Optional[str] = None      # overall zone (used in scenario B / session_ts display)
+    arr_lighting_zone: Optional[str] = None  # zone for arrival timestamp specifically
+    dep_lighting_zone: Optional[str] = None  # zone for departure timestamp specifically
 
 
 @dataclass
@@ -589,6 +591,8 @@ def _cluster_flights(
             check_ts = ([f.arrival_ts] if arr_in else []) + ([f.dep_ts] if dep_in and f.dep_ts else [])
             zones = [z for ts in check_ts if (z := _lighting_quality(ts, **lighting_kwargs))]
             f.lighting_zone = min(zones, key=lambda z: _PRIORITY[z]) if zones else None
+            f.arr_lighting_zone = _lighting_quality(f.arrival_ts, **lighting_kwargs) if arr_in else None
+            f.dep_lighting_zone = _lighting_quality(f.dep_ts, **lighting_kwargs) if (dep_in and f.dep_ts) else None
 
         # Recommended start: latest time you can arrive and still catch every flight.
         # A flight is only catchable via its dep_ts when the departure is actually
@@ -793,16 +797,20 @@ def _flight_line(f: "FlightEval", tz, include_reason: bool = False,
     reason_str = f" — {f.reason}" if include_reason and f.reason else ""
 
     if scenario_a:
+        # Scenario A: show arr and dep separately, emoji inline with each timestamp
         arr_passed = now_ts > 0 and f.arrival_ts < now_ts
         times = []
         if not arr_passed:
             arr = datetime.fromtimestamp(f.arrival_ts).astimezone(tz).strftime("%H:%M")
-            times.append(f"arr {arr}")
+            arr_emoji = _LIGHT_EMOJI.get(f.arr_lighting_zone or "", "")
+            times.append(f"arr {arr}{' ' + arr_emoji if arr_emoji else ''}")
         if f.dep_ts:
             dep = datetime.fromtimestamp(f.dep_ts).astimezone(tz).strftime("%H:%M")
-            times.append(f"dep {dep}")
+            dep_emoji = _LIGHT_EMOJI.get(f.dep_lighting_zone or "", "")
+            times.append(f"dep {dep}{' ' + dep_emoji if dep_emoji else ''}")
         time_str = " / ".join(times) if times else "—"
     else:
+        # Scenario B: show session_ts only, emoji at end
         ts = f.session_ts if f.session_ts is not None else f.arrival_ts
         t = datetime.fromtimestamp(ts).astimezone(tz).strftime("%H:%M")
         if f.show_dep and f.dep_ts:
@@ -813,10 +821,10 @@ def _flight_line(f: "FlightEval", tz, include_reason: bool = False,
         else:
             time_str = f"arr {t}"
 
-    # Append lighting emoji to time string (soft indicator, not a hard gate)
-    light_emoji = _LIGHT_EMOJI.get(f.lighting_zone or "", "")
-    if light_emoji and time_str and time_str != "—":
-        time_str = f"{time_str} {light_emoji}"
+        # Append lighting emoji for scenario B (attached to the overall session time)
+        light_emoji = _LIGHT_EMOJI.get(f.lighting_zone or "", "")
+        if light_emoji and time_str and time_str != "—":
+            time_str = f"{time_str} {light_emoji}"
 
     flag = _registration_flag(f.registration)
     reg_str = f"{f.registration}{' ' + flag if flag else ''}"
@@ -863,6 +871,8 @@ def _build_detail_message(
                 check_ts = [f.arrival_ts] + ([f.dep_ts] if f.dep_ts else [])
                 zones = [z for ts in check_ts if (z := _lighting_quality(ts, **lighting_kwargs))]
                 f.lighting_zone = min(zones, key=lambda z: _PRIORITY[z]) if zones else None
+            f.arr_lighting_zone = _lighting_quality(f.arrival_ts, **lighting_kwargs)
+            f.dep_lighting_zone = _lighting_quality(f.dep_ts, **lighting_kwargs) if f.dep_ts else None
 
     # Window string — use session_ts for Scenario B, all event times for Scenario A
     if qualifying:
