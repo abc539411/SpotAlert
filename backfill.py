@@ -114,6 +114,16 @@ def backfill(
                     airline.get("name"), al_code.get("iata"), al_code.get("icao"),
                     dest.get("name"), dest_code.get("iata"), dest_code.get("icao"),
                 )
+
+                # Also track departure flight numbers in route_type_history
+                ac_type = _safe_get(fl, "aircraft", "model", "code") or ""
+                if fn and ac_type and best_dep:
+                    key = (fn, ac_type)
+                    prev = all_route_types.get(key)
+                    if prev is None:
+                        all_route_types[key] = (best_dep, best_dep)
+                    else:
+                        all_route_types[key] = (min(prev[0], best_dep), max(prev[1], best_dep))
             except (KeyError, TypeError):
                 continue
 
