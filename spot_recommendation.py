@@ -619,9 +619,19 @@ def _cluster_flights(
         recommended_start_ts = best_start
         cluster_end_ts = max(f.session_ts for f in cluster_flights)
 
-        # Lull detection: gaps between consecutive event timestamps within the window
-        # (before recommended_start and after end_ts are irrelevant to the user)
-        event_times = sorted({ts for ts, _ in raw if recommended_start_ts <= ts <= cluster_end_ts})
+        # Lull detection: per flight, use arrival_ts if its arrival falls in this cluster
+        # (the user need only be present for arrival, not also the departure).
+        # Only use dep_ts if the flight has no arrival in this cluster.
+        lull_ts_set: set = set()
+        for f in cluster_flights:
+            arr_in = cluster_start <= f.arrival_ts <= cluster_end
+            dep_in = bool(f.dep_ts and cluster_start <= f.dep_ts <= cluster_end)
+            if arr_in:
+                lull_ts_set.add(f.arrival_ts)
+            elif dep_in:
+                lull_ts_set.add(f.dep_ts)
+        event_times = sorted(ts for ts in lull_ts_set
+                             if recommended_start_ts <= ts <= cluster_end_ts)
         gaps = [
             (event_times[i+1] - event_times[i], event_times[i], event_times[i+1])
             for i in range(len(event_times) - 1)

@@ -911,7 +911,7 @@ def _first_matching_filter(arriving_flight: dict, cfg) -> Optional[tuple]:
 
 async def run_check(context: ContextTypes.DEFAULT_TYPE) -> None:
     cfg = context.bot_data["cfg"]
-    chat_id = context.job.data
+    chat_id = context.job.data if context.job else cfg.chat_id
 
     log.info("Checking arrivals at %s...", cfg.airport_iata)
 
