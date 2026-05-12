@@ -170,17 +170,15 @@ async def _do_rego_lookup(registration: str, update, context) -> None:
         except Exception as exc:
             log.warning("FR24 lookup failed for %s: %s", registration, exc)
 
-    if aircraft_str:
-        lines.append(f"Aircraft: {aircraft_str}")
-    if operator_str:
-        lines.append(f"Operator: {operator_str}")
-
-    # Airframe data from local OpenSky DB (no API call)
+    # Airframe data from local DB (no API call) — collect before building lines
+    airframe_str = ""
+    manufacturer_str = ""
     try:
         from datetime import datetime as _dt
         airframe = cfg.store.get_airframe(registration, icao24=fr24_hex or None)
         if airframe:
             owner_str = owner_str or airframe.get("owner") or ""
+            manufacturer_str = airframe.get("manufacturer") or ""
             parts = []
             msn = airframe.get("serial_number")
             built = airframe.get("built_year")
@@ -191,12 +189,20 @@ async def _do_rego_lookup(registration: str, update, context) -> None:
                 parts.append(f"Built {built}")
                 parts.append(f"Age {age} years")
             if parts:
-                lines.append(f"Airframe: {' · '.join(parts)}")
+                airframe_str = f"Airframe: {' · '.join(parts)}"
     except Exception as exc:
         log.warning("Airframe lookup failed for %s: %s", registration, exc)
 
+    if aircraft_str:
+        lines.append(f"Aircraft: {aircraft_str}")
+    if manufacturer_str:
+        lines.append(f"Manufacturer: {manufacturer_str}")
+    if operator_str:
+        lines.append(f"Operator: {operator_str}")
     if owner_str:
         lines.append(f"Owner: {owner_str}")
+    if airframe_str:
+        lines.append(airframe_str)
 
     tags = []
     if cfg.store.is_excluded(registration):
