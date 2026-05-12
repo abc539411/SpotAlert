@@ -846,6 +846,7 @@ def _build_detail_message(
     scenario_a: bool = False,
     now_ts: int = 0,
     show_window: bool = True,
+    lighting_kwargs: dict = None,
 ) -> str:
     """Build the detail message for a spot check.
 
@@ -853,6 +854,15 @@ def _build_detail_message(
     scenario_a=False: Scenario B (automatic) — show whichever session_ts was chosen.
     """
     severe_weather = weather_gate and weather and weather.is_severe
+
+    # Compute lighting zones if not already set (scenario_a path bypasses _cluster_flights)
+    if lighting_kwargs:
+        _PRIORITY = {"too_early": 0, "bad_light": 1, "too_late": 2}
+        for f in qualifying + filtered:
+            if f.lighting_zone is None:
+                check_ts = [f.arrival_ts] + ([f.dep_ts] if f.dep_ts else [])
+                zones = [z for ts in check_ts if (z := _lighting_quality(ts, **lighting_kwargs))]
+                f.lighting_zone = min(zones, key=lambda z: _PRIORITY[z]) if zones else None
 
     # Window string — use session_ts for Scenario B, all event times for Scenario A
     if qualifying:
@@ -1002,7 +1012,8 @@ async def _run_spot_check(send_fn, context: ContextTypes.DEFAULT_TYPE,
             msg = _build_detail_message(qualifying, filtered, cfg.spot_rec_threshold,
                                         weather, cfg.spot_rec_weather_gate,
                                         header, tz, sunrise_ts, sunset_ts, show_verdict=False,
-                                        scenario_a=True, now_ts=now_ts, show_window=False)
+                                        scenario_a=True, now_ts=now_ts, show_window=False,
+                                        lighting_kwargs=_lighting_kwargs(cfg, sunrise_ts, sunset_ts))
 
     else:  # tomorrow
         await send_fn("Checking...")
@@ -1037,7 +1048,8 @@ async def _run_spot_check(send_fn, context: ContextTypes.DEFAULT_TYPE,
             msg = _build_detail_message(qualifying, filtered, cfg.spot_rec_threshold,
                                         weather, cfg.spot_rec_weather_gate,
                                         header, tz, sunrise_ts, sunset_ts, show_verdict=False,
-                                        scenario_a=True, now_ts=now_ts, show_window=False)
+                                        scenario_a=True, now_ts=now_ts, show_window=False,
+                                        lighting_kwargs=_lighting_kwargs(cfg, sunrise_ts, sunset_ts))
         else:
             if period == "morning":
                 ws = sunrise_ts - cfg.summary_morning_pre_sunrise_hours * 3600
@@ -1054,7 +1066,8 @@ async def _run_spot_check(send_fn, context: ContextTypes.DEFAULT_TYPE,
             msg = _build_detail_message(qualifying, filtered, cfg.spot_rec_threshold,
                                         weather, cfg.spot_rec_weather_gate,
                                         header, tz, sunrise_ts, sunset_ts, show_verdict=False,
-                                        scenario_a=True, now_ts=now_ts, show_window=False)
+                                        scenario_a=True, now_ts=now_ts, show_window=False,
+                                        lighting_kwargs=_lighting_kwargs(cfg, sunrise_ts, sunset_ts))
 
     await send_fn(msg, parse_mode="HTML")
 
