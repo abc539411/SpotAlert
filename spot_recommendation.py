@@ -688,7 +688,7 @@ def _cluster_flights(
     for f in filtered:
         f.lighting_zone = _flight_lighting_zone(f, **lighting_kwargs)
         cluster_match = next(
-            (c for c in result if c.start_ts <= f.arrival_ts <= c.end_ts), None
+            (c for c in result if c.recommended_start_ts <= f.arrival_ts <= c.end_ts), None
         )
         if cluster_match:
             cluster_match.filtered.append(f)
