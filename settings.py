@@ -28,13 +28,12 @@ log = logging.getLogger(__name__)
     FILTER_SUBMENU,
     ENTER_VALUE,
     MILITARY_SUBMENU,
-    SUMMARY_SUBMENU,
     FILTER_CATEGORY_SUBMENU,
     SPOT_REC_SUBMENU,
     USER_SUBMENU,
     LIGHTING_SUBMENU,
     SESSIONS_SUBMENU,
-) = range(10, 21)
+) = range(10, 20)
 
 _REMOVE_KB = ReplyKeyboardRemove()
 
@@ -44,7 +43,7 @@ _VALID_DAYS = {"Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"}
 _CATEGORY_KB = ReplyKeyboardMarkup(
     [
         ["Monitoring", "Filters"],
-        ["Military", "Spot Periods"],
+        ["Military"],
         ["Spot Recommendation"],
         ["Users"],
         ["Done"],
@@ -128,11 +127,6 @@ _AIRPORT_KB = ReplyKeyboardMarkup(
     resize_keyboard=True,
 )
 
-# Spot Periods sub-keyboard
-_SPOT_PERIODS_KB = ReplyKeyboardMarkup(
-    [["Morning Start", "Morning End"], ["Afternoon Start", "Afternoon End"], ["Back"]],
-    resize_keyboard=True,
-)
 
 # Per-filter sub-keyboard (Special Livery, Rego/Type Watchlist)
 _FILTER_KB = ReplyKeyboardMarkup(
@@ -267,8 +261,6 @@ def _overview(cfg) -> str:
         "",
         f"<b>Military:</b> {cfg.military_check_interval // 60} min · {cfg.military_radius_nm} nm · {cfg.military_max_alt_ft} ft · renotify {cfg.military_renotify_hours}h",
         "",
-        f"<b>Spot Periods:</b> Morning {cfg.summary_morning_pre_sunrise_hours}h pre-sunrise→{cfg.summary_morning_end_hour}:00 · Afternoon {cfg.summary_afternoon_start_hour}:00→{cfg.summary_afternoon_post_sunset_hours}h post-sunset",
-        "",
         f"<b>Spot Rec:</b> {'enabled' if cfg.spot_rec_enabled else 'disabled'}",
     ]
     return "\n".join(lines)
@@ -357,11 +349,6 @@ async def handle_category_select(update: Update, context: ContextTypes.DEFAULT_T
         context.user_data["settings_category"] = "Military"
         await update.message.reply_html(_military_detail(cfg), reply_markup=_MILITARY_KB)
         return MILITARY_SUBMENU
-
-    if choice == "Spot Periods":
-        context.user_data["settings_category"] = "Spot Periods"
-        await update.message.reply_html(_spot_periods_detail(cfg), reply_markup=_SPOT_PERIODS_KB)
-        return SUMMARY_SUBMENU
 
     if choice == "Spot Recommendation":
         context.user_data["settings_category"] = "Spot Recommendation"
@@ -560,56 +547,6 @@ async def handle_filter_submenu(update: Update, context: ContextTypes.DEFAULT_TY
     return ENTER_VALUE
 
 
-def _spot_periods_detail(cfg) -> str:
-    return (
-        "<b>Spot Periods</b>\n\n"
-        f"  Morning Start: {cfg.summary_morning_pre_sunrise_hours}h before sunrise\n"
-        f"  Morning End: {cfg.summary_morning_end_hour}:00\n"
-        f"  Afternoon Start: {cfg.summary_afternoon_start_hour}:00\n"
-        f"  Afternoon End: {cfg.summary_afternoon_post_sunset_hours}h after sunset"
-    )
-
-
-async def handle_summary_submenu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    choice = update.message.text
-    cfg    = context.bot_data["cfg"]
-
-    if choice == "Back":
-        await update.message.reply_html(_overview(cfg), reply_markup=_CATEGORY_KB)
-        return CATEGORY_SELECT
-
-    if choice not in {"Morning Start", "Morning End", "Afternoon Start", "Afternoon End"}:
-        await update.message.reply_text("Please choose from the keyboard.")
-        return SUMMARY_SUBMENU
-
-    context.user_data["settings_field"] = choice
-
-    if choice == "Morning Start":
-        await update.message.reply_text(
-            f"Current: {cfg.summary_morning_pre_sunrise_hours}h before sunrise\n\n"
-            "Enter hours before sunrise that morning begins (e.g. 1)",
-            reply_markup=_REMOVE_KB,
-        )
-    elif choice == "Morning End":
-        await update.message.reply_text(
-            f"Current: {cfg.summary_morning_end_hour}:00\n\n"
-            "Enter the hour (0–23) that morning ends",
-            reply_markup=_REMOVE_KB,
-        )
-    elif choice == "Afternoon Start":
-        await update.message.reply_text(
-            f"Current: {cfg.summary_afternoon_start_hour}:00\n\n"
-            "Enter the hour (0–23) that afternoon begins",
-            reply_markup=_REMOVE_KB,
-        )
-    elif choice == "Afternoon End":
-        await update.message.reply_text(
-            f"Current: {cfg.summary_afternoon_post_sunset_hours}h after sunset\n\n"
-            "Enter hours after sunset that afternoon ends (e.g. 1)",
-            reply_markup=_REMOVE_KB,
-        )
-
-    return ENTER_VALUE
 
 
 def _military_detail(cfg) -> str:
@@ -803,68 +740,6 @@ async def handle_enter_value(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text(f"Updated: rolling notifications fire when cluster starts within {value}h.", reply_markup=_AIRPORT_KB)
         return AIRPORT_SUBMENU
 
-    # ----------------------------------------------------------------
-    # Spot period settings
-    # ----------------------------------------------------------------
-    if field == "Morning Start":
-        try:
-            value = int(raw)
-            if value < 0:
-                raise ValueError
-        except ValueError:
-            await update.message.reply_text("Please enter a non-negative whole number.")
-            return ENTER_VALUE
-        cfg.summary_morning_pre_sunrise_hours = value
-        store.save_setting("SUMMARY_MORNING_PRE_SUNRISE_HOURS", str(value))
-        await update.message.reply_html(
-            f"Updated.\n\n{_spot_periods_detail(cfg)}", reply_markup=_SPOT_PERIODS_KB
-        )
-        return SUMMARY_SUBMENU
-
-    if field == "Morning End":
-        try:
-            value = int(raw)
-            if not 0 <= value <= 23:
-                raise ValueError
-        except ValueError:
-            await update.message.reply_text("Please enter a whole number between 0 and 23.")
-            return ENTER_VALUE
-        cfg.summary_morning_end_hour = value
-        store.save_setting("SUMMARY_MORNING_END_HOUR", str(value))
-        await update.message.reply_html(
-            f"Updated.\n\n{_spot_periods_detail(cfg)}", reply_markup=_SPOT_PERIODS_KB
-        )
-        return SUMMARY_SUBMENU
-
-    if field == "Afternoon Start":
-        try:
-            value = int(raw)
-            if not 0 <= value <= 23:
-                raise ValueError
-        except ValueError:
-            await update.message.reply_text("Please enter a whole number between 0 and 23.")
-            return ENTER_VALUE
-        cfg.summary_afternoon_start_hour = value
-        store.save_setting("SUMMARY_AFTERNOON_START_HOUR", str(value))
-        await update.message.reply_html(
-            f"Updated.\n\n{_spot_periods_detail(cfg)}", reply_markup=_SPOT_PERIODS_KB
-        )
-        return SUMMARY_SUBMENU
-
-    if field == "Afternoon End":
-        try:
-            value = int(raw)
-            if value < 0:
-                raise ValueError
-        except ValueError:
-            await update.message.reply_text("Please enter a non-negative whole number.")
-            return ENTER_VALUE
-        cfg.summary_afternoon_post_sunset_hours = value
-        store.save_setting("SUMMARY_AFTERNOON_POST_SUNSET_HOURS", str(value))
-        await update.message.reply_html(
-            f"Updated.\n\n{_spot_periods_detail(cfg)}", reply_markup=_SPOT_PERIODS_KB
-        )
-        return SUMMARY_SUBMENU
 
     # ----------------------------------------------------------------
     # Military settings
@@ -1508,9 +1383,6 @@ def register_settings_handlers(app: Application) -> None:
             ],
             MILITARY_SUBMENU: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_military_submenu)
-            ],
-            SUMMARY_SUBMENU: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_summary_submenu)
             ],
             FILTER_CATEGORY_SUBMENU: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_filter_category_submenu)
