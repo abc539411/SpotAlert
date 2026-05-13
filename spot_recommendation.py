@@ -656,10 +656,19 @@ def _cluster_flights(
                 best_ts    = ei
                 best_start = ei
         recommended_start_ts = best_start
-        cluster_end_ts = max(
-            (f.dep_ts if f.show_dep and f.dep_ts else f.arrival_ts)
-            for f in cluster_flights
-        )
+        # cluster_end_ts: last event the user must be present for given they arrive at
+        # recommended_start_ts. Same logic as lull detection:
+        # - arrival catchable (>= rec_start): window extends to arrival, NOT the departure
+        # - arrival missed (< rec_start): window extends to departure (still catchable)
+        _end_candidates = []
+        for f in cluster_flights:
+            _arr_in = cluster_start <= f.arrival_ts <= cluster_end
+            _dep_in = bool(f.dep_ts and cluster_start <= f.dep_ts <= cluster_end)
+            if _arr_in and f.arrival_ts >= recommended_start_ts:
+                _end_candidates.append(f.arrival_ts)
+            elif _dep_in and (not _arr_in or f.arrival_ts < recommended_start_ts):
+                _end_candidates.append(f.dep_ts)
+        cluster_end_ts = max(_end_candidates) if _end_candidates else recommended_start_ts
 
         # Lull detection: for each flight, use the earliest event the user must be present for.
         # - If arrival is catchable (>= recommended_start_ts): use arrival. Departure is skipped
