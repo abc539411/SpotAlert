@@ -158,6 +158,7 @@ class SqliteStore:
                 ("airline_icao",      "TEXT"),    ("dest_name",        "TEXT"),
                 ("dest_iata",         "TEXT"),    ("dest_icao",        "TEXT"),
                 ("scheduled_arr_ts",  "INTEGER"), ("turnaround_secs",  "INTEGER"),
+                ("actual_dep_ts",     "INTEGER"),
             ]:
                 if col not in fdp_cols:
                     conn.execute(f"ALTER TABLE flight_departure_pattern ADD COLUMN {col} {typ} DEFAULT NULL")
@@ -765,7 +766,7 @@ class SqliteStore:
         with self._connect() as conn:
             row = conn.execute(
                 """
-                SELECT scheduled_dep_ts, estimated_dep_ts, turnaround_secs,
+                SELECT scheduled_dep_ts, estimated_dep_ts, actual_dep_ts, turnaround_secs,
                        airline_name, airline_iata, airline_icao,
                        dest_name, dest_iata, dest_icao
                 FROM flight_departure_pattern
@@ -779,6 +780,7 @@ class SqliteStore:
             return {
                 "scheduled_dep_ts": row["scheduled_dep_ts"],
                 "estimated_dep_ts": row["estimated_dep_ts"],
+                "actual_dep_ts":    row["actual_dep_ts"],
                 "turnaround_secs":  row["turnaround_secs"],
                 "airline_name":     row["airline_name"],
                 "airline_iata":     row["airline_iata"],
@@ -787,6 +789,18 @@ class SqliteStore:
                 "dest_iata":        row["dest_iata"],
                 "dest_icao":        row["dest_icao"],
             }
+
+    def record_actual_departure(self, dep_fn: str, airport_iata: str, actual_dep_ts: int) -> None:
+        """Update actual_dep_ts for all flight_departure_pattern rows matching this departure flight."""
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE flight_departure_pattern
+                SET actual_dep_ts = ?
+                WHERE departure_flight_number = ? AND airport_iata = ?
+                """,
+                (actual_dep_ts, dep_fn.strip(), airport_iata.strip()),
+            )
 
     def get_predicted_departure(self, arrival_fn: str, airport_iata: str,
                                  threshold_pct: int) -> Optional[tuple]:

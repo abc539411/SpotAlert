@@ -230,12 +230,7 @@ async def check_rolling_recommendation(context: ContextTypes.DEFAULT_TYPE, cfg, 
         f"Window: {window_str}",
         "",
     ]
-    for e in cluster.flights:
-        lines.append(_flight_line(e, tz))
-    for e in cluster.filtered:
-        lines.append(f"<s>{_flight_line(e, tz, include_reason=True)}</s>")
-    for lull_start_ts, lull_end_ts in cluster.lulls:
-        lines.append(_lull_line(lull_start_ts, lull_end_ts, tz))
+    lines.extend(_render_flights_with_lulls(cluster.flights, cluster.filtered, cluster.lulls, tz))
     lines.append("")
     if weather:
         lines.append(f"Weather: {weather}")
@@ -311,12 +306,7 @@ async def run_eod_recommendation(context: ContextTypes.DEFAULT_TYPE) -> None:
         else:
             window_str = start_str if start_str == end_str else f"{start_str} – {end_str}"
             lines.append(f"Best window: {window_str} ({n} interesting flight{'s' if n != 1 else ''})")
-        for e in cluster.flights:
-            lines.append(_flight_line(e, tz))
-        for e in cluster.filtered:
-            lines.append(f"<s>{_flight_line(e, tz, include_reason=True)}</s>")
-        for lull_start_ts, lull_end_ts in cluster.lulls:
-            lines.append(_lull_line(lull_start_ts, lull_end_ts, tz))
+        lines.extend(_render_flights_with_lulls(cluster.flights, cluster.filtered, cluster.lulls, tz))
         lines.append("")
 
     lines.append(f"Weather tomorrow: {weather}" if weather else "Weather tomorrow: unavailable")
@@ -415,14 +405,16 @@ def _lookup_departure_for_flight(
     if not dep_info:
         return dep_fn, None, "Predicted"
 
-    now_ts = int(datetime.now().timestamp())
+    actual_ts       = dep_info.get("actual_dep_ts")
     estimated_ts    = dep_info.get("estimated_dep_ts")
     sched_ts        = dep_info.get("scheduled_dep_ts")
     turnaround_secs = dep_info.get("turnaround_secs")
 
-    if estimated_ts and estimated_ts > now_ts:
+    if actual_ts:
+        return dep_fn, actual_ts, "Actual"
+    if estimated_ts:
         return dep_fn, estimated_ts, "Estimated"
-    if sched_ts and sched_ts > now_ts:
+    if sched_ts:
         return dep_fn, sched_ts, "Scheduled"
     if turnaround_secs and arrival_ts:
         return dep_fn, arrival_ts + turnaround_secs, "Predicted"
@@ -505,6 +497,39 @@ def _lull_line(lull_start_ts: int, lull_end_ts: int, tz) -> str:
     start_str = datetime.fromtimestamp(lull_start_ts).astimezone(tz).strftime("%H:%M")
     end_str   = datetime.fromtimestamp(lull_end_ts).astimezone(tz).strftime("%H:%M")
     return f"  ⏸ Break time ({start_str} – {end_str}, {dur_str})"
+
+
+def _render_flights_with_lulls(
+    flights, filtered, lulls, tz,
+    now_ts: int = 0,
+) -> List[str]:
+    """Render flights interleaved with lull lines in chronological order.
+
+    Lull is inserted before the first flight whose arrival marks the end of
+    the break (lull_end_ts <= flight.arrival_ts), so break lines sit between
+    the last flight before the gap and the first flight after it.
+    Filtered (strikethrough) flights are appended at the end.
+    """
+    lines = []
+    lull_iter = iter(lulls)
+    next_lull = next(lull_iter, None)
+
+    for e in flights:
+        if now_ts > 0 and e.arrival_ts < now_ts and (not e.dep_ts or e.dep_ts < now_ts):
+            continue
+        while next_lull and next_lull[1] <= e.arrival_ts:
+            lines.append(_lull_line(next_lull[0], next_lull[1], tz))
+            next_lull = next(lull_iter, None)
+        lines.append(_flight_line(e, tz))
+
+    while next_lull:
+        lines.append(_lull_line(next_lull[0], next_lull[1], tz))
+        next_lull = next(lull_iter, None)
+
+    for e in filtered:
+        lines.append(f"<s>{_flight_line(e, tz, include_reason=True)}</s>")
+
+    return lines
 
 
 def _cluster_flights(
@@ -617,7 +642,10 @@ def _cluster_flights(
                 best_ts    = ei
                 best_start = ei
         recommended_start_ts = best_start
-        cluster_end_ts = max(f.session_ts for f in cluster_flights)
+        cluster_end_ts = max(
+            (f.dep_ts if f.show_dep and f.dep_ts else f.arrival_ts)
+            for f in cluster_flights
+        )
 
         # Lull detection: per flight, use arrival_ts if its arrival falls in this cluster
         # (the user need only be present for arrival, not also the departure).
@@ -701,14 +729,7 @@ def _build_clusters_message(
                 window_str = start_str if start_str == end_str else f"{start_str} – {end_str}"
                 lines.append(f"Window: {window_str}")
 
-            for e in cluster.flights:
-                if now_ts > 0 and e.arrival_ts < now_ts and (not e.dep_ts or e.dep_ts < now_ts):
-                    continue
-                lines.append(_flight_line(e, tz))
-            for e in cluster.filtered:
-                lines.append(f"<s>{_flight_line(e, tz, include_reason=True)}</s>")
-            for lull_start_ts, lull_end_ts in cluster.lulls:
-                lines.append(_lull_line(lull_start_ts, lull_end_ts, tz))
+            lines.extend(_render_flights_with_lulls(cluster.flights, cluster.filtered, cluster.lulls, tz, now_ts=now_ts))
             lines.append("")
 
     lines.append(f"Weather: {weather}" if weather else "Weather: unavailable")
@@ -807,13 +828,11 @@ def _flight_line(f: "FlightEval", tz, include_reason: bool = False,
     reason_str = f" — {f.reason}" if include_reason and f.reason else ""
 
     if scenario_a:
-        # Scenario A: show arr and dep separately, emoji inline with each timestamp
-        arr_passed = now_ts > 0 and f.arrival_ts < now_ts
+        # Scenario A: always show arr and dep times
         times = []
-        if not arr_passed:
-            arr = datetime.fromtimestamp(f.arrival_ts).astimezone(tz).strftime("%H:%M")
-            arr_emoji = _LIGHT_EMOJI.get(f.arr_lighting_zone or "", "")
-            times.append(f"arr {arr}{' ' + arr_emoji if arr_emoji else ''}")
+        arr = datetime.fromtimestamp(f.arrival_ts).astimezone(tz).strftime("%H:%M")
+        arr_emoji = _LIGHT_EMOJI.get(f.arr_lighting_zone or "", "")
+        times.append(f"arr {arr}{' ' + arr_emoji if arr_emoji else ''}")
         if f.dep_ts:
             dep = datetime.fromtimestamp(f.dep_ts).astimezone(tz).strftime("%H:%M")
             dep_emoji = _LIGHT_EMOJI.get(f.dep_lighting_zone or "", "")
@@ -930,9 +949,6 @@ def _build_detail_message(
         lines.append("  No interesting flights in this window.")
     else:
         shown_qualifying = qualifying
-        if scenario_a and now_ts > 0:
-            shown_qualifying = [e for e in qualifying
-                                if e.arrival_ts >= now_ts or e.dep_ts is not None]
 
         if show_verdict:
             section = "Would have qualified:" if severe_weather else f"Qualifying ({len(shown_qualifying)}):"
@@ -1026,7 +1042,7 @@ async def _run_spot_check(send_fn, context: ContextTypes.DEFAULT_TYPE,
             evals      = _evaluate_rolling_flights(cfg, window_start, window_end, sunrise_ts, sunset_ts)
             qualifying = [e for e in evals if e.qualifying]
             filtered   = [e for e in evals if not e.qualifying]
-            _populate_departures(qualifying + filtered, cfg, sunset_ts=sunset_ts, sunrise_ts=sunrise_ts)
+            _populate_departures(qualifying + filtered, cfg)  # no gate — display path shows all times
             qualifying, filtered = _apply_pre_sunrise_gate(qualifying, filtered, sunrise_ts, sunset_ts, cfg.spot_rec_lighting_gate)
             weather = get_current_weather(cfg.airport_lat, cfg.airport_lon, cfg.airport_tz)
             header  = f"Spot check — Today ({_PERIOD_LABELS[period]})"
@@ -1062,7 +1078,7 @@ async def _run_spot_check(send_fn, context: ContextTypes.DEFAULT_TYPE,
         elif period == "allday":
             qualifying = all_qualifying
             filtered   = all_filtered
-            _populate_departures(qualifying + filtered, cfg, sunset_ts=sunset_ts, sunrise_ts=sunrise_ts)
+            _populate_departures(qualifying + filtered, cfg)  # no gate — display path
             qualifying, filtered = _apply_pre_sunrise_gate(qualifying, filtered, sunrise_ts, sunset_ts, cfg.spot_rec_lighting_gate)
             weather = get_forecast_weather(cfg.airport_lat, cfg.airport_lon, cfg.airport_tz, day_offset=1)
             header  = f"Spot check — {tomorrow.strftime('%A %-d %b')} ({_PERIOD_LABELS[period]})"
@@ -1080,7 +1096,7 @@ async def _run_spot_check(send_fn, context: ContextTypes.DEFAULT_TYPE,
                 we = sunset_ts + cfg.summary_afternoon_post_sunset_hours * 3600
             qualifying = [e for e in all_qualifying if ws <= e.arrival_ts <= we]
             filtered   = [e for e in all_filtered   if ws <= e.arrival_ts <= we]
-            _populate_departures(qualifying + filtered, cfg, sunset_ts=sunset_ts, sunrise_ts=sunrise_ts)
+            _populate_departures(qualifying + filtered, cfg)  # no gate — display path
             qualifying, filtered = _apply_pre_sunrise_gate(qualifying, filtered, sunrise_ts, sunset_ts, cfg.spot_rec_lighting_gate)
             weather = get_forecast_weather(cfg.airport_lat, cfg.airport_lon, cfg.airport_tz, day_offset=1)
             header  = f"Spot check — {tomorrow.strftime('%A %-d %b')} ({_PERIOD_LABELS[period]})"
@@ -1166,12 +1182,7 @@ async def _send_spot_followup(context: ContextTypes.DEFAULT_TYPE) -> None:
             f"Window: {window_str}",
             "",
         ]
-        for e in cluster.flights:
-            lines.append(_flight_line(e, tz))
-        for e in cluster.filtered:
-            lines.append(f"<s>{_flight_line(e, tz, include_reason=True)}</s>")
-        for lull_start_ts, lull_end_ts in cluster.lulls:
-            lines.append(_lull_line(lull_start_ts, lull_end_ts, tz))
+        lines.extend(_render_flights_with_lulls(cluster.flights, cluster.filtered, cluster.lulls, tz))
         lines.append("")
         if weather:
             lines.append(f"Weather: {weather}")
