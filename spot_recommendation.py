@@ -516,31 +516,55 @@ def _render_flights_with_lulls(
     flights, filtered, lulls, tz,
     now_ts: int = 0,
 ) -> List[str]:
-    """Render flights interleaved with lull lines in chronological order.
+    """Render qualifying flights and lull lines sorted by sort key.
 
-    Lull is inserted before the first flight whose arrival marks the end of
-    the break (lull_end_ts <= flight.arrival_ts), so break lines sit between
-    the last flight before the gap and the first flight after it.
-    Filtered (italic) flights are appended at the end.
+    Sort key per item:
+    - Flight: earliest important event (arr if both important, or the sole important event)
+    - Lull: lull_start_ts
+    Flights sort before lulls on equal timestamps.
+
+    "Important" events are bolded. An event is not important if it falls strictly
+    inside a lull [lull_start < ts < lull_end]. Filtered flights append at end (italic).
     """
-    lines = []
-    lull_iter = iter(lulls)
-    next_lull = next(lull_iter, None)
+    def _in_lull(ts: int) -> bool:
+        return any(s < ts < e for s, e in lulls)
 
-    for e in flights:
-        if now_ts > 0 and e.arrival_ts < now_ts and (not e.dep_ts or e.dep_ts < now_ts):
+    # Build sortable items: (sort_key, type_priority, index, render_fn)
+    # type_priority: 0 = flight (before lull), 1 = lull
+    items = []
+
+    for idx, f in enumerate(flights):
+        if now_ts > 0 and f.arrival_ts < now_ts and (not f.dep_ts or f.dep_ts < now_ts):
             continue
-        while next_lull and next_lull[1] <= e.arrival_ts:
-            lines.append(_lull_line(next_lull[0], next_lull[1], tz))
-            next_lull = next(lull_iter, None)
-        lines.append(_flight_line(e, tz))
+        arr_important = not _in_lull(f.arrival_ts)
+        dep_important = (not _in_lull(f.dep_ts)) if f.dep_ts else False
 
-    while next_lull:
-        lines.append(_lull_line(next_lull[0], next_lull[1], tz))
-        next_lull = next(lull_iter, None)
+        # Sort key: earliest important event; fallback to arrival
+        if arr_important:
+            sort_key = f.arrival_ts
+        elif dep_important and f.dep_ts:
+            sort_key = f.dep_ts
+        else:
+            sort_key = f.arrival_ts
 
-    for e in filtered:
-        lines.append(f"<i>{_flight_line(e, tz, include_reason=True)}</i>")
+        items.append((sort_key, 0, idx, 'flight', f, arr_important, dep_important))
+
+    for idx, (lull_start, lull_end) in enumerate(lulls):
+        items.append((lull_start, 1, idx, 'lull', lull_start, lull_end))
+
+    items.sort(key=lambda x: (x[0], x[1], x[2]))
+
+    lines = []
+    for item in items:
+        if item[3] == 'flight':
+            _, _, _, _, f, arr_imp, dep_imp = item
+            lines.append(_flight_line(f, tz, arr_important=arr_imp, dep_important=dep_imp))
+        else:
+            _, _, _, _, lull_start, lull_end = item
+            lines.append(_lull_line(lull_start, lull_end, tz))
+
+    for f in filtered:
+        lines.append(f"<i>{_flight_line(f, tz, include_reason=True)}</i>")
 
     return lines
 
@@ -927,21 +951,28 @@ def _evaluate_eod_flights(cfg, tomorrow, sunrise_ts: int, sunset_ts: int) -> Lis
 
 
 def _flight_line(f: "FlightEval", tz, include_reason: bool = False,
-                 scenario_a: bool = False, now_ts: int = 0) -> str:
-    """Format a flight entry for display. Always shows arr and dep (if known)."""
+                 scenario_a: bool = False, now_ts: int = 0,
+                 arr_important: bool = True, dep_important: bool = True) -> str:
+    """Format a flight entry for display. Always shows arr and dep (if known).
+
+    arr_important / dep_important: when True the timestamp is bolded to indicate
+    the spotter must be present for that event. Non-important events are shown
+    in plain text (they fall inside a lull — the spotter need not attend).
+    """
     if f.livery:
         type_str = f"{f.notif_type} ({f.livery})"
     else:
         type_str = f.notif_type or ""
 
-    times = []
-    arr = datetime.fromtimestamp(f.arrival_ts).astimezone(tz).strftime("%H:%M")
-    arr_emoji = _LIGHT_EMOJI.get(f.arr_lighting_zone or "", "")
-    times.append(f"arr {arr}{' ' + arr_emoji if arr_emoji else ''}")
+    def _fmt(label: str, ts: int, zone: Optional[str], important: bool) -> str:
+        t = datetime.fromtimestamp(ts).astimezone(tz).strftime("%H:%M")
+        emoji = _LIGHT_EMOJI.get(zone or "", "")
+        text = f"{label} {t}{' ' + emoji if emoji else ''}"
+        return f"<b>{text}</b>" if important else text
+
+    times = [_fmt("arr", f.arrival_ts, f.arr_lighting_zone, arr_important)]
     if f.dep_ts:
-        dep = datetime.fromtimestamp(f.dep_ts).astimezone(tz).strftime("%H:%M")
-        dep_emoji = _LIGHT_EMOJI.get(f.dep_lighting_zone or "", "")
-        times.append(f"dep {dep}{' ' + dep_emoji if dep_emoji else ''}")
+        times.append(_fmt("dep", f.dep_ts, f.dep_lighting_zone, dep_important))
     time_str = " / ".join(times)
 
     flag = _registration_flag(f.registration)
@@ -954,7 +985,7 @@ def _flight_line(f: "FlightEval", tz, include_reason: bool = False,
         parts.append(f.detail)
     if include_reason and f.reason:
         parts.append(f.reason)
-    if time_str and time_str != "—":
+    if time_str:
         parts.append(time_str)
     return " — ".join(parts)
 
