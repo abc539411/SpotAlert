@@ -625,9 +625,13 @@ def _compute_lulls(
 ) -> List[Tuple[int, int]]:
     """Find lull times within [window_start, window_end].
 
-    Builds a sorted event list from all flights (qualifying + filtered).
-    For each consecutive pair of events from DIFFERENT registrations, the gap
-    between them is a candidate lull. Takes top max_lulls by duration if >= threshold.
+    For every pair (E_i, E_j) from different registrations, check whether any
+    event E_k between them belongs to a THIRD registration. If so the interval
+    is blocked (another plane is present). If all events between belong to
+    E_i's or E_j's flight, the interval is a valid lull — the spotter only
+    needs one event per flight, so same-flight events don't break the gap.
+
+    Takes top max_lulls by duration if >= notable_lull_secs, displayed in time order.
     """
     events = []
     for f in window_flights:
@@ -638,13 +642,22 @@ def _compute_lulls(
     events.sort(key=lambda x: x[0])
 
     candidates = []
-    for i in range(len(events) - 1):
-        ts1, reg1 = events[i]
-        ts2, reg2 = events[i + 1]
-        if reg1 != reg2:
-            gap = ts2 - ts1
-            if gap >= notable_lull_secs:
-                candidates.append((gap, ts1, ts2))
+    n = len(events)
+    for i in range(n):
+        ts_i, reg_i = events[i]
+        for j in range(i + 1, n):
+            ts_j, reg_j = events[j]
+            if reg_i == reg_j:
+                continue
+            # Blocked if any event between belongs to a third registration
+            blocked = any(
+                reg_k != reg_i and reg_k != reg_j
+                for _, reg_k in events[i + 1:j]
+            )
+            if not blocked:
+                gap = ts_j - ts_i
+                if gap >= notable_lull_secs:
+                    candidates.append((gap, ts_i, ts_j))
 
     candidates.sort(reverse=True)
     return sorted((s, e) for _, s, e in candidates[:max_lulls])
