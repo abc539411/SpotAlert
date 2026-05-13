@@ -746,10 +746,10 @@ def _build_clusters_message(
             lines.extend(_render_flights_with_lulls(cluster.flights, cluster.filtered, cluster.lulls, tz, now_ts=now_ts))
             lines.append("")
 
-    # Collect qualifying flights from non-eligible clusters (didn't reach threshold)
-    eligible_set = set(id(c) for c in eligible)
+    # Collect qualifying flights from clusters not already shown above
+    shown_set = set(id(c) for c in clusters_to_show)
     no_cluster_qualifying = [
-        f for c in all_clusters if id(c) not in eligible_set
+        f for c in all_clusters if id(c) not in shown_set
         for f in c.flights
     ]
 
