@@ -124,7 +124,7 @@ _MILITARY_KB = ReplyKeyboardMarkup(
 
 # Airport & Polling sub-keyboard
 _AIRPORT_KB = ReplyKeyboardMarkup(
-    [["Airport Code", "Check Interval"], ["Reminder Hours"], ["Dep. Pattern Threshold"], ["Force Check Now"], ["Back"]],
+    [["Airport Code", "Check Interval"], ["Reminder Hours"], ["Dep. Pattern Threshold"], ["Notify Window"], ["Force Check Now"], ["Back"]],
     resize_keyboard=True,
 )
 
@@ -437,6 +437,14 @@ async def handle_airport_submenu(update: Update, context: ContextTypes.DEFAULT_T
         await update.message.reply_text(
             f"Current: {cfg.departure_pattern_threshold}%\n\n"
             "Minimum confidence % to show a predicted next departure (0 to disable, e.g. 80)",
+            reply_markup=_REMOVE_KB,
+        )
+        return ENTER_VALUE
+
+    if choice == "Notify Window":
+        await update.message.reply_text(
+            f"Current: {cfg.spot_rec_notify_window_hours}h\n\n"
+            "Hours ahead to start sending rolling spot notifications (e.g. 4 = notify when cluster starts within 4 hours).",
             reply_markup=_REMOVE_KB,
         )
         return ENTER_VALUE
@@ -762,6 +770,19 @@ async def handle_enter_value(update: Update, context: ContextTypes.DEFAULT_TYPE)
         store.save_setting("DEPARTURE_PATTERN_THRESHOLD", str(value))
         label = f"{value}%" if value > 0 else "disabled"
         await update.message.reply_text(f"Updated: departure pattern threshold {label}.", reply_markup=_AIRPORT_KB)
+        return AIRPORT_SUBMENU
+
+    if field == "Notify Window":
+        try:
+            value = int(raw)
+            if value < 1:
+                raise ValueError
+        except ValueError:
+            await update.message.reply_text("Please enter a positive number of hours (e.g. 4).")
+            return ENTER_VALUE
+        cfg.spot_rec_notify_window_hours = value
+        store.save_setting("SPOT_REC_NOTIFY_WINDOW_HOURS", str(value))
+        await update.message.reply_text(f"Updated: rolling notifications fire when cluster starts within {value}h.", reply_markup=_AIRPORT_KB)
         return AIRPORT_SUBMENU
 
     # ----------------------------------------------------------------

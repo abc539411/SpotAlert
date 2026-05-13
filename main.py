@@ -91,6 +91,7 @@ class AppConfig:
     spot_rec_enabled: bool = False
     spot_rec_day_type: str = "Any"       # "Any" or "WeekendPublicHoliday"
     spot_rec_travel_mins: int = 30
+    spot_rec_notify_window_hours: int = 4   # outer bound: notify if cluster starts within N hours
     spot_rec_threshold: int = 3
     spot_rec_eod_hour: int = 20
     spot_rec_weather_gate: bool = True
@@ -203,6 +204,7 @@ def build_config(env: Env, fr_api: FlightRadar24API, store: SqliteStore, catalog
         spot_rec_enabled=_s(store, env, "SPOT_REC_ENABLED", default="false").lower() == "true",
         spot_rec_day_type=_s(store, env, "SPOT_REC_DAY_TYPE", default="Any"),
         spot_rec_travel_mins=_si(store, env, "SPOT_REC_TRAVEL_MINS", default="30"),
+        spot_rec_notify_window_hours=_si(store, env, "SPOT_REC_NOTIFY_WINDOW_HOURS", default="4"),
         spot_rec_threshold=_si(store, env, "SPOT_REC_THRESHOLD", default="3"),
         spot_rec_eod_hour=_si(store, env, "SPOT_REC_EOD_HOUR", default="20"),
         spot_rec_weather_gate=_s(store, env, "SPOT_REC_WEATHER_GATE", default="true").lower() == "true",

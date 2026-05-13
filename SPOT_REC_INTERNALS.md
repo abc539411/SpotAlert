@@ -45,21 +45,24 @@ Used by: rolling check, EOD recommendation, follow-up, today/tomorrow **Best Tim
 
 - Goes through `_cluster_flights` → produces `SpotCluster` objects
 - `_build_clusters_message` renders clusters with window times
-- Each `FlightEval` has `session_ts` (the primary event time) and `show_dep` (whether
-  departure is in the same cluster as arrival)
-- `_flight_line(scenario_a=False)` shows `session_ts` only, with a single lighting emoji
 
 ### Scenario A — Display paths (manual /spot)
 Used by: today/tomorrow **All Day / Morning / Afternoon**
 
 - Does NOT go through `_cluster_flights`
 - `_build_detail_message(scenario_a=True)` renders a flat list
-- `_flight_line(scenario_a=True)` always shows **both arr and dep** times regardless of
-  whether they are past or future
-- `now_ts` is passed in but only used for:
-  - Window string calculation (skip past arrivals when computing the "from" time)
-  - `_render_flights_with_lulls` (skip flights fully in the past in Scenario B clusters)
-  - NOT used to hide flights in the flat list — `shown_qualifying = qualifying` always
+
+### `_flight_line` — unified display (both modes)
+`_flight_line` always shows **arr HH:MM [emoji] / dep HH:MM [emoji]** regardless of
+mode. The `scenario_a` parameter is kept for signature compatibility but no longer
+changes behaviour. `arr_lighting_zone` and `dep_lighting_zone` must be set on the
+`FlightEval` — they are set in `_cluster_flights` for qualifying flights and for
+filtered flights in the cluster/orphaned assignment loop.
+
+`now_ts` is passed in but only used for:
+- Window string calculation in `_build_detail_message` (skip past arrivals for "from" time)
+- `_render_flights_with_lulls` (skip flights fully in the past in planning paths)
+- NOT used to hide flights in the flat list — `shown_qualifying = qualifying` always
 
 ---
 
@@ -187,19 +190,25 @@ directly, not `_render_flights_with_lulls`.
 
 ## 9. Path Summary Table
 
-| Trigger | Day | Period | Data source | `_populate_departures` gate | Display function |
-|---|---|---|---|---|---|
-| Automatic (post-check) | Today | — | `notification_record` | WITH gate | `_render_flights_with_lulls` (Scenario B) |
-| EOD job | Tomorrow | — | `notification_record` | WITH gate | `_render_flights_with_lulls` (Scenario B) |
-| Follow-up (after Yes) | Today | — | `notification_record` | WITH gate | `_render_flights_with_lulls` (Scenario B) |
-| /spot today best | Today | best | `notification_record` | WITH gate | `_build_clusters_message` (Scenario B) |
-| /spot today allday | Today | allday | `notification_record` | **no gate** | `_build_detail_message` (Scenario A) |
-| /spot today morning | Today | morning | `notification_record` | **no gate** | `_build_detail_message` (Scenario A) |
-| /spot today afternoon | Today | afternoon | `notification_record` | **no gate** | `_build_detail_message` (Scenario A) |
-| /spot tomorrow best | Tomorrow | best | `notification_record` | WITH gate | `_build_clusters_message` (Scenario B) |
-| /spot tomorrow allday | Tomorrow | allday | `notification_record` | **no gate** | `_build_detail_message` (Scenario A) |
-| /spot tomorrow morning | Tomorrow | morning | `notification_record` | **no gate** | `_build_detail_message` (Scenario A) |
-| /spot tomorrow afternoon | Tomorrow | afternoon | `notification_record` | **no gate** | `_build_detail_message` (Scenario A) |
+| Trigger | Day | Data source | `_populate_departures` gate | Display function |
+|---|---|---|---|---|
+| Rolling check (auto, post-check) | Today midnight→23:59 | `notification_record` | WITH gate | `_render_flights_with_lulls` per cluster |
+| EOD job (auto, nightly) | Tomorrow midnight→23:59 | `notification_record` | WITH gate | `_build_clusters_message` |
+| Follow-up (after Yes on EOD) | Today now+travel→sunset | `notification_record` | WITH gate | `_render_flights_with_lulls` |
+| /spot Today | Today midnight→23:59 | `notification_record` | WITH gate | `_build_clusters_message` |
+| /spot Tomorrow | Tomorrow midnight→23:59 | `notification_record` | WITH gate | `_build_clusters_message` |
+
+**Rolling check per-cluster logic:**
+- Clusters all of today's flights (full day window, not `now + travel_mins`)
+- For each eligible cluster (≥ threshold): fires if `travel_mins ≤ notify_gap ≤ notify_window_hours`
+  AND any flight in cluster has `cluster_notified_ts IS NULL`
+- On send: calls `mark_cluster_notified()` for all flights in the cluster
+- Re-fires if a new flight joins the cluster (its `cluster_notified_ts` will be NULL)
+- No global cooldown — per-cluster tracking replaces `SPOT_REC_ROLLING_LAST_TS`
+- `spot_rec_max_windows` NOT applied to rolling check (all eligible clusters fire independently)
+
+**`cluster_notified_ts`** stored in `notification_record`, populated into `FlightEval` by
+`_evaluate_rolling_flights`. Updated by `store.mark_cluster_notified(registrations, ts)`.
 
 ---
 
