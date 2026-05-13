@@ -168,10 +168,16 @@ flights that arrive before the recommended start and would require an earlier ar
 `_build_clusters_message` renders orphaned flights as a separate "Filtered out" section.
 Rolling/EOD/follow-up callers discard orphaned flights with `clusters, _ = _cluster_flights(...)`.
 
-**Lull detection:** Uses arrival_ts only (not dep_ts) for each flight in the cluster.
-Exception: if a flight has no arrival in this cluster (dep-only), uses dep_ts.
-Reason: you don't need to stay for a departure — once you've spotted the arrival, the break
-starts. Only the NEXT arrival is the "come back" signal.
+**Lull detection:** For each flight, use the earliest event the user must be present for:
+- If arrival is **catchable** (`arrival_ts >= recommended_start_ts` and `arr_in`): use arrival.
+  Departure is excluded — the user is already at the airport for the arrival.
+- If arrival is **before** `recommended_start_ts` (user misses it): use departure instead,
+  since they can still catch the plane departing.
+- If neither arrival nor departure applies (dep-only flight outside range): skip.
+
+This avoids two failure modes:
+1. Using departure for a flight whose arrival was caught → splits a break into two shorter ones
+2. Ignoring departure for a flight whose arrival was missed → understates the break end point
 
 ---
 

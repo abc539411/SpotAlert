@@ -660,14 +660,17 @@ def _cluster_flights(
             for f in cluster_flights
         )
 
-        # Lull detection: per flight, use arrival_ts if its arrival falls in this cluster
-        # (the user need only be present for arrival, not also the departure).
-        # Only use dep_ts if the flight has no arrival in this cluster.
+        # Lull detection: for each flight, use the earliest event the user must be present for.
+        # - If arrival is catchable (>= recommended_start_ts): use arrival. Departure is skipped
+        #   because the user is already at the airport for the arrival.
+        # - If arrival is before recommended_start_ts (user misses it): use departure instead,
+        #   since they can still catch the plane departing.
         lull_ts_set: set = set()
         for f in cluster_flights:
             arr_in = cluster_start <= f.arrival_ts <= cluster_end
             dep_in = bool(f.dep_ts and cluster_start <= f.dep_ts <= cluster_end)
-            if arr_in:
+            arrival_catchable = arr_in and f.arrival_ts >= recommended_start_ts
+            if arrival_catchable:
                 lull_ts_set.add(f.arrival_ts)
             elif dep_in:
                 lull_ts_set.add(f.dep_ts)
