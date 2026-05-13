@@ -203,7 +203,7 @@ async def check_rolling_recommendation(context: ContextTypes.DEFAULT_TYPE, cfg, 
     _populate_departures(qualifying + filtered, cfg, sunset_ts=sunset_ts, sunrise_ts=sunrise_ts)
     qualifying, filtered = _apply_pre_sunrise_gate(qualifying, filtered, sunrise_ts, sunset_ts, cfg.spot_rec_lighting_gate)
 
-    clusters = _cluster_flights(
+    clusters, _ = _cluster_flights(
         qualifying, filtered,
         max_gap_secs=cfg.spot_rec_max_gap_hours * 3600,
         notable_lull_secs=cfg.spot_rec_notable_lull_mins * 60,
@@ -278,7 +278,7 @@ async def run_eod_recommendation(context: ContextTypes.DEFAULT_TYPE) -> None:
     _populate_departures(qualifying + filtered, cfg, sunset_ts=sunset_ts, sunrise_ts=sunrise_ts)
     qualifying, filtered = _apply_pre_sunrise_gate(qualifying, filtered, sunrise_ts, sunset_ts, cfg.spot_rec_lighting_gate)
 
-    clusters = _cluster_flights(
+    clusters, _ = _cluster_flights(
         qualifying, filtered,
         max_gap_secs=cfg.spot_rec_max_gap_hours * 3600,
         notable_lull_secs=cfg.spot_rec_notable_lull_mins * 60,
@@ -410,14 +410,19 @@ def _lookup_departure_for_flight(
     sched_ts        = dep_info.get("scheduled_dep_ts")
     turnaround_secs = dep_info.get("turnaround_secs")
 
-    if actual_ts:
+    # A timestamp is only plausible if it falls after this arrival and within 36h —
+    # prevents cross-day contamination when the stored timestamp is from a different date.
+    def _plausible(ts):
+        return bool(ts and arrival_ts and arrival_ts <= ts <= arrival_ts + 36 * 3600)
+
+    if _plausible(actual_ts):
         return dep_fn, actual_ts, "Actual"
-    if estimated_ts:
-        return dep_fn, estimated_ts, "Estimated"
-    if sched_ts:
-        return dep_fn, sched_ts, "Scheduled"
     if turnaround_secs and arrival_ts:
         return dep_fn, arrival_ts + turnaround_secs, "Predicted"
+    if _plausible(estimated_ts):
+        return dep_fn, estimated_ts, "Estimated"
+    if _plausible(sched_ts):
+        return dep_fn, sched_ts, "Scheduled"
     return dep_fn, None, "Predicted"
 
 
@@ -677,18 +682,24 @@ def _cluster_flights(
             lulls=lulls,
         ))
 
-    # Assign filtered flights to nearest cluster and compute their lighting zones
+    # Assign filtered flights to a cluster only if arrival falls within its time range.
+    # Flights outside all clusters go into orphaned_filtered (shown as a separate section).
+    orphaned_filtered: List[FlightEval] = []
     for f in filtered:
         f.lighting_zone = _flight_lighting_zone(f, **lighting_kwargs)
-        best = min(result, key=lambda c: min(
-            abs(f.arrival_ts - c.start_ts), abs(f.arrival_ts - c.end_ts)
-        ))
-        best.filtered.append(f)
+        cluster_match = next(
+            (c for c in result if c.start_ts <= f.arrival_ts <= c.end_ts), None
+        )
+        if cluster_match:
+            cluster_match.filtered.append(f)
+        else:
+            orphaned_filtered.append(f)
 
     for c in result:
         c.filtered.sort(key=lambda x: x.arrival_ts)
+    orphaned_filtered.sort(key=lambda x: x.arrival_ts)
 
-    return result
+    return result, orphaned_filtered
 
 
 def _build_clusters_message(
@@ -701,6 +712,7 @@ def _build_clusters_message(
     sunrise_ts: int,
     sunset_ts: int,
     now_ts: int = 0,
+    orphaned_filtered: List[FlightEval] = None,
 ) -> str:
     """Build the spot check message for cluster-based (Best Time to Go) mode."""
     severe_weather = weather_gate and weather and weather.is_severe
@@ -731,6 +743,12 @@ def _build_clusters_message(
 
             lines.extend(_render_flights_with_lulls(cluster.flights, cluster.filtered, cluster.lulls, tz, now_ts=now_ts))
             lines.append("")
+
+    if orphaned_filtered:
+        lines.append(f"Filtered out ({len(orphaned_filtered)}):")
+        for e in orphaned_filtered:
+            lines.append(f"<s>{_flight_line(e, tz, include_reason=True)}</s>")
+        lines.append("")
 
     lines.append(f"Weather: {weather}" if weather else "Weather: unavailable")
     if sunrise_ts and sunset_ts:
@@ -1017,7 +1035,7 @@ async def _run_spot_check(send_fn, context: ContextTypes.DEFAULT_TYPE,
             all_filtered   = [e for e in evals if not e.qualifying]
             _populate_departures(all_qualifying + all_filtered, cfg, sunset_ts=sunset_ts, sunrise_ts=sunrise_ts)
             all_qualifying, all_filtered = _apply_pre_sunrise_gate(all_qualifying, all_filtered, sunrise_ts, sunset_ts, cfg.spot_rec_lighting_gate)
-            clusters = _cluster_flights(
+            clusters, orphaned = _cluster_flights(
                 all_qualifying, all_filtered,
                 max_gap_secs=cfg.spot_rec_max_gap_hours * 3600,
                 notable_lull_secs=cfg.spot_rec_notable_lull_mins * 60,
@@ -1028,7 +1046,8 @@ async def _run_spot_check(send_fn, context: ContextTypes.DEFAULT_TYPE,
             weather = get_current_weather(cfg.airport_lat, cfg.airport_lon, cfg.airport_tz)
             header  = f"Spot check — Today ({_PERIOD_LABELS[period]})"
             msg = _build_clusters_message(eligible, clusters, weather, cfg.spot_rec_weather_gate,
-                                          header, tz, sunrise_ts, sunset_ts, now_ts=now_ts)
+                                          header, tz, sunrise_ts, sunset_ts, now_ts=now_ts,
+                                          orphaned_filtered=orphaned)
         else:
             if period == "morning":
                 window_start = sunrise_ts - cfg.summary_morning_pre_sunrise_hours * 3600
@@ -1063,7 +1082,7 @@ async def _run_spot_check(send_fn, context: ContextTypes.DEFAULT_TYPE,
         if period == "best":
             _populate_departures(all_qualifying + all_filtered, cfg, sunset_ts=sunset_ts, sunrise_ts=sunrise_ts)
             all_qualifying, all_filtered = _apply_pre_sunrise_gate(all_qualifying, all_filtered, sunrise_ts, sunset_ts, cfg.spot_rec_lighting_gate)
-            clusters = _cluster_flights(
+            clusters, orphaned = _cluster_flights(
                 all_qualifying, all_filtered,
                 max_gap_secs=cfg.spot_rec_max_gap_hours * 3600,
                 notable_lull_secs=cfg.spot_rec_notable_lull_mins * 60,
@@ -1074,7 +1093,7 @@ async def _run_spot_check(send_fn, context: ContextTypes.DEFAULT_TYPE,
             weather = get_forecast_weather(cfg.airport_lat, cfg.airport_lon, cfg.airport_tz, day_offset=1)
             header  = f"Spot check — {tomorrow.strftime('%A %-d %b')} ({_PERIOD_LABELS[period]})"
             msg = _build_clusters_message(eligible, clusters, weather, cfg.spot_rec_weather_gate,
-                                          header, tz, sunrise_ts, sunset_ts)
+                                          header, tz, sunrise_ts, sunset_ts, orphaned_filtered=orphaned)
         elif period == "allday":
             qualifying = all_qualifying
             filtered   = all_filtered
@@ -1160,7 +1179,7 @@ async def _send_spot_followup(context: ContextTypes.DEFAULT_TYPE) -> None:
     _populate_departures(qualifying + filtered, cfg, sunset_ts=sunset_ts, sunrise_ts=sunrise_ts)
     qualifying, filtered = _apply_pre_sunrise_gate(qualifying, filtered, sunrise_ts, sunset_ts, cfg.spot_rec_lighting_gate)
 
-    clusters = _cluster_flights(
+    clusters, _ = _cluster_flights(
         qualifying, filtered,
         max_gap_secs=cfg.spot_rec_max_gap_hours * 3600,
         notable_lull_secs=cfg.spot_rec_notable_lull_mins * 60,
