@@ -746,9 +746,19 @@ def _build_clusters_message(
             lines.extend(_render_flights_with_lulls(cluster.flights, cluster.filtered, cluster.lulls, tz, now_ts=now_ts))
             lines.append("")
 
-    if orphaned_filtered:
-        lines.append(f"Filtered out ({len(orphaned_filtered)}):")
-        for e in orphaned_filtered:
+    # Collect qualifying flights from non-eligible clusters (didn't reach threshold)
+    eligible_set = set(id(c) for c in eligible)
+    no_cluster_qualifying = [
+        f for c in all_clusters if id(c) not in eligible_set
+        for f in c.flights
+    ]
+
+    no_cluster_section = no_cluster_qualifying + (orphaned_filtered or [])
+    if no_cluster_section:
+        lines.append(f"Also interesting ({len(no_cluster_section)}):")
+        for e in no_cluster_qualifying:
+            lines.append(_flight_line(e, tz))
+        for e in (orphaned_filtered or []):
             lines.append(f"<s>{_flight_line(e, tz, include_reason=True)}</s>")
         lines.append("")
 
