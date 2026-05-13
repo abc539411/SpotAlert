@@ -158,7 +158,9 @@ flight in the cluster. Iterates over all events, checks if all flights are still
 (arrival hasn't passed OR show_dep departure hasn't passed), picks the latest valid time.
 
 **Filtered flight assignment:** A filtered flight is assigned to a cluster only if
-`cluster.start_ts <= f.arrival_ts <= cluster.end_ts`. Flights outside all clusters go into
+`cluster.recommended_start_ts <= f.arrival_ts <= cluster.end_ts` — i.e., within the
+DISPLAYED window. Using `start_ts` (earliest raw event) would incorrectly include
+flights that arrive before the recommended start and would require an earlier arrival. Flights outside all clusters go into
 `orphaned_filtered` returned as the second element of the `_cluster_flights` tuple.
 `_build_clusters_message` renders orphaned flights as a separate "Filtered out" section.
 Rolling/EOD/follow-up callers discard orphaned flights with `clusters, _ = _cluster_flights(...)`.
