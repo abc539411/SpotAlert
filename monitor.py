@@ -620,6 +620,18 @@ def _passes_schedule_filters(
     return True
 
 
+def _is_special_livery_airline(airline_name: str, livery_keywords: list) -> bool:
+    """Return True if the airline name indicates a special livery.
+
+    Matches either a configured keyword OR a parenthetical scheme name appended
+    by FR24 (e.g. 'China Southern Airlines (15th National Games)'). Short codes
+    like '(CZ)' or '(CSN)' are excluded by requiring at least 5 characters inside.
+    """
+    if any(kw in airline_name for kw in livery_keywords):
+        return True
+    return bool(re.search(r'\(.{5,}\)', airline_name))
+
+
 def _parse_aircraft(arriving_flight: dict) -> Optional[Tuple[str, str, dict]]:
     """Extract (registration, aircraft_type_code, flight_dict) from a raw arrivals entry."""
     try:
@@ -657,7 +669,7 @@ def check_special_livery(arriving_flight: dict, cfg) -> Optional[Tuple[dict, str
         cfg.airport_tz, cfg.airport_lat, cfg.airport_lon,
     ):
         return None
-    if not any(keyword in airline_name for keyword in cfg.livery_keywords):
+    if not _is_special_livery_airline(airline_name, cfg.livery_keywords):
         return None
     if cfg.store.is_excluded(registration):
         return None
@@ -676,7 +688,7 @@ def check_rare_plane(arriving_flight: dict, cfg) -> Optional[Tuple[dict, str, ca
     # Never fire if this flight qualifies as a special livery — even if the livery
     # filter is on cooldown, it takes permanent precedence over rare plane.
     airline_name = (flight_data.get("airline") or {}).get("name") or ""
-    if any(keyword in airline_name for keyword in cfg.livery_keywords):
+    if _is_special_livery_airline(airline_name, cfg.livery_keywords):
         return None
 
     owner = flight_data.get("owner")
@@ -717,7 +729,7 @@ def check_rare_plane(arriving_flight: dict, cfg) -> Optional[Tuple[dict, str, ca
 def check_rego_watchlist(arriving_flight: dict, cfg) -> Optional[Tuple[dict, str, callable]]:
     flight_data = arriving_flight.get("flight") or {}
     airline_name = (flight_data.get("airline") or {}).get("name") or ""
-    if any(keyword in airline_name for keyword in cfg.livery_keywords):
+    if _is_special_livery_airline(airline_name, cfg.livery_keywords):
         return None
 
     parsed = _parse_aircraft(arriving_flight)
@@ -744,7 +756,7 @@ def check_rego_watchlist(arriving_flight: dict, cfg) -> Optional[Tuple[dict, str
 def check_type_watchlist(arriving_flight: dict, cfg) -> Optional[Tuple[dict, str, callable]]:
     flight_data = arriving_flight.get("flight") or {}
     airline_name = (flight_data.get("airline") or {}).get("name") or ""
-    if any(keyword in airline_name for keyword in cfg.livery_keywords):
+    if _is_special_livery_airline(airline_name, cfg.livery_keywords):
         return None
 
     owner = flight_data.get("owner")
@@ -780,7 +792,7 @@ def check_airline_watchlist(arriving_flight: dict, cfg) -> Optional[Tuple]:
     flight_data = arriving_flight.get("flight") or {}
 
     airline_name = (flight_data.get("airline") or {}).get("name") or ""
-    if any(keyword in airline_name for keyword in cfg.livery_keywords):
+    if _is_special_livery_airline(airline_name, cfg.livery_keywords):
         return None
 
     parsed = _parse_aircraft(arriving_flight)
@@ -821,7 +833,7 @@ def check_route_type_change(arriving_flight: dict, cfg) -> Optional[Tuple]:
 
     # Skip special livery flights — already handled at higher priority
     airline_name = (flight_data.get("airline") or {}).get("name") or ""
-    if any(keyword in airline_name for keyword in cfg.livery_keywords):
+    if _is_special_livery_airline(airline_name, cfg.livery_keywords):
         return None
 
     parsed = _parse_aircraft(arriving_flight)
