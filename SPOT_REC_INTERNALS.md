@@ -149,12 +149,12 @@ falls within `cluster_start <= ts <= cluster_end`.
 Used in Scenario B to show "arr X / dep Y" on the flight line.
 Used in `recommended_start_ts` calculation (departure is only a "catchable" event if `show_dep=True`).
 
-**`cluster_end_ts`:**
-```python
-max(f.dep_ts if f.show_dep and f.dep_ts else f.arrival_ts for f in cluster_flights)
-```
-Uses departure when show_dep=True (the session ends at departure), otherwise arrival.
-This is the "end" timestamp shown in the window header (e.g. "08:15 – 09:15").
+**`cluster_end_ts`:** The last event the user must be present for, given they arrive at
+`recommended_start_ts`. Same logic as lull detection:
+- If arrival is catchable (`arrival_ts >= recommended_start_ts`): use `arrival_ts` (departure is optional — you've already seen the plane land)
+- If arrival is missed (`arrival_ts < recommended_start_ts`): use `dep_ts` if it's in the cluster (still catchable)
+
+Example: VH-VYK arr 08:41, PK-GPV arr 09:43/dep 11:43, rec_start=08:41 → cluster_end=09:43 (not 11:43).
 
 **`recommended_start_ts`:** Latest time you can arrive at the airport and still catch every
 flight in the cluster. Iterates over all events, checks if all flights are still catchable
