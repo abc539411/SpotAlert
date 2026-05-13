@@ -951,30 +951,31 @@ async def run_check(context: ContextTypes.DEFAULT_TYPE) -> None:
                     if registration not in current_departures:
                         current_departures[registration] = flight
 
-        # Fetch page -1 arrivals and departures for passive DB updates only.
+        # Fetch pages -1 and -2 for passive DB updates (arrivals and departures).
         # These are flights with real timestamps that may have rotated off the
         # positive pages — never fed into the notification pipeline.
         hist_arrivals: dict = {}   # registration → flight (real arrival only)
         hist_departures: dict = {} # registration → flight (real departure only)
-        try:
-            hist_data = cfg.fr_api.get_airport_details(code=cfg.airport_code, page=-1)
-            hist_schedule = hist_data["airport"]["pluginData"]["schedule"]
-            for entry in (hist_schedule.get("arrivals", {}).get("data") or []):
-                parsed = _parse_aircraft(entry)
-                if not parsed:
-                    continue
-                reg, _, flight = parsed
-                if isinstance(_safe_get(flight, "time", "real", "arrival", default=None), (int, float)):
-                    hist_arrivals[reg] = flight
-            for entry in (hist_schedule.get("departures", {}).get("data") or []):
-                parsed = _parse_aircraft(entry)
-                if not parsed:
-                    continue
-                reg, _, flight = parsed
-                if isinstance(_safe_get(flight, "time", "real", "departure", default=None), (int, float)):
-                    hist_departures[reg] = flight
-        except Exception as exc:
-            log.debug("Failed to fetch page -1 for passive updates: %s", exc)
+        for hist_page in (-1, -2):
+            try:
+                hist_data = cfg.fr_api.get_airport_details(code=cfg.airport_code, page=hist_page)
+                hist_schedule = hist_data["airport"]["pluginData"]["schedule"]
+                for entry in (hist_schedule.get("arrivals", {}).get("data") or []):
+                    parsed = _parse_aircraft(entry)
+                    if not parsed:
+                        continue
+                    reg, _, flight = parsed
+                    if isinstance(_safe_get(flight, "time", "real", "arrival", default=None), (int, float)):
+                        hist_arrivals.setdefault(reg, flight)
+                for entry in (hist_schedule.get("departures", {}).get("data") or []):
+                    parsed = _parse_aircraft(entry)
+                    if not parsed:
+                        continue
+                    reg, _, flight = parsed
+                    if isinstance(_safe_get(flight, "time", "real", "departure", default=None), (int, float)):
+                        hist_departures.setdefault(reg, flight)
+            except Exception as exc:
+                log.debug("Failed to fetch page %d for passive updates: %s", hist_page, exc)
 
         # Record sightings — real arrivals from positive pages and page -1
         landed = {}
