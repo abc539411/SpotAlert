@@ -92,7 +92,7 @@ _SPOT_REC_KB = ReplyKeyboardMarkup(
 _LIGHTING_KB = ReplyKeyboardMarkup(
     [
         ["Lighting Gate"],
-        ["Sunrise Buffer", "Sunset Buffer"],
+        ["Light Buffer"],
         ["Bad Light Start", "Bad Light End"],
         ["Back"],
     ],
@@ -290,8 +290,7 @@ def _spot_rec_detail(cfg) -> str:
         f"  Notable Lull: {cfg.spot_rec_notable_lull_mins} min\n"
         f"  Max Lulls: {cfg.spot_rec_max_lulls}\n"
         f"  Max Windows: {cfg.spot_rec_max_windows}\n"
-        f"  🌅 Sunrise Buffer: {cfg.spot_rec_sunrise_buffer_mins} min\n"
-        f"  🌇 Sunset Buffer: {cfg.spot_rec_sunset_buffer_mins} min\n"
+        f"  🌙 Light Buffer: {cfg.spot_rec_light_buffer_mins} min\n"
         f"  ☀️ Bad Light: {cfg.spot_rec_bad_light_start or 'off'} – {cfg.spot_rec_bad_light_end or 'off'}"
     )
 
@@ -1083,7 +1082,7 @@ _SPOT_REC_FIELDS = {
 }
 
 _LIGHTING_FIELDS = {
-    "Lighting Gate", "Sunrise Buffer", "Sunset Buffer",
+    "Lighting Gate", "Light Buffer",
     "Bad Light Start", "Bad Light End",
 }
 
@@ -1183,16 +1182,11 @@ async def handle_lighting_submenu(update: Update, context: ContextTypes.DEFAULT_
             f"Current: {current}\n\nExclude flights arriving after sunset?",
             reply_markup=_ON_OFF_KB,
         )
-    elif choice == "Sunrise Buffer":
+    elif choice == "Light Buffer":
         await update.message.reply_text(
-            f"Current: {cfg.spot_rec_sunrise_buffer_mins} min\n\n"
-            "🌅 Minutes after sunrise still considered poor light. Flights flagged but not excluded.",
-            reply_markup=_REMOVE_KB,
-        )
-    elif choice == "Sunset Buffer":
-        await update.message.reply_text(
-            f"Current: {cfg.spot_rec_sunset_buffer_mins} min\n\n"
-            "🌇 Minutes before sunset still considered poor light. Flights flagged but not excluded.",
+            f"Current: {cfg.spot_rec_light_buffer_mins} min\n\n"
+            "🌙 Minutes around sunrise and sunset marked as poor light. "
+            "Flights within this window before sunset or after sunrise are flagged but not excluded.",
             reply_markup=_REMOVE_KB,
         )
     elif choice == "Bad Light Start":
@@ -1400,7 +1394,7 @@ async def _handle_spot_rec_value(update: Update, context: ContextTypes.DEFAULT_T
         cfg.spot_rec_max_windows = val
         store.save_setting("SPOT_REC_MAX_WINDOWS", str(val))
 
-    elif field == "Sunrise Buffer":
+    elif field == "Light Buffer":
         try:
             val = int(raw)
             if val < 0:
@@ -1408,19 +1402,8 @@ async def _handle_spot_rec_value(update: Update, context: ContextTypes.DEFAULT_T
         except ValueError:
             await update.message.reply_text("Please enter a non-negative number of minutes.")
             return ENTER_VALUE
-        cfg.spot_rec_sunrise_buffer_mins = val
-        store.save_setting("SPOT_REC_SUNRISE_BUFFER_MINS", str(val))
-
-    elif field == "Sunset Buffer":
-        try:
-            val = int(raw)
-            if val < 0:
-                raise ValueError
-        except ValueError:
-            await update.message.reply_text("Please enter a non-negative number of minutes.")
-            return ENTER_VALUE
-        cfg.spot_rec_sunset_buffer_mins = val
-        store.save_setting("SPOT_REC_SUNSET_BUFFER_MINS", str(val))
+        cfg.spot_rec_light_buffer_mins = val
+        store.save_setting("SPOT_REC_LIGHT_BUFFER_MINS", str(val))
 
     elif field == "Bad Light Start":
         import re as _re

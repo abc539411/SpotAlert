@@ -435,28 +435,30 @@ def _lookup_departure_for_flight(
     return dep_fn, None, "Predicted"
 
 
-_LIGHT_EMOJI = {"too_early": "🌅", "bad_light": "☀️", "too_late": "🌇"}
+_LIGHT_EMOJI = {"low_light": "🌙", "bad_light": "☀️"}
 
 
 def _lighting_quality(
     ts: int,
     sunrise_ts: int,
     sunset_ts: int,
-    sunrise_buffer_secs: int,
-    sunset_buffer_secs: int,
+    light_buffer_secs: int,
     bad_light_start: str,
     bad_light_end: str,
     airport_tz: str,
 ) -> Optional[str]:
     """Return lighting zone for a timestamp, or None if lighting is good.
 
-    Priority: too_early > bad_light > too_late
-    (too_early wins because pre-sunrise is the hardest constraint)
+    low_light: ts < sunrise + buffer  OR  ts > sunset - buffer  (🌙)
+    bad_light: within the configurable midday bad-light window  (☀️)
+    low_light takes priority over bad_light.
     """
     if not ts:
         return None
-    if sunrise_ts and sunrise_buffer_secs and sunrise_ts <= ts < sunrise_ts + sunrise_buffer_secs:
-        return "too_early"
+    if light_buffer_secs:
+        if (sunrise_ts and ts < sunrise_ts + light_buffer_secs) or \
+           (sunset_ts and ts > sunset_ts - light_buffer_secs):
+            return "low_light"
     if bad_light_start and bad_light_end and airport_tz:
         try:
             tz = pytz.timezone(airport_tz)
@@ -465,24 +467,22 @@ def _lighting_quality(
                 return "bad_light"
         except Exception:
             pass
-    if sunset_ts and sunset_buffer_secs and ts > sunset_ts - sunset_buffer_secs:
-        return "too_late"
     return None
 
 
 def _flight_lighting_zone(
     f: "FlightEval",
     sunrise_ts: int, sunset_ts: int,
-    sunrise_buffer_secs: int, sunset_buffer_secs: int,
+    light_buffer_secs: int,
     bad_light_start: str, bad_light_end: str,
     airport_tz: str,
 ) -> Optional[str]:
     """Return worst lighting zone across arrival and departure timestamps for a flight."""
-    _PRIORITY = {"too_early": 0, "bad_light": 1, "too_late": 2}
+    _PRIORITY = {"low_light": 0, "bad_light": 1}
     zones = []
     for ts in filter(None, [f.arrival_ts, f.dep_ts]):
-        z = _lighting_quality(ts, sunrise_ts, sunset_ts, sunrise_buffer_secs,
-                              sunset_buffer_secs, bad_light_start, bad_light_end, airport_tz)
+        z = _lighting_quality(ts, sunrise_ts, sunset_ts, light_buffer_secs,
+                              bad_light_start, bad_light_end, airport_tz)
         if z:
             zones.append(z)
     if not zones:
@@ -495,8 +495,7 @@ def _lighting_kwargs(cfg, sunrise_ts: int, sunset_ts: int) -> dict:
     return dict(
         sunrise_ts=sunrise_ts,
         sunset_ts=sunset_ts,
-        sunrise_buffer_secs=cfg.spot_rec_sunrise_buffer_mins * 60,
-        sunset_buffer_secs=cfg.spot_rec_sunset_buffer_mins * 60,
+        light_buffer_secs=cfg.spot_rec_light_buffer_mins * 60,
         bad_light_start=cfg.spot_rec_bad_light_start,
         bad_light_end=cfg.spot_rec_bad_light_end,
         airport_tz=cfg.airport_tz,
@@ -554,8 +553,7 @@ def _cluster_flights(
     max_lulls: int,
     sunrise_ts: int = 0,
     sunset_ts: int = 0,
-    sunrise_buffer_secs: int = 0,
-    sunset_buffer_secs: int = 0,
+    light_buffer_secs: int = 0,
     bad_light_start: str = "",
     bad_light_end: str = "",
     airport_tz: str = "",
@@ -567,7 +565,7 @@ def _cluster_flights(
     """
     lighting_kwargs = dict(
         sunrise_ts=sunrise_ts, sunset_ts=sunset_ts,
-        sunrise_buffer_secs=sunrise_buffer_secs, sunset_buffer_secs=sunset_buffer_secs,
+        light_buffer_secs=light_buffer_secs,
         bad_light_start=bad_light_start, bad_light_end=bad_light_end,
         airport_tz=airport_tz,
     )
@@ -621,7 +619,7 @@ def _cluster_flights(
         # Set session_ts, show_dep, and lighting_zone per cluster copy.
         # Lighting zone is computed only from timestamps that fall within this
         # cluster (arr_in / dep_in) so out-of-cluster departures don't dilute it.
-        _PRIORITY = {"too_early": 0, "bad_light": 1, "too_late": 2}
+        _PRIORITY = {"low_light": 0, "bad_light": 1}
         for f in cluster_flights:
             arr_in = cluster_start <= f.arrival_ts <= cluster_end
             dep_in = bool(f.dep_ts and cluster_start <= f.dep_ts <= cluster_end)
