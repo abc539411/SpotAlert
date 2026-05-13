@@ -140,6 +140,12 @@ _FILTER_KB = ReplyKeyboardMarkup(
     resize_keyboard=True,
 )
 
+# Special Livery sub-keyboard — includes Exclude Keywords
+_SPECIAL_LIVERY_KB = ReplyKeyboardMarkup(
+    [["Re-notify Interval", "Active Days", "Arrival Window"], ["Exclude Keywords"], ["Back"]],
+    resize_keyboard=True,
+)
+
 # Rare Plane sub-keyboard — uses different interval label
 _RARE_PLANE_FILTER_KB = ReplyKeyboardMarkup(
     [["Min Absence", "Active Days", "Arrival Window"], ["Back"]],
@@ -389,6 +395,8 @@ async def handle_filter_category_submenu(update: Update, context: ContextTypes.D
             kb = _RARE_PLANE_FILTER_KB
         elif choice == "Route Type":
             kb = _ROUTE_TYPE_FILTER_KB
+        elif choice == "Special Livery":
+            kb = _SPECIAL_LIVERY_KB
         else:
             kb = _FILTER_KB
         await update.message.reply_html(_filter_detail(cfg, choice), reply_markup=kb)
@@ -484,7 +492,7 @@ async def handle_filter_submenu(update: Update, context: ContextTypes.DEFAULT_TY
         return FILTER_CATEGORY_SUBMENU
 
     _ROUTE_TYPE_EXTRA = {"Min History", "Dominance", "Lookback"}
-    _STANDARD_FIELDS  = {"Re-notify Interval", "Min Absence", "Cooldown", "Active Days", "Arrival Window"}
+    _STANDARD_FIELDS  = {"Re-notify Interval", "Min Absence", "Cooldown", "Active Days", "Arrival Window", "Exclude Keywords"}
 
     if choice not in _STANDARD_FIELDS | _ROUTE_TYPE_EXTRA:
         await update.message.reply_text("Please choose from the keyboard.")
@@ -537,6 +545,17 @@ async def handle_filter_submenu(update: Update, context: ContextTypes.DEFAULT_TY
             f"Current: {_window_label(current_window)}\n\n"
             "Choose the new arrival window",
             reply_markup=_ARRIVAL_WINDOW_KB,
+        )
+
+    elif choice == "Exclude Keywords":
+        current = ", ".join(cfg.livery_exclude_keywords) if cfg.livery_exclude_keywords else "(none)"
+        await update.message.reply_text(
+            f"Current: {current}\n\n"
+            "Keywords that suppress the auto-parenthetical detection. If the text inside "
+            "parentheses in an airline name contains one of these words, the flight is NOT "
+            "flagged as a special livery.\n\n"
+            "Enter as comma-separated keywords (e.g. operated by,wet lease), or send a dash (-) to clear.",
+            reply_markup=_REMOVE_KB,
         )
 
     return ENTER_VALUE
@@ -1034,6 +1053,19 @@ async def handle_enter_value(update: Update, context: ContextTypes.DEFAULT_TYPE)
         store.save_setting(m["db_window"], normalised)
         await update.message.reply_html(
             f"Updated.\n\n{_filter_detail(cfg, category)}", reply_markup=kb
+        )
+        return FILTER_SUBMENU
+
+    if field == "Exclude Keywords" and category == "Special Livery":
+        if raw.strip() in ("-", ""):
+            keywords = []
+        else:
+            keywords = [k.strip().lower() for k in raw.split(",") if k.strip()]
+        cfg.livery_exclude_keywords = keywords
+        store.save_setting("SPECIAL_LIVERY_EXCLUDE_KEYWORDS", ",".join(keywords))
+        label = ", ".join(keywords) if keywords else "(none)"
+        await update.message.reply_html(
+            f"Updated: exclude keywords — {label}", reply_markup=_SPECIAL_LIVERY_KB
         )
         return FILTER_SUBMENU
 

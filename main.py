@@ -47,6 +47,7 @@ class AppConfig:
 
     # Special Livery filter
     livery_keywords: List[str]
+    livery_exclude_keywords: List[str]
     livery_interval_hours: int
     livery_days: List[str]
     livery_time_filter: str     # "" = always | "Daylight" = daylight only | "Off" = disabled
@@ -176,6 +177,7 @@ def build_config(env: Env, fr_api: FlightRadar24API, store: SqliteStore, catalog
         fetch_pages=fetch_pages,
         chat_id=env.str("CHAT_ID"),
         livery_keywords=_sl(store, env, "SPECIAL_LIVERY_KEYWORDS"),
+        livery_exclude_keywords=_sl(store, env, "SPECIAL_LIVERY_EXCLUDE_KEYWORDS"),
         livery_interval_hours=_si(store, env, "SPECIAL_LIVERY_RENOTIFY_HOURS"),
         livery_days=_sl(store, env, "SPECIAL_LIVERY_ACTIVE_DAYS"),
         livery_time_filter=_s(store, env, "SPECIAL_LIVERY_ARRIVAL_WINDOW"),

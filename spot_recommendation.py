@@ -117,7 +117,7 @@ def _interesting_label(arriving_flight: dict, cfg) -> Optional[str]:
     airline_name = (flight_data.get("airline") or {}).get("name") or ""
 
     from monitor import _is_special_livery_airline
-    if _is_special_livery_airline(airline_name, cfg.livery_keywords):
+    if _is_special_livery_airline(airline_name, cfg.livery_keywords, cfg.livery_exclude_keywords):
         return "Special Livery"
 
     parsed = _parse_aircraft(arriving_flight)
