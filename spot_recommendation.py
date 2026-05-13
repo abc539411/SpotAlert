@@ -687,6 +687,8 @@ def _cluster_flights(
     orphaned_filtered: List[FlightEval] = []
     for f in filtered:
         f.lighting_zone = _flight_lighting_zone(f, **lighting_kwargs)
+        f.arr_lighting_zone = _lighting_quality(f.arrival_ts, **lighting_kwargs)
+        f.dep_lighting_zone = _lighting_quality(f.dep_ts, **lighting_kwargs) if f.dep_ts else None
         cluster_match = next(
             (c for c in result if c.recommended_start_ts <= f.arrival_ts <= c.end_ts), None
         )
@@ -833,45 +835,21 @@ def _evaluate_eod_flights(cfg, tomorrow, sunrise_ts: int, sunset_ts: int) -> Lis
 
 def _flight_line(f: "FlightEval", tz, include_reason: bool = False,
                  scenario_a: bool = False, now_ts: int = 0) -> str:
-    """Format a flight entry for display.
-
-    Scenario A (manual): show arr and/or dep times; hide arrival if already passed.
-    Scenario B (automatic): show whichever session_ts was chosen (arr or dep).
-    """
+    """Format a flight entry for display. Always shows arr and dep (if known)."""
     if f.livery:
         type_str = f"{f.notif_type} ({f.livery})"
     else:
         type_str = f.notif_type or ""
-    detail_str = f" — {f.detail}" if f.detail else ""
-    reason_str = f" — {f.reason}" if include_reason and f.reason else ""
 
-    if scenario_a:
-        # Scenario A: always show arr and dep times
-        times = []
-        arr = datetime.fromtimestamp(f.arrival_ts).astimezone(tz).strftime("%H:%M")
-        arr_emoji = _LIGHT_EMOJI.get(f.arr_lighting_zone or "", "")
-        times.append(f"arr {arr}{' ' + arr_emoji if arr_emoji else ''}")
-        if f.dep_ts:
-            dep = datetime.fromtimestamp(f.dep_ts).astimezone(tz).strftime("%H:%M")
-            dep_emoji = _LIGHT_EMOJI.get(f.dep_lighting_zone or "", "")
-            times.append(f"dep {dep}{' ' + dep_emoji if dep_emoji else ''}")
-        time_str = " / ".join(times) if times else "—"
-    else:
-        # Scenario B: show session_ts only, emoji at end
-        ts = f.session_ts if f.session_ts is not None else f.arrival_ts
-        t = datetime.fromtimestamp(ts).astimezone(tz).strftime("%H:%M")
-        if f.show_dep and f.dep_ts:
-            dep_t = datetime.fromtimestamp(f.dep_ts).astimezone(tz).strftime("%H:%M")
-            time_str = f"arr {t} / dep {dep_t}"
-        elif f.dep_ts and f.session_ts == f.dep_ts and f.session_ts != f.arrival_ts:
-            time_str = f"dep {t}"
-        else:
-            time_str = f"arr {t}"
-
-        # Append lighting emoji for scenario B (attached to the overall session time)
-        light_emoji = _LIGHT_EMOJI.get(f.lighting_zone or "", "")
-        if light_emoji and time_str and time_str != "—":
-            time_str = f"{time_str} {light_emoji}"
+    times = []
+    arr = datetime.fromtimestamp(f.arrival_ts).astimezone(tz).strftime("%H:%M")
+    arr_emoji = _LIGHT_EMOJI.get(f.arr_lighting_zone or "", "")
+    times.append(f"arr {arr}{' ' + arr_emoji if arr_emoji else ''}")
+    if f.dep_ts:
+        dep = datetime.fromtimestamp(f.dep_ts).astimezone(tz).strftime("%H:%M")
+        dep_emoji = _LIGHT_EMOJI.get(f.dep_lighting_zone or "", "")
+        times.append(f"dep {dep}{' ' + dep_emoji if dep_emoji else ''}")
+    time_str = " / ".join(times)
 
     flag = _registration_flag(f.registration)
     fr24_url = f"https://www.flightradar24.com/data/aircraft/{f.registration.lower()}"
