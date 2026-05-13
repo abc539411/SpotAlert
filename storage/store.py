@@ -120,6 +120,8 @@ class SqliteStore:
             nr_cols = {row[1] for row in conn.execute("PRAGMA table_info(notification_record)").fetchall()}
             if "detail" not in nr_cols:
                 conn.execute("ALTER TABLE notification_record ADD COLUMN detail TEXT DEFAULT ''")
+            if "cluster_notified_ts" not in nr_cols:
+                conn.execute("ALTER TABLE notification_record ADD COLUMN cluster_notified_ts INTEGER DEFAULT NULL")
 
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS military_history (
@@ -626,6 +628,17 @@ class SqliteStore:
 
     def get_tracked_flights(self) -> List[sqlite3.Row]:
         return self._fetch("SELECT * FROM notification_record")
+
+    def mark_cluster_notified(self, registrations: list, ts: int) -> None:
+        """Set cluster_notified_ts for all registrations in a notified cluster."""
+        if not registrations:
+            return
+        placeholders = ",".join("?" * len(registrations))
+        with self._connect() as conn:
+            conn.execute(
+                f"UPDATE notification_record SET cluster_notified_ts = ? WHERE registration IN ({placeholders})",
+                [ts] + list(registrations),
+            )
 
     def update_tracked_flight(self, registration: str, last_seen_ts: int, arrival_ts: int) -> None:
         """Refresh last-seen time and current estimated arrival (may drift from original)."""
