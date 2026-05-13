@@ -102,8 +102,7 @@ class AppConfig:
     spot_rec_notable_lull_mins: int = 60  # gap within a cluster worth flagging as a lull
     spot_rec_max_lulls: int = 2           # max lull notices shown per cluster
     spot_rec_max_windows: int = 3         # max clusters offered in EOD keyboard / manual display
-    spot_rec_sunrise_buffer_mins: int = 30  # minutes after sunrise still considered poor light 🌅
-    spot_rec_sunset_buffer_mins: int = 30   # minutes before sunset still considered poor light 🌇
+    spot_rec_light_buffer_mins: int = 30    # 🌙 minutes around sunrise/sunset still considered poor light
     spot_rec_bad_light_start: str = ""      # HH:MM local — midday bad light window start (☀️); empty = disabled
     spot_rec_bad_light_end: str = ""        # HH:MM local — midday bad light window end
     departure_pattern_threshold: int = 80  # min % confidence to show a predicted departure
@@ -216,8 +215,7 @@ def build_config(env: Env, fr_api: FlightRadar24API, store: SqliteStore, catalog
         spot_rec_notable_lull_mins=_si(store, env, "SPOT_REC_NOTABLE_LULL_MINS", default="60"),
         spot_rec_max_lulls=_si(store, env, "SPOT_REC_MAX_LULLS", default="2"),
         spot_rec_max_windows=_si(store, env, "SPOT_REC_MAX_WINDOWS", default="3"),
-        spot_rec_sunrise_buffer_mins=_si(store, env, "SPOT_REC_SUNRISE_BUFFER_MINS", default="30"),
-        spot_rec_sunset_buffer_mins=_si(store, env, "SPOT_REC_SUNSET_BUFFER_MINS", default="30"),
+        spot_rec_light_buffer_mins=_si(store, env, "SPOT_REC_LIGHT_BUFFER_MINS", default="30"),
         spot_rec_bad_light_start=_s(store, env, "SPOT_REC_BAD_LIGHT_START", default=""),
         spot_rec_bad_light_end=_s(store, env, "SPOT_REC_BAD_LIGHT_END", default=""),
         departure_pattern_threshold=_si(store, env, "DEPARTURE_PATTERN_THRESHOLD", default="80"),
