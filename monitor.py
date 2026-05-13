@@ -998,6 +998,7 @@ async def run_check(context: ContextTypes.DEFAULT_TYPE) -> None:
             ac_type = _safe_get(flight, "aircraft", "model", "code", default="")
             if fn and fn != "N/A" and ac_type and ac_type != "N/A":
                 route_type_records.append((fn, ac_type, cfg.airport_iata, int(real_arr)))
+        actual_departures = []  # (dep_fn, actual_dep_ts)
         for reg, flight in {**current_departures, **hist_departures}.items():
             real_dep = _safe_get(flight, "time", "real", "departure", default=None)
             if not isinstance(real_dep, (int, float)):
@@ -1006,8 +1007,12 @@ async def run_check(context: ContextTypes.DEFAULT_TYPE) -> None:
             ac_type = _safe_get(flight, "aircraft", "model", "code", default="")
             if fn and fn != "N/A" and ac_type and ac_type != "N/A":
                 route_type_records.append((fn, ac_type, cfg.airport_iata, int(real_dep)))
+            if fn and fn not in ("N/A", "N\\A"):
+                actual_departures.append((fn, int(real_dep)))
         if route_type_records:
             cfg.store.bulk_update_route_types(route_type_records)
+        for dep_fn, dep_ts in actual_departures:
+            cfg.store.record_actual_departure(dep_fn, cfg.airport_iata, dep_ts)
 
         # Pass 2: run filters and send notifications
         # Skip registrations already tracked in notification_record (still pending arrival)
