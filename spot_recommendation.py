@@ -521,7 +521,7 @@ def _render_flights_with_lulls(
     Lull is inserted before the first flight whose arrival marks the end of
     the break (lull_end_ts <= flight.arrival_ts), so break lines sit between
     the last flight before the gap and the first flight after it.
-    Filtered (strikethrough) flights are appended at the end.
+    Filtered (italic) flights are appended at the end.
     """
     lines = []
     lull_iter = iter(lulls)
@@ -540,7 +540,7 @@ def _render_flights_with_lulls(
         next_lull = next(lull_iter, None)
 
     for e in filtered:
-        lines.append(f"<s>{_flight_line(e, tz, include_reason=True)}</s>")
+        lines.append(f"<i>{_flight_line(e, tz, include_reason=True)}</i>")
 
     return lines
 
@@ -767,7 +767,7 @@ def _build_clusters_message(
         for e in no_cluster_qualifying:
             lines.append(_flight_line(e, tz))
         for e in (orphaned_filtered or []):
-            lines.append(f"<s>{_flight_line(e, tz, include_reason=True)}</s>")
+            lines.append(f"<i>{_flight_line(e, tz, include_reason=True)}</i>")
         lines.append("")
 
     lines.append(f"Weather: {weather}" if weather else "Weather: unavailable")
