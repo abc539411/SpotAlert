@@ -693,9 +693,9 @@ def _cluster_flights(
         dep_in = bool(f.dep_ts and w_start <= f.dep_ts <= w_end)
         check_ts = ([f.arrival_ts] if arr_in else []) + ([f.dep_ts] if dep_in and f.dep_ts else [])
         zones = [z for ts in check_ts if (z := _lighting_quality(ts, **lighting_kwargs))]
-        f.lighting_zone = min(zones, key=lambda z: _PRIORITY[z]) if zones else None
-        f.arr_lighting_zone = _lighting_quality(f.arrival_ts, **lighting_kwargs) if arr_in else None
-        f.dep_lighting_zone = _lighting_quality(f.dep_ts, **lighting_kwargs) if (dep_in and f.dep_ts) else None
+        f.lighting_zone     = min(zones, key=lambda z: _PRIORITY[z]) if zones else None
+        f.arr_lighting_zone = _lighting_quality(f.arrival_ts, **lighting_kwargs)
+        f.dep_lighting_zone = _lighting_quality(f.dep_ts, **lighting_kwargs) if f.dep_ts else None
         return f
 
     # Phase A: iterative extraction on qualifying flights only
