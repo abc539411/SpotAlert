@@ -76,11 +76,6 @@ class AppConfig:
     check_interval: int
     reminder_hours: int  # hours before arrival to send a reminder; 0 = disabled
 
-    # Summary command period definitions
-    summary_morning_pre_sunrise_hours: int   # X: morning starts X hours before sunrise
-    summary_morning_end_hour: int            # Y: morning ends at Y:00 local
-    summary_afternoon_start_hour: int        # Z: afternoon starts at Z:00 local
-    summary_afternoon_post_sunset_hours: int # M: afternoon ends M hours after sunset
 
     # Military filter (adsb.fi open data — no API key required)
     military_check_interval: int  # seconds between each military check
@@ -194,10 +189,6 @@ def build_config(env: Env, fr_api: FlightRadar24API, store: SqliteStore, catalog
         airline_time_filter=_s(store, env, "AIRLINE_WATCHLIST_ARRIVAL_WINDOW"),
         check_interval=math.ceil(float(_s(store, env, "CHECK_INTERVAL_MINUTES", default="30")) * 60),
         reminder_hours=_si(store, env, "REMINDER_HOURS", default="12"),
-        summary_morning_pre_sunrise_hours=_si(store, env, "SUMMARY_MORNING_PRE_SUNRISE_HOURS", default="1"),
-        summary_morning_end_hour=_si(store, env, "SUMMARY_MORNING_END_HOUR", default="12"),
-        summary_afternoon_start_hour=_si(store, env, "SUMMARY_AFTERNOON_START_HOUR", default="12"),
-        summary_afternoon_post_sunset_hours=_si(store, env, "SUMMARY_AFTERNOON_POST_SUNSET_HOURS", default="1"),
         military_check_interval=math.ceil(float(_s(store, env, "MILITARY_CHECK_INTERVAL_MINUTES", default="15")) * 60),
         military_radius_nm=_si(store, env, "MILITARY_RADIUS_NM", default="50"),
         military_max_alt_ft=_si(store, env, "MILITARY_MAX_ALT_FT", default="5000"),
