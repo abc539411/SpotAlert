@@ -654,34 +654,67 @@ def _compute_window_bounds(cluster_flights: List[FlightEval]) -> Tuple[int, int]
     return remaining[0][0], remaining[-1][0]
 
 
+def _alt_window_has_qualifying_flight(
+    cluster_flights: List[FlightEval],
+    alt_start: int,
+    alt_end: int,
+    sunrise_ts: int,
+    sunset_ts: int,
+    lighting_gate: bool,
+) -> bool:
+    """Return True if at least one flight has a catchable daylight event in the alternative window."""
+    if not lighting_gate or not sunrise_ts:
+        return True
+    for f in cluster_flights:
+        if alt_start <= f.arrival_ts <= alt_end:
+            if sunrise_ts <= f.arrival_ts <= sunset_ts:
+                return True
+        elif f.dep_ts and alt_start <= f.dep_ts <= alt_end:
+            if sunrise_ts <= f.dep_ts <= sunset_ts:
+                return True
+    return False
+
+
 def _compute_alternative_windows(
     cluster_flights: List[FlightEval],
     main_start: int,
     main_end: int,
+    sunrise_ts: int = 0,
+    sunset_ts: int = 0,
+    lighting_gate: bool = False,
 ) -> List[Tuple[int, int]]:
-    """Compute back-first and alternating windows; return those with shorter duration.
+    """Compute back-first and alternating windows; return those shorter than main AND
+    that have at least one qualifying (daylight) flight after applying the same gates.
 
     Back-first: back truncation then front.
     Alternating: each round tries front then back until neither can be removed.
 
-    Returns up to 2 alternatives (shortest first), deduplicated, each strictly
-    shorter in duration than the main window. Alternatives always start earlier
-    since front-first already guarantees the latest start.
+    Returns up to 2 alternatives (shortest first), deduplicated.
+    Alternatives always start earlier — front-first guarantees the latest start.
     """
     main_dur = main_end - main_start
     seen: set = set()
     candidates = []
+
+    def _accept(a_start, a_end):
+        if a_end - a_start >= main_dur:
+            return False
+        if (a_start, a_end) in seen:
+            return False
+        if not _alt_window_has_qualifying_flight(
+            cluster_flights, a_start, a_end, sunrise_ts, sunset_ts, lighting_gate
+        ):
+            return False
+        return True
 
     # Back-first
     rem_bf = _build_events(cluster_flights)
     _truncate_back(rem_bf)
     _truncate_front(rem_bf)
     bf_start, bf_end = rem_bf[0][0], rem_bf[-1][0]
-    if bf_end - bf_start < main_dur:
-        key = (bf_start, bf_end)
-        if key not in seen:
-            seen.add(key)
-            candidates.append((bf_end - bf_start, bf_start, bf_end))
+    if _accept(bf_start, bf_end):
+        seen.add((bf_start, bf_end))
+        candidates.append((bf_end - bf_start, bf_start, bf_end))
 
     # Alternating: try front then back each round until no progress
     rem_alt = _build_events(cluster_flights)
@@ -700,11 +733,9 @@ def _compute_alternative_windows(
         if not removed:
             break
     alt_start, alt_end = rem_alt[0][0], rem_alt[-1][0]
-    if alt_end - alt_start < main_dur:
-        key = (alt_start, alt_end)
-        if key not in seen:
-            seen.add(key)
-            candidates.append((alt_end - alt_start, alt_start, alt_end))
+    if _accept(alt_start, alt_end):
+        seen.add((alt_start, alt_end))
+        candidates.append((alt_end - alt_start, alt_start, alt_end))
 
     candidates.sort()
     return [(s, e) for _, s, e in candidates[:2]]
@@ -824,7 +855,11 @@ def _cluster_flights(
             break
 
         window_start, window_end = _compute_window_bounds(best)
-        alt_windows = _compute_alternative_windows(best, window_start, window_end)
+        alt_windows = _compute_alternative_windows(
+            best, window_start, window_end,
+            sunrise_ts=sunrise_ts, sunset_ts=sunset_ts,
+            lighting_gate=bool(sunrise_ts),
+        )
 
         # Build per-window flight copies with lighting zones
         window_flights = [
