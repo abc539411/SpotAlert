@@ -379,6 +379,7 @@ class FlightEval:
     arr_lighting_zone: Optional[str] = None  # zone for arrival timestamp specifically
     dep_lighting_zone: Optional[str] = None  # zone for departure timestamp specifically
     cluster_notified_ts: Optional[int] = None  # when this flight was last included in a rolling cluster notification
+    spotted_times: Optional[int] = None        # times photographed at this airport (cosmetic only)
 
 
 @dataclass
@@ -1028,22 +1029,22 @@ def _evaluate_rolling_flights(cfg, window_start: int, window_end: int,
         arr_str             = datetime.fromtimestamp(arrival_ts).astimezone(tz).strftime("%H:%M")
         livery              = extra_info if notif_type == "Special Livery" else ""
 
+        spotted = cfg.catalog.get_session_count_at_airport(registration, cfg.airport_iata) if cfg.catalog else None
+
         if cfg.spot_rec_lighting_gate and not _passes_lighting_gate(arrival_ts, sunrise_ts, sunset_ts):
             results.append(FlightEval(arrival_ts, registration, notif_type, False,
                                       f"arrives after sunset ({arr_str})", detail, livery, flight_number,
-                                      cluster_notified_ts=cluster_notified_ts))
+                                      cluster_notified_ts=cluster_notified_ts, spotted_times=spotted))
             continue
 
-        if cfg.spot_rec_max_spotted_times > 0 and cfg.catalog:
-            count = cfg.catalog.get_session_count_at_airport(registration, cfg.airport_iata)
-            if count >= cfg.spot_rec_max_spotted_times:
-                results.append(FlightEval(arrival_ts, registration, notif_type, False,
-                                          f"photographed {count} times at {cfg.airport_iata}", detail, livery, flight_number,
-                                          cluster_notified_ts=cluster_notified_ts))
-                continue
+        if cfg.spot_rec_max_spotted_times > 0 and spotted is not None and spotted >= cfg.spot_rec_max_spotted_times:
+            results.append(FlightEval(arrival_ts, registration, notif_type, False,
+                                      f"photographed {spotted} times at {cfg.airport_iata}", detail, livery, flight_number,
+                                      cluster_notified_ts=cluster_notified_ts, spotted_times=spotted))
+            continue
 
         results.append(FlightEval(arrival_ts, registration, notif_type, True, "", detail, livery, flight_number,
-                                  cluster_notified_ts=cluster_notified_ts))
+                                  cluster_notified_ts=cluster_notified_ts, spotted_times=spotted))
 
     return sorted(results, key=lambda x: x.arrival_ts)
 
@@ -1084,7 +1085,8 @@ def _flight_line(f: "FlightEval", tz, include_reason: bool = False,
 
     flag = _registration_flag(f.registration)
     fr24_url = f"https://www.flightradar24.com/data/aircraft/{f.registration.lower()}"
-    reg_str = f'<a href="{fr24_url}">{f.registration}</a>{" " + flag if flag else ""}'
+    spotted_str = f" [{f.spotted_times}×]" if f.spotted_times else ""
+    reg_str = f'<a href="{fr24_url}">{f.registration}</a>{spotted_str}{" " + flag if flag else ""}'
     parts = [f"  • {reg_str}"]
     if type_str:
         parts.append(type_str)
