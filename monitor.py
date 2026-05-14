@@ -1210,6 +1210,9 @@ async def check_follow_ups(context, cfg, chat_id: str, current_arrivals: dict,
         reminder_sent   = bool(record["reminder_sent"])
         last_seen_ts    = int(record["last_seen_ts"])
 
+        approach_notified = bool(record["approach_notified"]) if "approach_notified" in record.keys() else False
+        dep_notified      = bool(record["dep_notified"])      if "dep_notified"      in record.keys() else False
+
         if registration in current_arrivals:
             current_flight = current_arrivals[registration]
 
@@ -1259,7 +1262,25 @@ async def check_follow_ups(context, cfg, chat_id: str, current_arrivals: dict,
                 await _send_arrival_reminder(context, cfg, current_flight, registration, notification_type, flight_number)
                 cfg.store.mark_reminder_sent(registration)
 
-        else:
+            # Approach alert — Rapid Mode only, fires once when flight is within window
+            if (cfg.rapid_mode
+                    and cfg.approach_alert_mins > 0
+                    and not approach_notified
+                    and current_arrival_ts > now_ts
+                    and (current_arrival_ts - now_ts) <= cfg.approach_alert_mins * 60):
+                await _send_approach_alert(context, cfg, registration, record, current_arrival_ts, now_ts)
+                cfg.store.mark_approach_notified(registration)
+
+        # Departure alert — Rapid Mode only, fires when status.live flips True
+        if (cfg.rapid_mode
+                and not dep_notified
+                and current_departures):
+            dep_flight = current_departures.get(registration)
+            if dep_flight and (dep_flight.get("status") or {}).get("live"):
+                await _send_departure_alert(context, cfg, registration, record, dep_flight)
+                cfg.store.mark_dep_notified(registration)
+
+        if registration not in current_arrivals:
             # Flight is no longer in the arrivals board
             if arrival_ts > now_ts:
                 # Wait for 2 full check cycles to rule out transient FR24 gaps
@@ -1280,6 +1301,67 @@ async def check_follow_ups(context, cfg, chat_id: str, current_arrivals: dict,
                         await _send_aircraft_swap_notice(context, cfg, registration, new_rego, new_flight, flight_number, notification_type, arrival_ts)
                     # If no confirmed status and no swap, silently remove — likely landed early or FR24 data gap
                     cfg.store.delete_tracked_flight(registration)
+
+
+async def _send_approach_alert(context, cfg, registration: str, record, arrival_ts: int, now_ts: int) -> None:
+    tz = pytz.timezone(cfg.airport_tz)
+    mins = round((arrival_ts - now_ts) / 60)
+    flag = _registration_flag(registration)
+    fr24_url = f"https://www.flightradar24.com/data/aircraft/{registration.lower()}"
+    reg_str = f'<a href="{fr24_url}">{registration}</a>{" " + flag if flag else ""}'
+
+    notif_type = record["notif_type"] or ""
+    extra_info = record["extra_info"] or ""
+    detail     = record["detail"] or ""
+
+    type_str = f"{notif_type} ({extra_info})" if extra_info else notif_type
+    parts = [f"  ✈ On approach — {reg_str} landing in ~{mins} min"]
+    sub = " · ".join(filter(None, [type_str, detail]))
+    if sub:
+        parts.append(f"  {sub}")
+
+    text = "\n".join(parts)
+    for dest_chat_id in cfg.all_chat_ids:
+        try:
+            await context.bot.send_message(chat_id=dest_chat_id, text=text,
+                                           parse_mode="HTML", disable_web_page_preview=True)
+        except Exception as exc:
+            log.warning("Failed to send approach alert for %s to %s: %s", registration, dest_chat_id, exc)
+    log.info("Approach alert sent: %s (~%d min)", registration, mins)
+
+
+async def _send_departure_alert(context, cfg, registration: str, record, dep_flight: dict) -> None:
+    tz = pytz.timezone(cfg.airport_tz)
+    flag = _registration_flag(registration)
+    fr24_url = f"https://www.flightradar24.com/data/aircraft/{registration.lower()}"
+    reg_str = f'<a href="{fr24_url}">{registration}</a>{" " + flag if flag else ""}'
+
+    notif_type = record["notif_type"] or ""
+    extra_info = record["extra_info"] or ""
+
+    dep_fn   = _safe_get(dep_flight, "identification", "number", "default", default="")
+    dest_iata = _safe_get(dep_flight, "airport", "destination", "code", "iata", default="")
+    dest_name = _safe_get(dep_flight, "airport", "destination", "name", default="")
+    dest_str = f"{dest_iata}" if not dest_name or dest_name == "N/A" else f"{dest_name} ({dest_iata})"
+
+    type_str = f"{notif_type} ({extra_info})" if extra_info else notif_type
+
+    lines = [f"  🛫 Departing now — {reg_str}"]
+    route = " · ".join(filter(None, [
+        f"{_fn_link(dep_fn)} → {dest_str}" if dep_fn and dep_fn != "N/A" else None,
+        type_str,
+    ]))
+    if route:
+        lines.append(f"  {route}")
+
+    text = "\n".join(lines)
+    for dest_chat_id in cfg.all_chat_ids:
+        try:
+            await context.bot.send_message(chat_id=dest_chat_id, text=text,
+                                           parse_mode="HTML", disable_web_page_preview=True)
+        except Exception as exc:
+            log.warning("Failed to send departure alert for %s to %s: %s", registration, dest_chat_id, exc)
+    log.info("Departure alert sent: %s", registration)
 
 
 async def _send_arrival_reminder(

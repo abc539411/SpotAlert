@@ -122,6 +122,10 @@ class SqliteStore:
                 conn.execute("ALTER TABLE notification_record ADD COLUMN detail TEXT DEFAULT ''")
             if "cluster_notified_ts" not in nr_cols:
                 conn.execute("ALTER TABLE notification_record ADD COLUMN cluster_notified_ts INTEGER DEFAULT NULL")
+            if "approach_notified" not in nr_cols:
+                conn.execute("ALTER TABLE notification_record ADD COLUMN approach_notified INTEGER NOT NULL DEFAULT 0")
+            if "dep_notified" not in nr_cols:
+                conn.execute("ALTER TABLE notification_record ADD COLUMN dep_notified INTEGER NOT NULL DEFAULT 0")
 
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS military_history (
@@ -654,6 +658,25 @@ class SqliteStore:
                 "UPDATE notification_record SET reminder_sent = 1 WHERE registration = ?",
                 (registration.strip(),),
             )
+
+    def mark_approach_notified(self, registration: str) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE notification_record SET approach_notified = 1 WHERE registration = ?",
+                (registration.strip(),),
+            )
+
+    def mark_dep_notified(self, registration: str) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE notification_record SET dep_notified = 1 WHERE registration = ?",
+                (registration.strip(),),
+            )
+
+    def reset_rapid_alerts(self) -> None:
+        """Reset approach_notified and dep_notified for all tracked flights (called on Rapid Mode deactivation)."""
+        with self._connect() as conn:
+            conn.execute("UPDATE notification_record SET approach_notified = 0, dep_notified = 0")
 
     def delete_tracked_flight(self, registration: str) -> None:
         with self._connect() as conn:

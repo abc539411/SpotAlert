@@ -25,6 +25,7 @@ def _reschedule(context, name: str, callback, interval: int, data=None) -> None:
 async def _deactivate(context) -> None:
     cfg = context.bot_data["cfg"]
     cfg.rapid_mode = False
+    cfg.store.reset_rapid_alerts()
 
     fetch_pages_count = int(cfg.store.load_setting("FETCH_PAGES") or "2")
     cfg.fetch_pages = list(range(1, fetch_pages_count + 1))
