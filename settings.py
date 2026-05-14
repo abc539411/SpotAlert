@@ -123,7 +123,7 @@ _MILITARY_KB = ReplyKeyboardMarkup(
 
 # Airport & Polling sub-keyboard
 _AIRPORT_KB = ReplyKeyboardMarkup(
-    [["Airport Code", "Check Interval"], ["Reminder Hours", "Pages"], ["Dep. Pattern Threshold"], ["Force Check Now"], ["Back"]],
+    [["Airport Code", "Check Interval"], ["Reminder Hours", "Pages"], ["Dep. Pattern Threshold"], ["Rapid Interval"], ["Force Check Now"], ["Back"]],
     resize_keyboard=True,
 )
 
@@ -336,6 +336,7 @@ async def handle_category_select(update: Update, context: ContextTypes.DEFAULT_T
             f"<b>Monitoring</b>\n\n"
             f"  Airport: {cfg.airport_name} ({cfg.airport_iata}/{cfg.airport_icao})\n"
             f"  Check Interval: {cfg.check_interval // 60} min\n"
+            f"  Rapid Interval: {cfg.rapid_mode_interval // 60} min\n"
             f"  Pages: {len(cfg.fetch_pages)} per check\n"
             f"  Reminder: {reminder}\n"
             f"  Next Check: {_next_check_str(context, cfg)} (local)"
@@ -425,6 +426,14 @@ async def handle_airport_submenu(update: Update, context: ContextTypes.DEFAULT_T
         await update.message.reply_text(
             f"Current: {current}\n\n"
             "Enter hours before arrival to send a reminder (e.g. 12), or 0 to disable",
+            reply_markup=_REMOVE_KB,
+        )
+        return ENTER_VALUE
+
+    if choice == "Rapid Interval":
+        await update.message.reply_text(
+            f"Current: {cfg.rapid_mode_interval // 60} min\n\n"
+            "Check interval (minutes) to use during Rapid Mode (1–10).",
             reply_markup=_REMOVE_KB,
         )
         return ENTER_VALUE
@@ -714,6 +723,19 @@ async def handle_enter_value(update: Update, context: ContextTypes.DEFAULT_TYPE)
         store.save_setting("REMINDER_HOURS", str(value))
         label = f"{value}h" if value > 0 else "disabled"
         await update.message.reply_text(f"Updated: reminder {label}.", reply_markup=_AIRPORT_KB)
+        return AIRPORT_SUBMENU
+
+    if field == "Rapid Interval":
+        try:
+            value = int(raw)
+            if not 1 <= value <= 10:
+                raise ValueError
+        except ValueError:
+            await update.message.reply_text("Please enter a number between 1 and 10.")
+            return ENTER_VALUE
+        cfg.rapid_mode_interval = value * 60
+        store.save_setting("RAPID_MODE_INTERVAL_MINS", str(value))
+        await update.message.reply_text(f"Updated: Rapid Mode interval {value} min.", reply_markup=_AIRPORT_KB)
         return AIRPORT_SUBMENU
 
     if field == "Pages":
