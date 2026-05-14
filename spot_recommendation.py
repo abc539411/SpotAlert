@@ -391,6 +391,7 @@ class SpotCluster:
     end_ts: int                            # latest event in cluster
     recommended_start_ts: int              # latest "be at airport by" time (all flights still catchable)
     lulls: List[Tuple[int, int]] = dc_field(default_factory=list)  # (gap_start_ts, gap_end_ts)
+    alternative_windows: List[Tuple[int, int]] = dc_field(default_factory=list)  # shorter alternative windows
 
 
 
@@ -617,36 +618,96 @@ def _gap_cluster_raw(flights: List[FlightEval], max_gap_secs: int) -> List[List[
     return result
 
 
-def _compute_window_bounds(cluster_flights: List[FlightEval]) -> Tuple[int, int]:
-    """Find the tightest window [start, end] that keeps every flight with at least one event.
-
-    Front truncation: remove earliest events until the next removal would strand a flight.
-    Back truncation: same logic from the other end.
-    Both use qualifying flights only (filtered are assigned after).
-    """
-    events = []
-    for f in cluster_flights:
-        events.append((f.arrival_ts, f))
-        if f.dep_ts:
-            events.append((f.dep_ts, f))
-    events.sort(key=lambda x: x[0])
-    remaining = list(events)
-
-    # Front: remove earliest until stranding a flight
+def _truncate_front(remaining: list) -> None:
+    """Remove events from the front until the next removal would strand a flight."""
     while len(remaining) > 1:
         _, flight = remaining[0]
         if not any(f is flight for _, f in remaining[1:]):
             break
         remaining.pop(0)
 
-    # Back: remove latest until stranding a flight
+
+def _truncate_back(remaining: list) -> None:
+    """Remove events from the back until the next removal would strand a flight."""
     while len(remaining) > 1:
         _, flight = remaining[-1]
         if not any(f is flight for _, f in remaining[:-1]):
             break
         remaining.pop()
 
+
+def _build_events(cluster_flights: List[FlightEval]) -> list:
+    events = []
+    for f in cluster_flights:
+        events.append((f.arrival_ts, f))
+        if f.dep_ts:
+            events.append((f.dep_ts, f))
+    events.sort(key=lambda x: x[0])
+    return events
+
+
+def _compute_window_bounds(cluster_flights: List[FlightEval]) -> Tuple[int, int]:
+    """Main window: front truncation then back (gives latest possible start)."""
+    remaining = _build_events(cluster_flights)
+    _truncate_front(remaining)
+    _truncate_back(remaining)
     return remaining[0][0], remaining[-1][0]
+
+
+def _compute_alternative_windows(
+    cluster_flights: List[FlightEval],
+    main_start: int,
+    main_end: int,
+) -> List[Tuple[int, int]]:
+    """Compute back-first and alternating windows; return those with shorter duration.
+
+    Back-first: back truncation then front.
+    Alternating: each round tries front then back until neither can be removed.
+
+    Returns up to 2 alternatives (shortest first), deduplicated, each strictly
+    shorter in duration than the main window. Alternatives always start earlier
+    since front-first already guarantees the latest start.
+    """
+    main_dur = main_end - main_start
+    seen: set = set()
+    candidates = []
+
+    # Back-first
+    rem_bf = _build_events(cluster_flights)
+    _truncate_back(rem_bf)
+    _truncate_front(rem_bf)
+    bf_start, bf_end = rem_bf[0][0], rem_bf[-1][0]
+    if bf_end - bf_start < main_dur:
+        key = (bf_start, bf_end)
+        if key not in seen:
+            seen.add(key)
+            candidates.append((bf_end - bf_start, bf_start, bf_end))
+
+    # Alternating: try front then back each round until no progress
+    rem_alt = _build_events(cluster_flights)
+    while True:
+        removed = False
+        if len(rem_alt) > 1:
+            _, flight = rem_alt[0]
+            if any(f is flight for _, f in rem_alt[1:]):
+                rem_alt.pop(0)
+                removed = True
+        if len(rem_alt) > 1:
+            _, flight = rem_alt[-1]
+            if any(f is flight for _, f in rem_alt[:-1]):
+                rem_alt.pop()
+                removed = True
+        if not removed:
+            break
+    alt_start, alt_end = rem_alt[0][0], rem_alt[-1][0]
+    if alt_end - alt_start < main_dur:
+        key = (alt_start, alt_end)
+        if key not in seen:
+            seen.add(key)
+            candidates.append((alt_end - alt_start, alt_start, alt_end))
+
+    candidates.sort()
+    return [(s, e) for _, s, e in candidates[:2]]
 
 
 def _compute_lulls(
@@ -763,6 +824,7 @@ def _cluster_flights(
             break
 
         window_start, window_end = _compute_window_bounds(best)
+        alt_windows = _compute_alternative_windows(best, window_start, window_end)
 
         # Build per-window flight copies with lighting zones
         window_flights = [
@@ -777,6 +839,7 @@ def _cluster_flights(
             end_ts=window_end,
             recommended_start_ts=window_start,
             lulls=[],           # filled in Phase C
+            alternative_windows=alt_windows,
         ))
 
         # Release remaining clusters back to pool; deduplicate flights by identity
@@ -862,6 +925,13 @@ def _build_clusters_message(
 
             lines.extend(_render_flights_with_lulls(cluster.flights, cluster.filtered, cluster.lulls, tz,
                                              now_ts=now_ts, window_start=cluster.start_ts, window_end=cluster.end_ts))
+            for alt_start, alt_end in cluster.alternative_windows:
+                mins_earlier = (cluster.start_ts - alt_start) // 60
+                h, m = divmod(mins_earlier, 60)
+                earlier_str = f"{h}h {m}min" if h and m else (f"{h}h" if h else f"{m}min")
+                a_str = datetime.fromtimestamp(alt_start).astimezone(tz).strftime("%H:%M")
+                b_str = datetime.fromtimestamp(alt_end).astimezone(tz).strftime("%H:%M")
+                lines.append(f"  💡 Also possible: {a_str} – {b_str} (start {earlier_str} earlier)")
             lines.append("")
 
     # Also interesting: qualifying singles (shown normally) + filtered orphans (italics)
