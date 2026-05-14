@@ -949,12 +949,16 @@ def _build_clusters_message(
             lines.extend(_render_flights_with_lulls(cluster.flights, cluster.filtered, cluster.lulls, tz,
                                              now_ts=now_ts, window_start=cluster.start_ts, window_end=cluster.end_ts))
             for alt_start, alt_end in cluster.alternative_windows:
+                def _dur_str(mins):
+                    h, m = divmod(mins, 60)
+                    return f"{h}h {m}min" if h and m else (f"{h}h" if h else f"{m}min")
                 mins_earlier = (cluster.start_ts - alt_start) // 60
-                h, m = divmod(mins_earlier, 60)
-                earlier_str = f"{h}h {m}min" if h and m else (f"{h}h" if h else f"{m}min")
+                main_dur_mins = (cluster.end_ts - cluster.start_ts) // 60
+                alt_dur_mins = (alt_end - alt_start) // 60
+                mins_shorter = main_dur_mins - alt_dur_mins
                 a_str = datetime.fromtimestamp(alt_start).astimezone(tz).strftime("%H:%M")
                 b_str = datetime.fromtimestamp(alt_end).astimezone(tz).strftime("%H:%M")
-                lines.append(f"  💡 Also possible: {a_str} – {b_str} (start {earlier_str} earlier)")
+                lines.append(f"  💡 Also possible: {a_str} – {b_str} (start {_dur_str(mins_earlier)} earlier, {_dur_str(mins_shorter)} shorter)")
             lines.append("")
 
     # Also interesting: qualifying singles (shown normally) + filtered orphans (italics)
