@@ -282,11 +282,11 @@ def main() -> None:
     async def _set_commands(application: Application) -> None:
         await application.bot.set_my_commands([
             BotCommand("spot",      "Check interesting flights or get a spotting recommendation"),
+            BotCommand("rapid",     "Toggle rapid polling mode (use when at the airport)"),
             BotCommand("stats",     "View spotting stats and notification totals"),
             BotCommand("filters",   "Manage watchlists & exclusion list"),
             BotCommand("settings",  "Configure filter intervals, days & windows"),
             BotCommand("status",    "Show bot status and next check times"),
-            BotCommand("rapid",     "Toggle rapid polling mode (use when at the airport)"),
         ])
 
     token = env.str("TELEGRAM_BOT_TOKEN")
