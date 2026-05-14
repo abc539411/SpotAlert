@@ -315,7 +315,7 @@ async def run_eod_recommendation(context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     day_str = tomorrow.strftime("%A %-d %b")
-    header = f"Spotting recommendation for {day_str}"
+    header = f"Spotting Recommendation for {day_str}"
     msg = _build_clusters_message(eligible, clusters, weather, cfg.spot_rec_weather_gate,
                                   header, tz, sunrise_ts, sunset_ts, orphaned_filtered=orphaned)
 
