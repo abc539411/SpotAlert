@@ -249,7 +249,8 @@ async def check_rolling_recommendation(context: ContextTypes.DEFAULT_TYPE, cfg, 
             f"Window: {window_str}",
             "",
         ]
-        lines.extend(_render_flights_with_lulls(cluster.flights, cluster.filtered, cluster.lulls, tz))
+        lines.extend(_render_flights_with_lulls(cluster.flights, cluster.filtered, cluster.lulls, tz,
+                                             window_start=cluster.start_ts, window_end=cluster.end_ts))
         lines.append("")
         if weather:
             lines.append(f"Weather: {weather}")
@@ -515,56 +516,64 @@ def _lull_line(lull_start_ts: int, lull_end_ts: int, tz) -> str:
 def _render_flights_with_lulls(
     flights, filtered, lulls, tz,
     now_ts: int = 0,
+    window_start: int = 0,
+    window_end: int = 0,
 ) -> List[str]:
     """Render qualifying flights and lull lines sorted by sort key.
 
     Sort key per item:
-    - Flight: earliest important event (arr if both important, or the sole important event)
+    - Flight: earliest important event (arrival if both important, or the sole important one)
     - Lull: lull_start_ts
     Flights sort before lulls on equal timestamps.
 
-    "Important" events are bolded. An event is not important if it falls strictly
-    inside a lull [lull_start < ts < lull_end]. Filtered flights append at end (italic).
+    An event is "important" (bolded) only if it falls within [window_start, window_end]
+    AND not strictly inside any lull [lull_start < ts < lull_end].
+    Events outside the window are shown as plain-text context, not bolded.
+    Filtered flights append at end in italics with no bolding.
     """
     def _in_lull(ts: int) -> bool:
         return any(s < ts < e for s, e in lulls)
 
-    # Build sortable items: (sort_key, type_priority, index, render_fn)
-    # type_priority: 0 = flight (before lull), 1 = lull
-    items = []
+    def _in_window(ts: int) -> bool:
+        if not window_start or not window_end:
+            return True   # no window provided — treat all as in-window
+        return window_start <= ts <= window_end
 
-    for idx, f in enumerate(flights):
-        if now_ts > 0 and f.arrival_ts < now_ts and (not f.dep_ts or f.dep_ts < now_ts):
-            continue
-        arr_important = not _in_lull(f.arrival_ts)
-        dep_important = (not _in_lull(f.dep_ts)) if f.dep_ts else False
-
-        # Sort key: earliest important event; fallback to arrival
+    def _make_item(f, idx, is_filtered):
+        arr_important = _in_window(f.arrival_ts) and not _in_lull(f.arrival_ts)
+        dep_important = bool(f.dep_ts and _in_window(f.dep_ts) and not _in_lull(f.dep_ts))
         if arr_important:
             sort_key = f.arrival_ts
         elif dep_important and f.dep_ts:
             sort_key = f.dep_ts
         else:
             sort_key = f.arrival_ts
+        return (sort_key, 0, idx, 'flight', f, arr_important, dep_important, is_filtered)
 
-        items.append((sort_key, 0, idx, 'flight', f, arr_important, dep_important))
+    items = []
+    for idx, f in enumerate(flights):
+        if now_ts > 0 and f.arrival_ts < now_ts and (not f.dep_ts or f.dep_ts < now_ts):
+            continue
+        items.append(_make_item(f, idx, False))
+
+    for idx, f in enumerate(filtered):
+        items.append(_make_item(f, len(flights) + idx, True))
 
     for idx, (lull_start, lull_end) in enumerate(lulls):
-        items.append((lull_start, 1, idx, 'lull', lull_start, lull_end))
+        items.append((lull_start, 1, idx, 'lull', lull_start, lull_end, None, None))
 
     items.sort(key=lambda x: (x[0], x[1], x[2]))
 
     lines = []
     for item in items:
         if item[3] == 'flight':
-            _, _, _, _, f, arr_imp, dep_imp = item
-            lines.append(_flight_line(f, tz, arr_important=arr_imp, dep_important=dep_imp))
+            _, _, _, _, f, arr_imp, dep_imp, is_filtered = item
+            line = _flight_line(f, tz, include_reason=is_filtered,
+                                arr_important=arr_imp, dep_important=dep_imp)
+            lines.append(f"<i>{line}</i>" if is_filtered else line)
         else:
-            _, _, _, _, lull_start, lull_end = item
+            _, _, _, _, lull_start, lull_end, _, _ = item
             lines.append(_lull_line(lull_start, lull_end, tz))
-
-    for f in filtered:
-        lines.append(f"<i>{_flight_line(f, tz, include_reason=True)}</i>")
 
     return lines
 
@@ -851,7 +860,8 @@ def _build_clusters_message(
                 window_str = start_str if start_str == end_str else f"{start_str} – {end_str}"
                 lines.append(f"Window: {window_str}")
 
-            lines.extend(_render_flights_with_lulls(cluster.flights, cluster.filtered, cluster.lulls, tz, now_ts=now_ts))
+            lines.extend(_render_flights_with_lulls(cluster.flights, cluster.filtered, cluster.lulls, tz,
+                                             now_ts=now_ts, window_start=cluster.start_ts, window_end=cluster.end_ts))
             lines.append("")
 
     # Also interesting: qualifying singles (shown normally) + filtered orphans (italics)
@@ -860,9 +870,9 @@ def _build_clusters_message(
         lines.append(f"Also interesting ({len(also)}):")
         for e in also:
             if e.qualifying:
-                lines.append(_flight_line(e, tz))
+                lines.append(_flight_line(e, tz, arr_important=False, dep_important=False))
             else:
-                lines.append(f"<i>{_flight_line(e, tz, include_reason=True)}</i>")
+                lines.append(f"<i>{_flight_line(e, tz, include_reason=True, arr_important=False, dep_important=False)}</i>")
         lines.append("")
 
     lines.append(f"Weather: {weather}" if weather else "Weather: unavailable")
@@ -1124,7 +1134,8 @@ async def _send_spot_followup(context: ContextTypes.DEFAULT_TYPE) -> None:
             f"Window: {window_str}",
             "",
         ]
-        lines.extend(_render_flights_with_lulls(cluster.flights, cluster.filtered, cluster.lulls, tz))
+        lines.extend(_render_flights_with_lulls(cluster.flights, cluster.filtered, cluster.lulls, tz,
+                                             window_start=cluster.start_ts, window_end=cluster.end_ts))
         lines.append("")
         if weather:
             lines.append(f"Weather: {weather}")
