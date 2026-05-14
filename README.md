@@ -46,26 +46,22 @@ Automatically recommends whether it is worth heading out to spot based on which 
 **Activity clustering** — flights are grouped into natural sessions based on gaps between events. A gap larger than the configured **Max Gap** threshold means "you'd go home between those flights" — separate sessions. Smaller gaps within a session can be flagged as break time notices (☕ grab a coffee). The algorithm picks the **latest viable start time** within a session so you can sleep in without missing anything.
 
 **Lighting quality indicators** — soft indicators on each flight line (not hard gates):
-- 🌅 arrives shortly after sunrise — light is still low
+- 🌙 arrives within the light buffer around sunrise or sunset — low or fading light
 - ☀️ arrives in the configurable midday bad-light window — harsh overhead light
-- 🌇 arrives within the sunset buffer — fading light
-
-When choosing between otherwise equal sessions, the algorithm prefers the one with more flights in good light. Within a session, it prefers the start time that keeps the most flights out of bad-light windows.
 
 **Automatic triggers:**
-- **Rolling check** — runs after every arrivals poll during the day; fires if enough interesting flights are within the next qualifying session cluster; cooldown uses the Max Gap interval
+- **Rolling check** — runs after every arrivals poll; fires a per-cluster notification when a qualifying cluster (≥ threshold flights) falls within the notify window (`travel_mins` to `notify_window_hours` from now); re-fires if a new flight joins the cluster
 - **End-of-day check** — runs once at a configurable hour each evening; clusters tomorrow's notified flights, finds the best session(s), and sends a recommendation
   - **Single qualifying session** → Yes/Maybe/No buttons; tapping Yes schedules a "time to leave" follow-up message
   - **Multiple qualifying sessions** → inline keyboard with one button per session + Maybe/No; tapping a session button commits to that window
   - Tapping **No** suppresses rolling recommendations for the next day
 
 **Manual `/spot` command:**
-- Choose **Today** or **Tomorrow**, then select a period:
-  - **Morning / Afternoon / All Day** — shows all interesting flights in that period with both arrival and predicted departure times per aircraft
-  - **Best Time to Go** — clusters all flights and shows all qualifying sessions; filtered-out flights shown as strikethrough within their session
+- Choose **Today** or **Tomorrow** — fires immediately with the full cluster view for that day
+- Shows all qualifying sessions with flights, lull notices, and alternative window hints; filtered flights shown in italics within their session
 
 **Filters applied to all checks:**
-- **Lighting gate** (hard) — flights arriving after sunset are excluded; pre-sunrise arrivals kept only if a confirmed daylight departure exists
+- **Lighting gate** (hard) — individual events outside [sunrise, sunset] are dropped from the clustering pool before any window is computed; flights with no valid events are excluded entirely
 - **Day gate** — automatic checks only run on qualifying days (any day, weekends only, or public holidays)
 - **Weather gate** — automatic checks suppressed when severe weather is forecast; manual checks always run and show weather with emoji (☀️ 🌤 🌧 ⛈ etc.)
 - **Spotted times** — aircraft photographed too many times at this airport can be excluded (configurable threshold)
@@ -114,8 +110,8 @@ Type any aircraft registration directly into the chat (e.g. `VH-XQU` or `9V-SWI`
 All settings are adjustable via `/settings` in Telegram. Changes take effect immediately and persist across restarts.
 
 The Spot Recommendation section uses a three-level menu to keep it manageable:
-- **Main screen** — core settings (Enabled, Day Type, Travel Time, Threshold, EOD Hour, Weather Gate, Max Spotted Times)
-- **Lighting →** — hard and soft lighting gates (Lighting Gate, Sunrise/Sunset Buffer, Bad Light window)
+- **Main screen** — core settings (Enabled, Day Type, Travel Time, Threshold, Notify Window, EOD Hour, Weather Gate, Max Spotted Times)
+- **Lighting →** — hard and soft lighting gates (Lighting Gate, Light Buffer, Bad Light window)
 - **Sessions →** — cluster algorithm tuning (Max Gap, Max Windows, Notable Lull, Max Lulls)
 
 ---
@@ -192,12 +188,12 @@ Key settings:
 | `SPOT_REC_TRAVEL_MINS` | Minutes to travel from home to airport | 30 |
 | `SPOT_REC_THRESHOLD` | Minimum interesting flights required for a recommendation | 3 |
 | `SPOT_REC_EOD_HOUR` | Local hour (0–23) to send the end-of-day recommendation | 20 |
-| `SPOT_REC_MAX_GAP_HOURS` | Gap (hours) between events that splits into separate sessions; also rolling cooldown | 3 |
-| `SPOT_REC_MAX_WINDOWS` | Max sessions offered in EOD keyboard and manual Best Time to Go (1–3) | 3 |
+| `SPOT_REC_NOTIFY_WINDOW_HOURS` | Outer bound — notify rolling check if cluster starts within this many hours | 4 |
+| `SPOT_REC_MAX_GAP_HOURS` | Gap (hours) between events that splits into separate sessions | 3 |
+| `SPOT_REC_MAX_WINDOWS` | Max sessions offered in EOD keyboard and manual spot check (1–3) | 3 |
 | `SPOT_REC_NOTABLE_LULL_MINS` | Gap within a session (minutes) worth flagging as a break time notice | 60 |
 | `SPOT_REC_MAX_LULLS` | Max break time notices shown per session (longest gaps first) | 2 |
-| `SPOT_REC_SUNRISE_BUFFER_MINS` | Minutes after sunrise still flagged as poor light (🌅) | 30 |
-| `SPOT_REC_SUNSET_BUFFER_MINS` | Minutes before sunset still flagged as poor light (🌇) | 30 |
+| `SPOT_REC_LIGHT_BUFFER_MINS` | Minutes around sunrise/sunset still flagged as poor light (🌙) | 30 |
 | `SPOT_REC_BAD_LIGHT_START` | Local HH:MM start of midday bad-light window (☀️); empty = disabled | — |
 | `SPOT_REC_BAD_LIGHT_END` | Local HH:MM end of midday bad-light window | — |
 
