@@ -1075,20 +1075,33 @@ async def _send_notification(
 ) -> None:
     log.info("Notifying: %s — %s", notification_type, registration)
 
-    rego_details = None
-    photo_url = None
-    try:
-        rego_details = cfg.fr_api.get_rego_details(registration)
-        images = (rego_details or {}).get("aircraftImages") or []
-        if images:
-            photo_url = images[0]["images"]["medium"][0]["link"]
-    except Exception as exc:
-        log.warning("Could not fetch aircraft details for %s: %s", registration, exc)
-
     now_ts = int(datetime.now().timestamp())
-
-    # Record departure pattern for future predictions
     arrival_fn = str(_safe_get(flight, "identification", "number", "default", default=""))
+
+    # Check caches before calling FR24
+    airframe   = cfg.store.get_airframe(registration)
+    photo_url  = (airframe or {}).get("photo_url") or ""
+    has_dep_pattern = bool(
+        arrival_fn and arrival_fn != "N/A"
+        and cfg.store.get_predicted_departure(arrival_fn, cfg.airport_iata, 1)
+    )
+
+    rego_details = None
+    if not photo_url or not has_dep_pattern:
+        try:
+            rego_details = cfg.fr_api.get_rego_details(registration)
+            if not photo_url:
+                images = (rego_details or {}).get("aircraftImages") or []
+                if images:
+                    try:
+                        photo_url = images[0]["images"]["medium"][0]["link"]
+                        cfg.store.upsert_airframe_from_fr24(registration, photo_url=photo_url)
+                    except (KeyError, IndexError):
+                        pass
+        except Exception as exc:
+            log.warning("Could not fetch aircraft details for %s: %s", registration, exc)
+
+    # Record departure pattern for future predictions (only when fresh rego_details available)
     if arrival_fn and arrival_fn != "N/A" and rego_details:
         _, dep_fn, al_name, al_iata, al_icao, dest_name, dest_iata, dest_icao, _ = get_next_departure(
             rego_details, cfg.airport_iata, cfg.airport_tz
