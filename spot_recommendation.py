@@ -1136,7 +1136,7 @@ async def _run_spot_check(send_fn, context: ContextTypes.DEFAULT_TYPE, day: str)
         )
         eligible = clusters[:cfg.spot_rec_max_windows]
         weather  = get_current_weather(cfg.airport_lat, cfg.airport_lon, cfg.airport_tz)
-        header   = "Spot check — Today"
+        header   = f"Spot Check — {now.strftime('%A %-d %b')}"
         # now_ts=0: show all flights including past — manual check is a full-day review
         msg = _build_clusters_message(eligible, clusters, weather, cfg.spot_rec_weather_gate,
                                       header, tz, sunrise_ts, sunset_ts, now_ts=0,
@@ -1158,7 +1158,7 @@ async def _run_spot_check(send_fn, context: ContextTypes.DEFAULT_TYPE, day: str)
         )
         eligible = clusters[:cfg.spot_rec_max_windows]
         weather  = get_forecast_weather(cfg.airport_lat, cfg.airport_lon, cfg.airport_tz, day_offset=1)
-        header   = f"Spot check — {tomorrow.strftime('%A %-d %b')}"
+        header   = f"Spot Check — {tomorrow.strftime('%A %-d %b')}"
         msg = _build_clusters_message(eligible, clusters, weather, cfg.spot_rec_weather_gate,
                                       header, tz, sunrise_ts, sunset_ts, orphaned_filtered=orphaned)
 
