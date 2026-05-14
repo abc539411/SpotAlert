@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import Optional
 
 import requests
@@ -47,37 +48,39 @@ class WeatherResult:
 
 
 def get_current_weather(lat: float, lon: float, tz_name: str) -> Optional[WeatherResult]:
-    try:
-        r = requests.get(
-            "https://api.open-meteo.com/v1/forecast",
-            params={
-                "latitude": lat, "longitude": lon,
-                "current": "temperature_2m,weather_code",
-                "timezone": tz_name, "forecast_days": 1,
-            },
-            timeout=10,
-        )
-        d = r.json()["current"]
-        return WeatherResult(float(d["temperature_2m"]), int(d["weather_code"]))
-    except Exception as exc:
-        log.warning("Current weather fetch failed: %s", exc)
-        return None
+    params = {
+        "latitude": lat, "longitude": lon,
+        "current": "temperature_2m,weather_code",
+        "timezone": tz_name, "forecast_days": 1,
+    }
+    for attempt in range(1, 3):
+        try:
+            r = requests.get("https://api.open-meteo.com/v1/forecast", params=params, timeout=10)
+            r.raise_for_status()
+            d = r.json()["current"]
+            return WeatherResult(float(d["temperature_2m"]), int(d["weather_code"]))
+        except Exception as exc:
+            log.warning("Current weather fetch failed (attempt %d/2): %s", attempt, exc)
+            if attempt < 2:
+                time.sleep(5)
+    return None
 
 
 def get_forecast_weather(lat: float, lon: float, tz_name: str, day_offset: int = 1) -> Optional[WeatherResult]:
     """Fetch daily forecast. day_offset=0 is today, 1 is tomorrow."""
-    try:
-        r = requests.get(
-            "https://api.open-meteo.com/v1/forecast",
-            params={
-                "latitude": lat, "longitude": lon,
-                "daily": "weather_code,temperature_2m_max",
-                "timezone": tz_name, "forecast_days": day_offset + 1,
-            },
-            timeout=10,
-        )
-        d = r.json()["daily"]
-        return WeatherResult(float(d["temperature_2m_max"][day_offset]), int(d["weather_code"][day_offset]))
-    except Exception as exc:
-        log.warning("Forecast weather fetch failed: %s", exc)
-        return None
+    params = {
+        "latitude": lat, "longitude": lon,
+        "daily": "weather_code,temperature_2m_max",
+        "timezone": tz_name, "forecast_days": day_offset + 1,
+    }
+    for attempt in range(1, 3):
+        try:
+            r = requests.get("https://api.open-meteo.com/v1/forecast", params=params, timeout=10)
+            r.raise_for_status()
+            d = r.json()["daily"]
+            return WeatherResult(float(d["temperature_2m_max"][day_offset]), int(d["weather_code"][day_offset]))
+        except Exception as exc:
+            log.warning("Forecast weather fetch failed (attempt %d/2): %s", attempt, exc)
+            if attempt < 2:
+                time.sleep(5)
+    return None
