@@ -123,7 +123,7 @@ _MILITARY_KB = ReplyKeyboardMarkup(
 
 # Airport & Polling sub-keyboard
 _AIRPORT_KB = ReplyKeyboardMarkup(
-    [["Airport Code", "Check Interval"], ["Reminder Hours", "Pages"], ["Dep. Pattern Threshold"], ["Rapid Interval"], ["Force Check Now"], ["Back"]],
+    [["Airport Code", "Check Interval"], ["Reminder Hours", "Pages"], ["Dep. Pattern Threshold"], ["Rapid Interval", "Approach Alert"], ["Force Check Now"], ["Back"]],
     resize_keyboard=True,
 )
 
@@ -332,6 +332,7 @@ async def handle_category_select(update: Update, context: ContextTypes.DEFAULT_T
 
     if choice == "Monitoring":
         reminder = f"{cfg.reminder_hours}h" if cfg.reminder_hours > 0 else "disabled"
+        approach = f"{cfg.approach_alert_mins} min" if cfg.approach_alert_mins > 0 else "disabled"
         text = (
             f"<b>Monitoring</b>\n\n"
             f"  Airport: {cfg.airport_name} ({cfg.airport_iata}/{cfg.airport_icao})\n"
@@ -339,6 +340,7 @@ async def handle_category_select(update: Update, context: ContextTypes.DEFAULT_T
             f"  Rapid Interval: {cfg.rapid_mode_interval // 60} min\n"
             f"  Pages: {len(cfg.fetch_pages)} per check\n"
             f"  Reminder: {reminder}\n"
+            f"  Approach Alert: {approach}\n"
             f"  Next Check: {_next_check_str(context, cfg)} (local)"
         )
         await update.message.reply_html(text, reply_markup=_AIRPORT_KB)
@@ -426,6 +428,16 @@ async def handle_airport_submenu(update: Update, context: ContextTypes.DEFAULT_T
         await update.message.reply_text(
             f"Current: {current}\n\n"
             "Enter hours before arrival to send a reminder (e.g. 12), or 0 to disable",
+            reply_markup=_REMOVE_KB,
+        )
+        return ENTER_VALUE
+
+    if choice == "Approach Alert":
+        current = f"{cfg.approach_alert_mins} min" if cfg.approach_alert_mins > 0 else "disabled"
+        await update.message.reply_text(
+            f"Current: {current}\n\n"
+            "Minutes before landing to send an approach alert (Rapid Mode only). "
+            "Enter 0 to disable, or a number between 1 and 120.",
             reply_markup=_REMOVE_KB,
         )
         return ENTER_VALUE
@@ -723,6 +735,20 @@ async def handle_enter_value(update: Update, context: ContextTypes.DEFAULT_TYPE)
         store.save_setting("REMINDER_HOURS", str(value))
         label = f"{value}h" if value > 0 else "disabled"
         await update.message.reply_text(f"Updated: reminder {label}.", reply_markup=_AIRPORT_KB)
+        return AIRPORT_SUBMENU
+
+    if field == "Approach Alert":
+        try:
+            value = int(raw)
+            if not 0 <= value <= 120:
+                raise ValueError
+        except ValueError:
+            await update.message.reply_text("Please enter 0 (disabled) or a number between 1 and 120.")
+            return ENTER_VALUE
+        cfg.approach_alert_mins = value
+        store.save_setting("APPROACH_ALERT_MINS", str(value))
+        label = f"{value} min" if value > 0 else "disabled"
+        await update.message.reply_text(f"Updated: approach alert {label}.", reply_markup=_AIRPORT_KB)
         return AIRPORT_SUBMENU
 
     if field == "Rapid Interval":

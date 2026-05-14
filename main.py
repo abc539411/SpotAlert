@@ -109,6 +109,9 @@ class AppConfig:
     route_type_days: List[str] = field(default_factory=list)
     route_type_time_filter: str = ""
 
+    # Approach alert (Rapid Mode only)
+    approach_alert_mins: int = 30     # loaded from APPROACH_ALERT_MINS; 0 = disabled
+
     # Rapid mode — in-memory only, never persisted
     rapid_mode: bool = field(repr=False, default=False)
     rapid_mode_interval: int = 120    # seconds, loaded from RAPID_MODE_INTERVAL_MINS
@@ -221,6 +224,7 @@ def build_config(env: Env, fr_api: FlightRadar24API, store: SqliteStore, catalog
         route_type_renotify_days=_si(store, env, "ROUTE_TYPE_RENOTIFY_DAYS", default="30"),
         route_type_days=_sl(store, env, "ROUTE_TYPE_ACTIVE_DAYS"),
         route_type_time_filter=_s(store, env, "ROUTE_TYPE_ARRIVAL_WINDOW"),
+        approach_alert_mins=_si(store, env, "APPROACH_ALERT_MINS", default="30"),
         rapid_mode_interval=_si(store, env, "RAPID_MODE_INTERVAL_MINS", default="2") * 60,
         fr_api=fr_api,
         store=store,
