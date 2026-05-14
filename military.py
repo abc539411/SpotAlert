@@ -122,18 +122,19 @@ def _format_notification(ac: dict, airport_iata: str, dist_nm: float) -> str:
     aircraft_str = f"{desc} ({ac_type})" if desc else ac_type
 
     hex_code = (ac.get("hex") or "").lower()
-    map_link = f"\nhttps://globe.adsb.fi/?icao={hex_code}" if hex_code else ""
+    map_url  = f"https://globe.adsb.fi/?icao={hex_code}" if hex_code else ""
+    rego_str = f'<a href="{map_url}">{registration}</a>' if map_url else f"<b>{registration}</b>"
 
-    return "\n".join([
+    return "\n".join(filter(None, [
         "<b>Military Aircraft Approaching</b>",
-        f"  Registration: <b>{registration}</b>",
+        f"  Registration: {rego_str}",
         f"  Callsign: {callsign}",
         f"  Country: {country}",
         f"  Aircraft: {aircraft_str}",
         f"  Altitude: {alt} ft",
         f"  Speed: {speed} kts",
         f"  Distance: {dist_nm:.0f} nm from {airport_iata}",
-    ]) + map_link
+    ]))
 
 
 async def check_military(context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -168,7 +169,8 @@ async def check_military(context: ContextTypes.DEFAULT_TYPE) -> None:
         try:
             message = _format_notification(ac, cfg.airport_iata, dist_nm)
             for dest_chat_id in cfg.all_chat_ids:
-                await context.bot.send_message(chat_id=dest_chat_id, text=message, parse_mode="HTML")
+                await context.bot.send_message(chat_id=dest_chat_id, text=message, parse_mode="HTML",
+                                               disable_web_page_preview=True)
             cfg.store.mark_military_notified(registration, now_ts)
             log.info("Military notification sent: %s", registration)
         except Exception as exc:
