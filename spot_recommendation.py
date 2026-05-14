@@ -662,16 +662,33 @@ def _alt_window_has_qualifying_flight(
     sunset_ts: int,
     lighting_gate: bool,
 ) -> bool:
-    """Return True if at least one flight has a catchable daylight event in the alternative window."""
+    """Mirror _apply_pre_sunrise_gate but evaluated against events within [alt_start, alt_end] only.
+
+    A flight qualifies in the alternative window if:
+    - Catchable via arrival (arr in window) AND arr >= sunrise, OR
+    - Catchable via arrival AND arr < sunrise AND dep is ALSO in window AND dep in daylight
+      (same logic as _apply_pre_sunrise_gate: pre-sunrise arr only ok with daylight dep)
+    - Catchable via departure only (arr not in window) AND dep >= sunrise
+
+    The key difference from the global gate: a flight that passed the global gate due to a
+    daylight departure may FAIL here if that departure falls outside the alternative window.
+    """
     if not lighting_gate or not sunrise_ts:
         return True
     for f in cluster_flights:
-        if alt_start <= f.arrival_ts <= alt_end:
-            if sunrise_ts <= f.arrival_ts <= sunset_ts:
+        arr_in = alt_start <= f.arrival_ts <= alt_end
+        dep_in = bool(f.dep_ts and alt_start <= f.dep_ts <= alt_end)
+        if not arr_in and not dep_in:
+            continue
+        if arr_in:
+            if f.arrival_ts >= sunrise_ts:
+                return True  # daylight arrival → qualifying
+            # Pre-sunrise arrival: only qualifying if daylight dep is also in this window
+            if dep_in and sunrise_ts <= f.dep_ts <= sunset_ts:
                 return True
-        elif f.dep_ts and alt_start <= f.dep_ts <= alt_end:
-            if sunrise_ts <= f.dep_ts <= sunset_ts:
-                return True
+        elif dep_in:
+            if f.dep_ts >= sunrise_ts:
+                return True  # departure-only, in daylight → qualifying
     return False
 
 
