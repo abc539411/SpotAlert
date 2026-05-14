@@ -157,8 +157,8 @@ def build_config(env: Env, fr_api: FlightRadar24API, store: SqliteStore, catalog
     airport_code = _s(store, env, "AIRPORT_CODE")
     airport = _fetch_airport(fr_api, airport_code)
 
-    arrivals_to_fetch = math.ceil(float(_s(store, env, "ARRIVALS_TO_FETCH", default="200")))
-    fetch_pages = list(range(1, math.ceil(arrivals_to_fetch / 100) + 1))
+    fetch_pages_count = _si(store, env, "FETCH_PAGES", default="2")
+    fetch_pages = list(range(1, fetch_pages_count + 1))
 
     return AppConfig(
         airport_code=airport_code,

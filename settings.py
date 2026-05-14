@@ -123,7 +123,7 @@ _MILITARY_KB = ReplyKeyboardMarkup(
 
 # Airport & Polling sub-keyboard
 _AIRPORT_KB = ReplyKeyboardMarkup(
-    [["Airport Code", "Check Interval"], ["Reminder Hours"], ["Dep. Pattern Threshold"], ["Force Check Now"], ["Back"]],
+    [["Airport Code", "Check Interval"], ["Reminder Hours", "Pages"], ["Dep. Pattern Threshold"], ["Force Check Now"], ["Back"]],
     resize_keyboard=True,
 )
 
@@ -336,6 +336,7 @@ async def handle_category_select(update: Update, context: ContextTypes.DEFAULT_T
             f"<b>Monitoring</b>\n\n"
             f"  Airport: {cfg.airport_name} ({cfg.airport_iata}/{cfg.airport_icao})\n"
             f"  Check Interval: {cfg.check_interval // 60} min\n"
+            f"  Pages: {len(cfg.fetch_pages)} per check\n"
             f"  Reminder: {reminder}\n"
             f"  Next Check: {_next_check_str(context, cfg)} (local)"
         )
@@ -424,6 +425,15 @@ async def handle_airport_submenu(update: Update, context: ContextTypes.DEFAULT_T
         await update.message.reply_text(
             f"Current: {current}\n\n"
             "Enter hours before arrival to send a reminder (e.g. 12), or 0 to disable",
+            reply_markup=_REMOVE_KB,
+        )
+        return ENTER_VALUE
+
+    if choice == "Pages":
+        await update.message.reply_text(
+            f"Current: {len(cfg.fetch_pages)} pages\n\n"
+            "Number of pages fetched per check (each page = 100 flights). "
+            "Applied to both arrivals and recent departures (e.g. 2 = pages 1,2 and -1,-2).",
             reply_markup=_REMOVE_KB,
         )
         return ENTER_VALUE
@@ -704,6 +714,23 @@ async def handle_enter_value(update: Update, context: ContextTypes.DEFAULT_TYPE)
         store.save_setting("REMINDER_HOURS", str(value))
         label = f"{value}h" if value > 0 else "disabled"
         await update.message.reply_text(f"Updated: reminder {label}.", reply_markup=_AIRPORT_KB)
+        return AIRPORT_SUBMENU
+
+    if field == "Pages":
+        try:
+            value = int(raw)
+            if not 1 <= value <= 5:
+                raise ValueError
+        except ValueError:
+            await update.message.reply_text("Please enter a number between 1 and 5.")
+            return ENTER_VALUE
+        cfg.fetch_pages = list(range(1, value + 1))
+        store.save_setting("FETCH_PAGES", str(value))
+        await update.message.reply_text(
+            f"Updated: fetching {value} page{'s' if value > 1 else ''} per check "
+            f"(arrivals {list(range(1, value + 1))}, departures {[-p for p in range(1, value + 1)]}).",
+            reply_markup=_AIRPORT_KB,
+        )
         return AIRPORT_SUBMENU
 
     if field == "Dep. Pattern Threshold":

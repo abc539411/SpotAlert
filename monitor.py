@@ -979,7 +979,7 @@ async def run_check(context: ContextTypes.DEFAULT_TYPE) -> None:
         # positive pages — never fed into the notification pipeline.
         hist_arrivals: dict = {}   # registration → flight (real arrival only)
         hist_departures: dict = {} # registration → flight (real departure only)
-        for hist_page in (-1, -2):
+        for hist_page in [-p for p in cfg.fetch_pages]:
             try:
                 hist_data = cfg.fr_api.get_airport_details(code=cfg.airport_code, page=hist_page)
                 hist_schedule = hist_data["airport"]["pluginData"]["schedule"]
