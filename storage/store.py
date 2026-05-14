@@ -128,6 +128,19 @@ class SqliteStore:
                 conn.execute("ALTER TABLE notification_record ADD COLUMN dep_notified INTEGER NOT NULL DEFAULT 0")
 
             conn.execute("""
+                CREATE TABLE IF NOT EXISTS notification_log (
+                    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                    registration  TEXT NOT NULL,
+                    flight_number TEXT,
+                    notif_type    TEXT NOT NULL,
+                    detail        TEXT DEFAULT '',
+                    extra_info    TEXT DEFAULT '',
+                    arrival_ts    INTEGER,
+                    notified_ts   INTEGER NOT NULL
+                )
+            """)
+
+            conn.execute("""
                 CREATE TABLE IF NOT EXISTS military_history (
                     registration TEXT PRIMARY KEY,
                     last_notified_ts INTEGER NOT NULL
@@ -629,6 +642,14 @@ class SqliteStore:
                 (registration.strip(), flight_number, notif_type,
                  arrival_ts, arrival_ts, first_notified_ts, now_ts, extra_info, detail),
             )
+            conn.execute(
+                """
+                INSERT INTO notification_log
+                  (registration, flight_number, notif_type, detail, extra_info, arrival_ts, notified_ts)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (registration.strip(), flight_number, notif_type, detail, extra_info, arrival_ts, first_notified_ts),
+            )
 
     def get_tracked_flights(self) -> List[sqlite3.Row]:
         return self._fetch("SELECT * FROM notification_record")
@@ -683,12 +704,25 @@ class SqliteStore:
             conn.execute("DELETE FROM notification_record WHERE registration = ?", (registration.strip(),))
 
     def cleanup_arrived_flights(self, now_ts: int) -> None:
-        """Remove records for planes that arrived more than 24h ago."""
+        """Remove records for planes that arrived more than 24h ago; prune notification_log older than 7 days."""
         with self._connect() as conn:
             conn.execute(
                 "DELETE FROM notification_record WHERE arrival_ts > 0 AND arrival_ts < ?",
                 (now_ts - 86400,),
             )
+            conn.execute(
+                "DELETE FROM notification_log WHERE notified_ts < ?",
+                (now_ts - 7 * 86400,),
+            )
+
+    def get_notification_history(self, days: int = 7) -> List[sqlite3.Row]:
+        """Return notification_log entries from the last N days, newest first."""
+        from datetime import datetime as _dt
+        cutoff = int(_dt.now().timestamp()) - days * 86400
+        return self._fetch(
+            "SELECT * FROM notification_log WHERE notified_ts >= ? ORDER BY notified_ts DESC",
+            (cutoff,),
+        )
 
     # ------------------------------------------------------------------
     # Sighting history (every registration seen in arrivals feed)

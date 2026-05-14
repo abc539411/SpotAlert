@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime
+from collections import defaultdict
 
+import pytz
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
@@ -86,5 +89,56 @@ async def handle_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     await update.message.reply_html("\n".join(lines), disable_web_page_preview=True)
 
 
+async def handle_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    cfg = context.bot_data["cfg"]
+    tz = pytz.timezone(cfg.airport_tz)
+    rows = cfg.store.get_notification_history(days=7)
+
+    if not rows:
+        await update.message.reply_html(
+            "<b>Notification History</b>\n\nNo notifications in the last 7 days.",
+            disable_web_page_preview=True,
+        )
+        return
+
+    # Group by local date
+    by_date = defaultdict(list)
+    for row in rows:
+        date = datetime.fromtimestamp(row["notified_ts"]).astimezone(tz).date()
+        by_date[date].append(row)
+
+    lines = ["<b>Notification History — last 7 days</b>"]
+    for date in sorted(by_date.keys(), reverse=True):
+        lines.append("")
+        lines.append(f"<b>{date.strftime('%a %-d %b')}</b>")
+        for row in by_date[date]:
+            reg = row["registration"]
+            flag = _registration_flag(reg)
+            url = f"https://www.flightradar24.com/data/aircraft/{reg.lower()}"
+            reg_str = f'<a href="{url}">{reg}</a>{" " + flag if flag else ""}'
+
+            notif_type = row["notif_type"] or ""
+            extra_info = row["extra_info"] or ""
+            detail     = row["detail"] or ""
+
+            type_str = f"{notif_type} ({extra_info})" if extra_info else notif_type
+
+            arr_str = ""
+            if row["arrival_ts"]:
+                arr_str = " · arr " + datetime.fromtimestamp(row["arrival_ts"]).astimezone(tz).strftime("%H:%M")
+
+            parts = filter(None, [type_str, detail])
+            meta = " · ".join(parts)
+            line = f"  • {reg_str}"
+            if meta:
+                line += f" — {meta}"
+            if arr_str:
+                line += arr_str
+            lines.append(line)
+
+    await update.message.reply_html("\n".join(lines), disable_web_page_preview=True)
+
+
 def register_stats_handlers(app: Application) -> None:
     app.add_handler(CommandHandler("stats", handle_stats))
+    app.add_handler(CommandHandler("history", handle_history))
