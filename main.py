@@ -288,6 +288,7 @@ def main() -> None:
             BotCommand("spot",      "Check interesting flights or get a spotting recommendation"),
             BotCommand("rapid",     "Toggle rapid polling mode (use when at the airport)"),
             BotCommand("stats",     "View spotting stats and notification totals"),
+            BotCommand("history",   "Show notifications from the last 7 days"),
             BotCommand("filters",   "Manage watchlists & exclusion list"),
             BotCommand("settings",  "Configure filter intervals, days & windows"),
             BotCommand("status",    "Show bot status and next check times"),
