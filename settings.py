@@ -80,8 +80,8 @@ _SPOT_REC_KB = ReplyKeyboardMarkup(
     [
         ["Enabled", "Day Type"],
         ["Travel Time", "Threshold"],
-        ["EOD Hour", "Weather Gate"],
-        ["Max Spotted Times"],
+        ["Notify Window", "EOD Hour"],
+        ["Weather Gate", "Max Spotted Times"],
         ["Lighting →", "Sessions →"],
         ["Back"],
     ],
@@ -123,7 +123,7 @@ _MILITARY_KB = ReplyKeyboardMarkup(
 
 # Airport & Polling sub-keyboard
 _AIRPORT_KB = ReplyKeyboardMarkup(
-    [["Airport Code", "Check Interval"], ["Reminder Hours"], ["Dep. Pattern Threshold"], ["Notify Window"], ["Force Check Now"], ["Back"]],
+    [["Airport Code", "Check Interval"], ["Reminder Hours"], ["Dep. Pattern Threshold"], ["Force Check Now"], ["Back"]],
     resize_keyboard=True,
 )
 
@@ -274,6 +274,7 @@ def _spot_rec_detail(cfg) -> str:
         f"  Day Type: {cfg.spot_rec_day_type}\n"
         f"  Travel Time: {cfg.spot_rec_travel_mins} min\n"
         f"  Threshold: {cfg.spot_rec_threshold} planes\n"
+        f"  Notify Window: {cfg.spot_rec_notify_window_hours}h\n"
         f"  EOD Check: {cfg.spot_rec_eod_hour:02d}:00 local\n"
         f"  Weather Gate: {'On' if cfg.spot_rec_weather_gate else 'Off'}\n"
         f"  Lighting Gate: {'On' if cfg.spot_rec_lighting_gate else 'Off'}\n"
@@ -431,14 +432,6 @@ async def handle_airport_submenu(update: Update, context: ContextTypes.DEFAULT_T
         await update.message.reply_text(
             f"Current: {cfg.departure_pattern_threshold}%\n\n"
             "Minimum confidence % to show a predicted next departure (0 to disable, e.g. 80)",
-            reply_markup=_REMOVE_KB,
-        )
-        return ENTER_VALUE
-
-    if choice == "Notify Window":
-        await update.message.reply_text(
-            f"Current: {cfg.spot_rec_notify_window_hours}h\n\n"
-            "Hours ahead to start sending rolling spot notifications (e.g. 4 = notify when cluster starts within 4 hours).",
             reply_markup=_REMOVE_KB,
         )
         return ENTER_VALUE
@@ -671,7 +664,7 @@ async def handle_enter_value(update: Update, context: ContextTypes.DEFAULT_TYPE)
     # ----------------------------------------------------------------
     # Check interval
     # ----------------------------------------------------------------
-    if field == "Check Interval":
+    if field == "Check Interval" and category != "Military":
         try:
             minutes = int(raw)
             if not 1 <= minutes <= 120:
@@ -726,20 +719,6 @@ async def handle_enter_value(update: Update, context: ContextTypes.DEFAULT_TYPE)
         label = f"{value}%" if value > 0 else "disabled"
         await update.message.reply_text(f"Updated: departure pattern threshold {label}.", reply_markup=_AIRPORT_KB)
         return AIRPORT_SUBMENU
-
-    if field == "Notify Window":
-        try:
-            value = int(raw)
-            if value < 1:
-                raise ValueError
-        except ValueError:
-            await update.message.reply_text("Please enter a positive number of hours (e.g. 4).")
-            return ENTER_VALUE
-        cfg.spot_rec_notify_window_hours = value
-        store.save_setting("SPOT_REC_NOTIFY_WINDOW_HOURS", str(value))
-        await update.message.reply_text(f"Updated: rolling notifications fire when cluster starts within {value}h.", reply_markup=_AIRPORT_KB)
-        return AIRPORT_SUBMENU
-
 
     # ----------------------------------------------------------------
     # Military settings
@@ -953,7 +932,7 @@ async def handle_enter_value(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 _SPOT_REC_FIELDS = {
     "Enabled", "Day Type", "Travel Time", "Threshold",
-    "EOD Hour", "Weather Gate", "Max Spotted Times",
+    "Notify Window", "EOD Hour", "Weather Gate", "Max Spotted Times",
 }
 
 _LIGHTING_FIELDS = {
@@ -1010,6 +989,12 @@ async def handle_spot_rec_submenu(update: Update, context: ContextTypes.DEFAULT_
     elif choice == "Threshold":
         await update.message.reply_text(
             f"Current: {cfg.spot_rec_threshold}\n\nMinimum interesting arrivals needed to recommend:",
+            reply_markup=_REMOVE_KB,
+        )
+    elif choice == "Notify Window":
+        await update.message.reply_text(
+            f"Current: {cfg.spot_rec_notify_window_hours}h\n\n"
+            "Outer bound for rolling notifications — notify when a qualifying cluster starts within this many hours (e.g. 4).",
             reply_markup=_REMOVE_KB,
         )
     elif choice == "EOD Hour":
@@ -1101,8 +1086,7 @@ async def handle_sessions_submenu(update: Update, context: ContextTypes.DEFAULT_
     if choice == "Max Gap":
         await update.message.reply_text(
             f"Current: {cfg.spot_rec_max_gap_hours}h\n\n"
-            "Gap between events (hours) that splits activity into separate sessions.\n"
-            "Also used as the rolling check cooldown interval.",
+            "Gap between events (hours) that splits activity into separate sessions.",
             reply_markup=_REMOVE_KB,
         )
     elif choice == "Max Windows":
@@ -1178,6 +1162,17 @@ async def _handle_spot_rec_value(update: Update, context: ContextTypes.DEFAULT_T
             return ENTER_VALUE
         cfg.spot_rec_threshold = val
         store.save_setting("SPOT_REC_THRESHOLD", str(val))
+
+    elif field == "Notify Window":
+        try:
+            val = int(raw)
+            if val < 1:
+                raise ValueError
+        except ValueError:
+            await update.message.reply_text("Please enter a positive number of hours (e.g. 4).")
+            return ENTER_VALUE
+        cfg.spot_rec_notify_window_hours = val
+        store.save_setting("SPOT_REC_NOTIFY_WINDOW_HOURS", str(val))
 
     elif field == "EOD Hour":
         try:
