@@ -205,7 +205,6 @@ async def check_rolling_recommendation(context: ContextTypes.DEFAULT_TYPE, cfg, 
     qualifying = [e for e in evals if e.qualifying]
     filtered   = [e for e in evals if not e.qualifying]
     _populate_departures(qualifying + filtered, cfg, sunset_ts=sunset_ts, sunrise_ts=sunrise_ts)
-    qualifying, filtered = _apply_pre_sunrise_gate(qualifying, filtered, sunrise_ts, sunset_ts, cfg.spot_rec_lighting_gate)
 
     clusters, _ = _cluster_flights(
         qualifying, filtered,
@@ -298,7 +297,6 @@ async def run_eod_recommendation(context: ContextTypes.DEFAULT_TYPE) -> None:
     qualifying = [e for e in evals if e.qualifying]
     filtered   = [e for e in evals if not e.qualifying]
     _populate_departures(qualifying + filtered, cfg, sunset_ts=sunset_ts, sunrise_ts=sunrise_ts)
-    qualifying, filtered = _apply_pre_sunrise_gate(qualifying, filtered, sunrise_ts, sunset_ts, cfg.spot_rec_lighting_gate)
 
     clusters, orphaned = _cluster_flights(
         qualifying, filtered,
@@ -501,6 +499,7 @@ def _lighting_kwargs(cfg, sunrise_ts: int, sunset_ts: int) -> dict:
         bad_light_start=cfg.spot_rec_bad_light_start,
         bad_light_end=cfg.spot_rec_bad_light_end,
         airport_tz=cfg.airport_tz,
+        lighting_gate=cfg.spot_rec_lighting_gate,
     )
 
 
@@ -579,7 +578,7 @@ def _render_flights_with_lulls(
     return lines
 
 
-def _gap_cluster_raw(flights: List[FlightEval], max_gap_secs: int) -> List[List[FlightEval]]:
+def _gap_cluster_raw(flights: List[FlightEval], max_gap_secs: int, valid_ts_set=None) -> List[List[FlightEval]]:
     """Greedy gap-based clustering of flights by event timestamps.
 
     Returns a list of clusters; each cluster is a list of FlightEval objects whose
@@ -588,12 +587,9 @@ def _gap_cluster_raw(flights: List[FlightEval], max_gap_secs: int) -> List[List[
     """
     if not flights:
         return []
-    events: List[Tuple[int, FlightEval]] = []
-    for f in flights:
-        events.append((f.arrival_ts, f))
-        if f.dep_ts:
-            events.append((f.dep_ts, f))
-    events.sort(key=lambda x: x[0])
+    events = _build_events(flights, valid_ts_set)
+    if not events:
+        return []
 
     raw: List[List[Tuple[int, FlightEval]]] = []
     current = [events[0]]
@@ -610,8 +606,10 @@ def _gap_cluster_raw(flights: List[FlightEval], max_gap_secs: int) -> List[List[
         start, end = group[0][0], group[-1][0]
         cluster_flights = [
             f for f in flights
-            if (start <= f.arrival_ts <= end
-                or (f.dep_ts and start <= f.dep_ts <= end))
+            if ((valid_ts_set is None or (f.registration, f.arrival_ts) in valid_ts_set)
+                and start <= f.arrival_ts <= end)
+            or ((f.dep_ts and (valid_ts_set is None or (f.registration, f.dep_ts) in valid_ts_set))
+                and start <= f.dep_ts <= end)
         ]
         if cluster_flights:
             result.append(cluster_flights)
@@ -636,96 +634,51 @@ def _truncate_back(remaining: list) -> None:
         remaining.pop()
 
 
-def _build_events(cluster_flights: List[FlightEval]) -> list:
+def _build_events(cluster_flights: List[FlightEval], valid_ts_set=None) -> list:
+    """Build sorted event list. If valid_ts_set provided, only include (registration, ts) pairs in it."""
     events = []
     for f in cluster_flights:
-        events.append((f.arrival_ts, f))
+        if valid_ts_set is None or (f.registration, f.arrival_ts) in valid_ts_set:
+            events.append((f.arrival_ts, f))
         if f.dep_ts:
-            events.append((f.dep_ts, f))
+            if valid_ts_set is None or (f.registration, f.dep_ts) in valid_ts_set:
+                events.append((f.dep_ts, f))
     events.sort(key=lambda x: x[0])
     return events
 
 
-def _compute_window_bounds(cluster_flights: List[FlightEval]) -> Tuple[int, int]:
+def _compute_window_bounds(cluster_flights: List[FlightEval], valid_ts_set=None) -> Tuple[int, int]:
     """Main window: front truncation then back (gives latest possible start)."""
-    remaining = _build_events(cluster_flights)
+    remaining = _build_events(cluster_flights, valid_ts_set)
     _truncate_front(remaining)
     _truncate_back(remaining)
     return remaining[0][0], remaining[-1][0]
 
 
-def _alt_window_has_qualifying_flight(
-    cluster_flights: List[FlightEval],
-    alt_start: int,
-    alt_end: int,
-    sunrise_ts: int,
-    sunset_ts: int,
-    lighting_gate: bool,
-) -> bool:
-    """Mirror _apply_pre_sunrise_gate but evaluated against events within [alt_start, alt_end] only.
-
-    A flight qualifies in the alternative window if:
-    - Catchable via arrival (arr in window) AND arr >= sunrise, OR
-    - Catchable via arrival AND arr < sunrise AND dep is ALSO in window AND dep in daylight
-      (same logic as _apply_pre_sunrise_gate: pre-sunrise arr only ok with daylight dep)
-    - Catchable via departure only (arr not in window) AND dep >= sunrise
-
-    The key difference from the global gate: a flight that passed the global gate due to a
-    daylight departure may FAIL here if that departure falls outside the alternative window.
-    """
-    if not lighting_gate or not sunrise_ts:
-        return True
-    for f in cluster_flights:
-        arr_in = alt_start <= f.arrival_ts <= alt_end
-        dep_in = bool(f.dep_ts and alt_start <= f.dep_ts <= alt_end)
-        if not arr_in and not dep_in:
-            continue
-        if arr_in:
-            if f.arrival_ts >= sunrise_ts:
-                return True  # daylight arrival → qualifying
-            # Pre-sunrise arrival: only qualifying if daylight dep is also in this window
-            if dep_in and sunrise_ts <= f.dep_ts <= sunset_ts:
-                return True
-        elif dep_in:
-            if f.dep_ts >= sunrise_ts:
-                return True  # departure-only, in daylight → qualifying
-    return False
 
 
 def _compute_alternative_windows(
     cluster_flights: List[FlightEval],
     main_start: int,
     main_end: int,
-    sunrise_ts: int = 0,
-    sunset_ts: int = 0,
-    lighting_gate: bool = False,
+    valid_ts_set=None,
 ) -> List[Tuple[int, int]]:
-    """Compute back-first and alternating windows; return those shorter than main AND
-    that have at least one qualifying (daylight) flight after applying the same gates.
+    """Compute back-first and alternating windows; return those with shorter duration.
 
-    Back-first: back truncation then front.
-    Alternating: each round tries front then back until neither can be removed.
+    Since valid_ts_set already filters out invalid events, all events used here are
+    guaranteed to be in daylight — no additional gate check needed.
 
     Returns up to 2 alternatives (shortest first), deduplicated.
-    Alternatives always start earlier — front-first guarantees the latest start.
     """
     main_dur = main_end - main_start
     seen: set = set()
     candidates = []
 
     def _accept(a_start, a_end):
-        if a_end - a_start >= main_dur:
-            return False
-        if (a_start, a_end) in seen:
-            return False
-        if not _alt_window_has_qualifying_flight(
-            cluster_flights, a_start, a_end, sunrise_ts, sunset_ts, lighting_gate
-        ):
-            return False
-        return True
+        return a_end - a_start < main_dur and (a_start, a_end) not in seen
 
     # Back-first
-    rem_bf = _build_events(cluster_flights)
+    rem_bf = _build_events(cluster_flights, valid_ts_set)
     _truncate_back(rem_bf)
     _truncate_front(rem_bf)
     bf_start, bf_end = rem_bf[0][0], rem_bf[-1][0]
@@ -734,7 +687,7 @@ def _compute_alternative_windows(
         candidates.append((bf_end - bf_start, bf_start, bf_end))
 
     # Alternating: try front then back each round until no progress
-    rem_alt = _build_events(cluster_flights)
+    rem_alt = _build_events(cluster_flights, valid_ts_set)
     while True:
         removed = False
         if len(rem_alt) > 1:
@@ -817,18 +770,18 @@ def _cluster_flights(
     bad_light_start: str = "",
     bad_light_end: str = "",
     airport_tz: str = "",
+    lighting_gate: bool = True,
 ) -> Tuple[List[SpotCluster], List[FlightEval]]:
     """Iterative window extraction algorithm.
 
-    Phase A: Gap-cluster qualifying flights only; repeatedly extract the window with
-    the most flights (tie-break: earliest start) using front + back truncation until
-    only singles remain.
+    Before Phase A, individual events outside [sunrise, sunset] are dropped from the
+    clustering event pool (if lighting_gate and sunrise_ts are set). Flights with no
+    valid events go directly to also_interesting. This ensures window bounds and
+    alternative windows are naturally valid without post-hoc gate checks.
+
+    Phase A: Gap-cluster qualifying flights only using valid events.
     Phase B: Assign filtered flights to windows by event time range; orphans → also_interesting.
     Phase C: Compute lulls per window using all events (qualifying + filtered).
-
-    Returns (windows, also_interesting).
-    also_interesting contains qualifying singles (f.qualifying=True, shown normally)
-    and filtered orphans (f.qualifying=False, shown in italics).
     """
     lighting_kwargs = dict(
         sunrise_ts=sunrise_ts, sunset_ts=sunset_ts,
@@ -842,6 +795,28 @@ def _cluster_flights(
     also_interesting: List[FlightEval] = []
     seen_registrations: set = set()   # dedup also_interesting by registration
 
+    # Build valid event set: only events within [sunrise, sunset] enter the clustering pool
+    if lighting_gate and sunrise_ts and sunset_ts:
+        valid_ts_set: Optional[set] = set()
+        cluster_qualifying = []
+        for f in qualifying:
+            arr_ok = sunrise_ts <= f.arrival_ts <= sunset_ts
+            dep_ok = bool(f.dep_ts and sunrise_ts <= f.dep_ts <= sunset_ts)
+            if arr_ok:
+                valid_ts_set.add((f.registration, f.arrival_ts))
+            if dep_ok:
+                valid_ts_set.add((f.registration, f.dep_ts))
+            if arr_ok or dep_ok:
+                cluster_qualifying.append(f)
+            else:
+                # No valid events — goes to also_interesting (displayed but not clustered)
+                if f.registration not in seen_registrations:
+                    seen_registrations.add(f.registration)
+                    also_interesting.append(dc_replace(f))
+    else:
+        valid_ts_set = None
+        cluster_qualifying = qualifying
+
     def _lighting_for(f: FlightEval, w_start: int, w_end: int) -> FlightEval:
         """Set arr/dep lighting zones on a FlightEval copy scoped to [w_start, w_end]."""
         arr_in = w_start <= f.arrival_ts <= w_end
@@ -853,8 +828,8 @@ def _cluster_flights(
         f.dep_lighting_zone = _lighting_quality(f.dep_ts, **lighting_kwargs) if f.dep_ts else None
         return f
 
-    # Phase A: iterative extraction on qualifying flights only
-    pool = _gap_cluster_raw(qualifying, max_gap_secs)
+    # Phase A: iterative extraction using only cluster_qualifying (flights with valid events)
+    pool = _gap_cluster_raw(cluster_qualifying, max_gap_secs, valid_ts_set)
 
     while pool:
         # Pick cluster with most flights; tie-break: earliest arrival
@@ -871,12 +846,8 @@ def _cluster_flights(
                         also_interesting.append(dc_replace(f))
             break
 
-        window_start, window_end = _compute_window_bounds(best)
-        alt_windows = _compute_alternative_windows(
-            best, window_start, window_end,
-            sunrise_ts=sunrise_ts, sunset_ts=sunset_ts,
-            lighting_gate=bool(sunrise_ts),
-        )
+        window_start, window_end = _compute_window_bounds(best, valid_ts_set)
+        alt_windows = _compute_alternative_windows(best, window_start, window_end, valid_ts_set)
 
         # Build per-window flight copies with lighting zones
         window_flights = [
@@ -902,7 +873,7 @@ def _cluster_flights(
                 if id(f) not in seen_ids:
                     seen_ids.add(id(f))
                     remaining.append(f)
-        pool = _gap_cluster_raw(remaining, max_gap_secs)
+        pool = _gap_cluster_raw(remaining, max_gap_secs, valid_ts_set)
 
     # Phase B: assign filtered flights to windows or also_interesting
     for f in filtered:
@@ -1152,7 +1123,6 @@ async def _run_spot_check(send_fn, context: ContextTypes.DEFAULT_TYPE, day: str)
         qualifying   = [e for e in evals if e.qualifying]
         filtered     = [e for e in evals if not e.qualifying]
         _populate_departures(qualifying + filtered, cfg, sunset_ts=sunset_ts, sunrise_ts=sunrise_ts)
-        qualifying, filtered = _apply_pre_sunrise_gate(qualifying, filtered, sunrise_ts, sunset_ts, cfg.spot_rec_lighting_gate)
         clusters, orphaned = _cluster_flights(
             qualifying, filtered,
             max_gap_secs=cfg.spot_rec_max_gap_hours * 3600,
@@ -1175,7 +1145,6 @@ async def _run_spot_check(send_fn, context: ContextTypes.DEFAULT_TYPE, day: str)
         qualifying   = [e for e in evals if e.qualifying]
         filtered     = [e for e in evals if not e.qualifying]
         _populate_departures(qualifying + filtered, cfg, sunset_ts=sunset_ts, sunrise_ts=sunrise_ts)
-        qualifying, filtered = _apply_pre_sunrise_gate(qualifying, filtered, sunrise_ts, sunset_ts, cfg.spot_rec_lighting_gate)
         clusters, orphaned = _cluster_flights(
             qualifying, filtered,
             max_gap_secs=cfg.spot_rec_max_gap_hours * 3600,
@@ -1232,7 +1201,6 @@ async def _send_spot_followup(context: ContextTypes.DEFAULT_TYPE) -> None:
     qualifying = [e for e in evals if e.qualifying]
     filtered   = [e for e in evals if not e.qualifying]
     _populate_departures(qualifying + filtered, cfg, sunset_ts=sunset_ts, sunrise_ts=sunrise_ts)
-    qualifying, filtered = _apply_pre_sunrise_gate(qualifying, filtered, sunrise_ts, sunset_ts, cfg.spot_rec_lighting_gate)
 
     clusters, _ = _cluster_flights(
         qualifying, filtered,
