@@ -25,6 +25,7 @@ from lookup import register_lookup_handler
 from stats import register_stats_handlers
 from spot_recommendation import register_spot_rec_handlers, run_eod_recommendation
 from users import register_user_handlers
+from rapid import register_rapid_handler
 import airframe
 
 log = logging.getLogger(__name__)
@@ -107,6 +108,10 @@ class AppConfig:
     route_type_renotify_days: int = 30     # cooldown per (flight, type) pairing
     route_type_days: List[str] = field(default_factory=list)
     route_type_time_filter: str = ""
+
+    # Rapid mode — in-memory only, never persisted
+    rapid_mode: bool = field(repr=False, default=False)
+    rapid_mode_interval: int = 120    # seconds, loaded from RAPID_MODE_INTERVAL_MINS
 
     # Dependencies — excluded from repr/comparison
     fr_api: object = field(repr=False, default=None)
@@ -216,6 +221,7 @@ def build_config(env: Env, fr_api: FlightRadar24API, store: SqliteStore, catalog
         route_type_renotify_days=_si(store, env, "ROUTE_TYPE_RENOTIFY_DAYS", default="30"),
         route_type_days=_sl(store, env, "ROUTE_TYPE_ACTIVE_DAYS"),
         route_type_time_filter=_s(store, env, "ROUTE_TYPE_ARRIVAL_WINDOW"),
+        rapid_mode_interval=_si(store, env, "RAPID_MODE_INTERVAL_MINS", default="2") * 60,
         fr_api=fr_api,
         store=store,
         catalog=catalog,
@@ -280,6 +286,7 @@ def main() -> None:
             BotCommand("filters",   "Manage watchlists & exclusion list"),
             BotCommand("settings",  "Configure filter intervals, days & windows"),
             BotCommand("status",    "Show bot status and next check times"),
+            BotCommand("rapid",     "Toggle rapid polling mode (use when at the airport)"),
         ])
 
     token = env.str("TELEGRAM_BOT_TOKEN")
@@ -294,6 +301,7 @@ def main() -> None:
     register_stats_handlers(app)
     register_spot_rec_handlers(app)
     register_user_handlers(app)
+    register_rapid_handler(app)
     # Named so settings.py can reschedule it when the interval changes
     app.job_queue.run_repeating(
         run_check, interval=cfg.check_interval, first=10,

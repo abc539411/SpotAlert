@@ -375,6 +375,8 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"  Next Arrivals: {next_job('arrivals_check')} (local)",
         f"  Next Military: {next_job('military_check')} (local)",
     ]
+    if cfg.rapid_mode:
+        lines.append(f"  🔴 Rapid Mode: ON ({cfg.rapid_mode_interval // 60} min)")
     await update.message.reply_html("\n".join(lines), disable_web_page_preview=True)
 
 

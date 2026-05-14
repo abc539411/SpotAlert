@@ -181,6 +181,8 @@ async def check_rolling_recommendation(context: ContextTypes.DEFAULT_TYPE, cfg, 
     """
     if not cfg.spot_rec_enabled:
         return
+    if cfg.rapid_mode:
+        return  # user is at the airport — no rolling notifications needed
 
     tz = pytz.timezone(cfg.airport_tz)
     now = datetime.now(tz)
