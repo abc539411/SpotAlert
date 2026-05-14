@@ -205,7 +205,6 @@ async def check_rolling_recommendation(context: ContextTypes.DEFAULT_TYPE, cfg, 
     qualifying = [e for e in evals if e.qualifying]
     filtered   = [e for e in evals if not e.qualifying]
     _populate_departures(qualifying + filtered, cfg, sunset_ts=sunset_ts, sunrise_ts=sunrise_ts)
-    qualifying, filtered = _apply_pre_sunrise_gate(qualifying, filtered, sunrise_ts, sunset_ts, cfg.spot_rec_lighting_gate)
 
     clusters, _ = _cluster_flights(
         qualifying, filtered,
@@ -249,7 +248,8 @@ async def check_rolling_recommendation(context: ContextTypes.DEFAULT_TYPE, cfg, 
             f"Window: {window_str}",
             "",
         ]
-        lines.extend(_render_flights_with_lulls(cluster.flights, cluster.filtered, cluster.lulls, tz))
+        lines.extend(_render_flights_with_lulls(cluster.flights, cluster.filtered, cluster.lulls, tz,
+                                             window_start=cluster.start_ts, window_end=cluster.end_ts))
         lines.append("")
         if weather:
             lines.append(f"Weather: {weather}")
@@ -297,7 +297,6 @@ async def run_eod_recommendation(context: ContextTypes.DEFAULT_TYPE) -> None:
     qualifying = [e for e in evals if e.qualifying]
     filtered   = [e for e in evals if not e.qualifying]
     _populate_departures(qualifying + filtered, cfg, sunset_ts=sunset_ts, sunrise_ts=sunrise_ts)
-    qualifying, filtered = _apply_pre_sunrise_gate(qualifying, filtered, sunrise_ts, sunset_ts, cfg.spot_rec_lighting_gate)
 
     clusters, orphaned = _cluster_flights(
         qualifying, filtered,
@@ -307,7 +306,7 @@ async def run_eod_recommendation(context: ContextTypes.DEFAULT_TYPE) -> None:
         **_lighting_kwargs(cfg, sunrise_ts, sunset_ts),
     )
 
-    eligible = [c for c in clusters if len(c.flights) >= cfg.spot_rec_threshold][:cfg.spot_rec_max_windows]
+    eligible = clusters[:cfg.spot_rec_max_windows]
     if not eligible:
         return
 
@@ -316,7 +315,7 @@ async def run_eod_recommendation(context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     day_str = tomorrow.strftime("%A %-d %b")
-    header = f"Spotting recommendation for {day_str}"
+    header = f"Spotting Recommendation for {day_str}"
     msg = _build_clusters_message(eligible, clusters, weather, cfg.spot_rec_weather_gate,
                                   header, tz, sunrise_ts, sunset_ts, orphaned_filtered=orphaned)
 
@@ -390,6 +389,7 @@ class SpotCluster:
     end_ts: int                            # latest event in cluster
     recommended_start_ts: int              # latest "be at airport by" time (all flights still catchable)
     lulls: List[Tuple[int, int]] = dc_field(default_factory=list)  # (gap_start_ts, gap_end_ts)
+    alternative_windows: List[Tuple[int, int]] = dc_field(default_factory=list)  # shorter alternative windows
 
 
 
@@ -499,6 +499,7 @@ def _lighting_kwargs(cfg, sunrise_ts: int, sunset_ts: int) -> dict:
         bad_light_start=cfg.spot_rec_bad_light_start,
         bad_light_end=cfg.spot_rec_bad_light_end,
         airport_tz=cfg.airport_tz,
+        lighting_gate=cfg.spot_rec_lighting_gate,
     )
 
 
@@ -515,34 +516,246 @@ def _lull_line(lull_start_ts: int, lull_end_ts: int, tz) -> str:
 def _render_flights_with_lulls(
     flights, filtered, lulls, tz,
     now_ts: int = 0,
+    window_start: int = 0,
+    window_end: int = 0,
 ) -> List[str]:
-    """Render flights interleaved with lull lines in chronological order.
+    """Render qualifying flights and lull lines sorted by sort key.
 
-    Lull is inserted before the first flight whose arrival marks the end of
-    the break (lull_end_ts <= flight.arrival_ts), so break lines sit between
-    the last flight before the gap and the first flight after it.
-    Filtered (italic) flights are appended at the end.
+    Sort key per item:
+    - Flight: earliest important event (arrival if both important, or the sole important one)
+    - Lull: lull_start_ts
+    Flights sort before lulls on equal timestamps.
+
+    An event is "important" (bolded) only if it falls within [window_start, window_end]
+    AND not strictly inside any lull [lull_start < ts < lull_end].
+    Events outside the window are shown as plain-text context, not bolded.
+    Filtered flights append at end in italics with no bolding.
     """
-    lines = []
-    lull_iter = iter(lulls)
-    next_lull = next(lull_iter, None)
+    def _in_lull(ts: int) -> bool:
+        return any(s < ts < e for s, e in lulls)
 
-    for e in flights:
-        if now_ts > 0 and e.arrival_ts < now_ts and (not e.dep_ts or e.dep_ts < now_ts):
+    def _in_window(ts: int) -> bool:
+        if not window_start or not window_end:
+            return True   # no window provided — treat all as in-window
+        return window_start <= ts <= window_end
+
+    def _make_item(f, idx, is_filtered):
+        arr_important = _in_window(f.arrival_ts) and not _in_lull(f.arrival_ts)
+        dep_important = bool(f.dep_ts and _in_window(f.dep_ts) and not _in_lull(f.dep_ts))
+        if arr_important:
+            sort_key = f.arrival_ts
+        elif dep_important and f.dep_ts:
+            sort_key = f.dep_ts
+        else:
+            sort_key = f.arrival_ts
+        return (sort_key, 0, idx, 'flight', f, arr_important, dep_important, is_filtered)
+
+    items = []
+    for idx, f in enumerate(flights):
+        if now_ts > 0 and f.arrival_ts < now_ts and (not f.dep_ts or f.dep_ts < now_ts):
             continue
-        while next_lull and next_lull[1] <= e.arrival_ts:
-            lines.append(_lull_line(next_lull[0], next_lull[1], tz))
-            next_lull = next(lull_iter, None)
-        lines.append(_flight_line(e, tz))
+        items.append(_make_item(f, idx, False))
 
-    while next_lull:
-        lines.append(_lull_line(next_lull[0], next_lull[1], tz))
-        next_lull = next(lull_iter, None)
+    for idx, f in enumerate(filtered):
+        items.append(_make_item(f, len(flights) + idx, True))
 
-    for e in filtered:
-        lines.append(f"<i>{_flight_line(e, tz, include_reason=True)}</i>")
+    for idx, (lull_start, lull_end) in enumerate(lulls):
+        items.append((lull_start, 1, idx, 'lull', lull_start, lull_end, None, None))
+
+    items.sort(key=lambda x: (x[0], x[1], x[2]))
+
+    lines = []
+    for item in items:
+        if item[3] == 'flight':
+            _, _, _, _, f, arr_imp, dep_imp, is_filtered = item
+            line = _flight_line(f, tz, include_reason=is_filtered,
+                                arr_important=arr_imp, dep_important=dep_imp)
+            lines.append(f"<i>{line}</i>" if is_filtered else line)
+        else:
+            _, _, _, _, lull_start, lull_end, _, _ = item
+            lines.append(_lull_line(lull_start, lull_end, tz))
 
     return lines
+
+
+def _gap_cluster_raw(flights: List[FlightEval], max_gap_secs: int, valid_ts_set=None) -> List[List[FlightEval]]:
+    """Greedy gap-based clustering of flights by event timestamps.
+
+    Returns a list of clusters; each cluster is a list of FlightEval objects whose
+    events (arrivals + departures) fall within the cluster's time span.
+    A flight that straddles two clusters appears in both — callers use dc_replace() to copy.
+    """
+    if not flights:
+        return []
+    events = _build_events(flights, valid_ts_set)
+    if not events:
+        return []
+
+    raw: List[List[Tuple[int, FlightEval]]] = []
+    current = [events[0]]
+    for ts, f in events[1:]:
+        if ts - current[-1][0] > max_gap_secs:
+            raw.append(current)
+            current = [(ts, f)]
+        else:
+            current.append((ts, f))
+    raw.append(current)
+
+    result = []
+    for group in raw:
+        start, end = group[0][0], group[-1][0]
+        cluster_flights = [
+            f for f in flights
+            if ((valid_ts_set is None or (f.registration, f.arrival_ts) in valid_ts_set)
+                and start <= f.arrival_ts <= end)
+            or ((f.dep_ts and (valid_ts_set is None or (f.registration, f.dep_ts) in valid_ts_set))
+                and start <= f.dep_ts <= end)
+        ]
+        if cluster_flights:
+            result.append(cluster_flights)
+    return result
+
+
+def _truncate_front(remaining: list) -> None:
+    """Remove events from the front until the next removal would strand a flight."""
+    while len(remaining) > 1:
+        _, flight = remaining[0]
+        if not any(f is flight for _, f in remaining[1:]):
+            break
+        remaining.pop(0)
+
+
+def _truncate_back(remaining: list) -> None:
+    """Remove events from the back until the next removal would strand a flight."""
+    while len(remaining) > 1:
+        _, flight = remaining[-1]
+        if not any(f is flight for _, f in remaining[:-1]):
+            break
+        remaining.pop()
+
+
+def _build_events(cluster_flights: List[FlightEval], valid_ts_set=None) -> list:
+    """Build sorted event list. If valid_ts_set provided, only include (registration, ts) pairs in it."""
+    events = []
+    for f in cluster_flights:
+        if valid_ts_set is None or (f.registration, f.arrival_ts) in valid_ts_set:
+            events.append((f.arrival_ts, f))
+        if f.dep_ts:
+            if valid_ts_set is None or (f.registration, f.dep_ts) in valid_ts_set:
+                events.append((f.dep_ts, f))
+    events.sort(key=lambda x: x[0])
+    return events
+
+
+def _compute_window_bounds(cluster_flights: List[FlightEval], valid_ts_set=None) -> Tuple[int, int]:
+    """Main window: front truncation then back (gives latest possible start)."""
+    remaining = _build_events(cluster_flights, valid_ts_set)
+    _truncate_front(remaining)
+    _truncate_back(remaining)
+    return remaining[0][0], remaining[-1][0]
+
+
+
+
+def _compute_alternative_windows(
+    cluster_flights: List[FlightEval],
+    main_start: int,
+    main_end: int,
+    valid_ts_set=None,
+) -> List[Tuple[int, int]]:
+    """Compute back-first and alternating windows; return those with shorter duration.
+
+    Since valid_ts_set already filters out invalid events, all events used here are
+    guaranteed to be in daylight — no additional gate check needed.
+
+    Returns up to 2 alternatives (shortest first), deduplicated.
+    """
+    main_dur = main_end - main_start
+    seen: set = set()
+    candidates = []
+
+    def _accept(a_start, a_end):
+        return a_end - a_start < main_dur and (a_start, a_end) not in seen
+
+    # Back-first
+    rem_bf = _build_events(cluster_flights, valid_ts_set)
+    _truncate_back(rem_bf)
+    _truncate_front(rem_bf)
+    bf_start, bf_end = rem_bf[0][0], rem_bf[-1][0]
+    if _accept(bf_start, bf_end):
+        seen.add((bf_start, bf_end))
+        candidates.append((bf_end - bf_start, bf_start, bf_end))
+
+    # Alternating: try front then back each round until no progress
+    rem_alt = _build_events(cluster_flights, valid_ts_set)
+    while True:
+        removed = False
+        if len(rem_alt) > 1:
+            _, flight = rem_alt[0]
+            if any(f is flight for _, f in rem_alt[1:]):
+                rem_alt.pop(0)
+                removed = True
+        if len(rem_alt) > 1:
+            _, flight = rem_alt[-1]
+            if any(f is flight for _, f in rem_alt[:-1]):
+                rem_alt.pop()
+                removed = True
+        if not removed:
+            break
+    alt_start, alt_end = rem_alt[0][0], rem_alt[-1][0]
+    if _accept(alt_start, alt_end):
+        seen.add((alt_start, alt_end))
+        candidates.append((alt_end - alt_start, alt_start, alt_end))
+
+    candidates.sort()
+    return [(s, e) for _, s, e in candidates[:2]]
+
+
+def _compute_lulls(
+    window_flights: List[FlightEval],
+    window_start: int,
+    window_end: int,
+    notable_lull_secs: int,
+    max_lulls: int,
+) -> List[Tuple[int, int]]:
+    """Find lull times within [window_start, window_end].
+
+    For every pair (E_i, E_j) from different registrations, check whether any
+    event E_k between them belongs to a THIRD registration. If so the interval
+    is blocked (another plane is present). If all events between belong to
+    E_i's or E_j's flight, the interval is a valid lull — the spotter only
+    needs one event per flight, so same-flight events don't break the gap.
+
+    Takes top max_lulls by duration if >= notable_lull_secs, displayed in time order.
+    """
+    events = []
+    for f in window_flights:
+        if window_start <= f.arrival_ts <= window_end:
+            events.append((f.arrival_ts, f.registration))
+        if f.dep_ts and window_start <= f.dep_ts <= window_end:
+            events.append((f.dep_ts, f.registration))
+    events.sort(key=lambda x: x[0])
+
+    candidates = []
+    n = len(events)
+    for i in range(n):
+        ts_i, reg_i = events[i]
+        for j in range(i + 1, n):
+            ts_j, reg_j = events[j]
+            if reg_i == reg_j:
+                continue
+            # Blocked if any event between belongs to a third registration
+            blocked = any(
+                reg_k != reg_i and reg_k != reg_j
+                for _, reg_k in events[i + 1:j]
+            )
+            if not blocked:
+                gap = ts_j - ts_i
+                if gap >= notable_lull_secs:
+                    candidates.append((gap, ts_i, ts_j))
+
+    candidates.sort(reverse=True)
+    return sorted((s, e) for _, s, e in candidates[:max_lulls])
 
 
 def _cluster_flights(
@@ -557,11 +770,18 @@ def _cluster_flights(
     bad_light_start: str = "",
     bad_light_end: str = "",
     airport_tz: str = "",
-) -> List[SpotCluster]:
-    """Group qualifying flights into natural activity clusters separated by gaps > max_gap_secs.
+    lighting_gate: bool = True,
+) -> Tuple[List[SpotCluster], List[FlightEval]]:
+    """Iterative window extraction algorithm.
 
-    Lighting quality is computed per flight and used as a soft tiebreaker
-    when choosing the recommended start time within each cluster.
+    Before Phase A, individual events outside [sunrise, sunset] are dropped from the
+    clustering event pool (if lighting_gate and sunrise_ts are set). Flights with no
+    valid events go directly to also_interesting. This ensures window bounds and
+    alternative windows are naturally valid without post-hoc gate checks.
+
+    Phase A: Gap-cluster qualifying flights only using valid events.
+    Phase B: Assign filtered flights to windows by event time range; orphans → also_interesting.
+    Phase C: Compute lulls per window using all events (qualifying + filtered).
     """
     lighting_kwargs = dict(
         sunrise_ts=sunrise_ts, sunset_ts=sunset_ts,
@@ -569,158 +789,119 @@ def _cluster_flights(
         bad_light_start=bad_light_start, bad_light_end=bad_light_end,
         airport_tz=airport_tz,
     )
-    if not qualifying:
-        if not filtered:
-            return []
-        f_sorted = sorted(filtered, key=lambda x: x.arrival_ts)
-        return [SpotCluster(
-            flights=[],
-            filtered=f_sorted,
-            start_ts=f_sorted[0].arrival_ts,
-            end_ts=f_sorted[-1].arrival_ts,
-            recommended_start_ts=f_sorted[0].arrival_ts,
-        )]
+    _PRIORITY = {"low_light": 0, "bad_light": 1}
 
-    # Build sorted event list: (timestamp, FlightEval) from qualifying flights only
-    events: List[Tuple[int, FlightEval]] = []
-    for f in qualifying:
-        events.append((f.arrival_ts, f))
-        if f.dep_ts:
-            events.append((f.dep_ts, f))
-    events.sort(key=lambda x: x[0])
+    windows: List[SpotCluster] = []
+    also_interesting: List[FlightEval] = []
+    seen_registrations: set = set()   # dedup also_interesting by registration
 
-    # Greedily group events into clusters by gap threshold
-    raw_clusters: List[List[Tuple[int, FlightEval]]] = []
-    current = [events[0]]
-    for ts, f in events[1:]:
-        if ts - current[-1][0] > max_gap_secs:
-            raw_clusters.append(current)
-            current = [(ts, f)]
-        else:
-            current.append((ts, f))
-    raw_clusters.append(current)
-
-    result: List[SpotCluster] = []
-
-    for raw in raw_clusters:
-        cluster_start = raw[0][0]
-        cluster_end   = raw[-1][0]
-
-        # Flights whose any event falls within this cluster's range.
-        # Copy each FlightEval so per-cluster fields (session_ts, show_dep,
-        # lighting_zone) don't clobber state when a flight spans two clusters
-        # (e.g. arrives in cluster 1 but departs in cluster 2).
-        cluster_flights = []
+    # Build valid event set: only events within [sunrise, sunset] enter the clustering pool
+    if lighting_gate and sunrise_ts and sunset_ts:
+        valid_ts_set: Optional[set] = set()
+        cluster_qualifying = []
         for f in qualifying:
-            if (cluster_start <= f.arrival_ts <= cluster_end
-                    or (f.dep_ts and cluster_start <= f.dep_ts <= cluster_end)):
-                cluster_flights.append(dc_replace(f))
+            arr_ok = sunrise_ts <= f.arrival_ts <= sunset_ts
+            dep_ok = bool(f.dep_ts and sunrise_ts <= f.dep_ts <= sunset_ts)
+            if arr_ok:
+                valid_ts_set.add((f.registration, f.arrival_ts))
+            if dep_ok:
+                valid_ts_set.add((f.registration, f.dep_ts))
+            if arr_ok or dep_ok:
+                cluster_qualifying.append(f)
+            else:
+                # No valid events — goes to also_interesting (displayed but not clustered)
+                if f.registration not in seen_registrations:
+                    seen_registrations.add(f.registration)
+                    also_interesting.append(dc_replace(f))
+    else:
+        valid_ts_set = None
+        cluster_qualifying = qualifying
 
-        # Set session_ts, show_dep, and lighting_zone per cluster copy.
-        # Lighting zone is computed only from timestamps that fall within this
-        # cluster (arr_in / dep_in) so out-of-cluster departures don't dilute it.
-        _PRIORITY = {"low_light": 0, "bad_light": 1}
-        for f in cluster_flights:
-            arr_in = cluster_start <= f.arrival_ts <= cluster_end
-            dep_in = bool(f.dep_ts and cluster_start <= f.dep_ts <= cluster_end)
-            f.session_ts = f.arrival_ts if arr_in else f.dep_ts
-            f.show_dep   = arr_in and dep_in
-            check_ts = ([f.arrival_ts] if arr_in else []) + ([f.dep_ts] if dep_in and f.dep_ts else [])
-            zones = [z for ts in check_ts if (z := _lighting_quality(ts, **lighting_kwargs))]
-            f.lighting_zone = min(zones, key=lambda z: _PRIORITY[z]) if zones else None
-            f.arr_lighting_zone = _lighting_quality(f.arrival_ts, **lighting_kwargs) if arr_in else None
-            f.dep_lighting_zone = _lighting_quality(f.dep_ts, **lighting_kwargs) if (dep_in and f.dep_ts) else None
-
-        # Recommended start: latest time you can arrive and still catch every flight.
-        # A flight is only catchable via its dep_ts when the departure is actually
-        # within this cluster (show_dep=True); out-of-cluster departures don't count.
-        all_events = sorted(set(
-            [f.arrival_ts for f in cluster_flights] +
-            [f.dep_ts for f in cluster_flights if f.dep_ts and f.show_dep]
-        ))
-        best_start = cluster_start
-        best_good  = -1
-        best_ts    = -1
-        for ei in all_events:
-            catchable = [
-                f for f in cluster_flights
-                if f.arrival_ts >= ei or (f.show_dep and f.dep_ts and f.dep_ts >= ei)
-            ]
-            if len(catchable) < len(cluster_flights):
-                continue
-            good_light = sum(1 for f in catchable if f.lighting_zone is None)
-            if good_light > best_good or (good_light == best_good and ei > best_ts):
-                best_good  = good_light
-                best_ts    = ei
-                best_start = ei
-        recommended_start_ts = best_start
-        # cluster_end_ts: last event the user must be present for given they arrive at
-        # recommended_start_ts. Same logic as lull detection:
-        # - arrival catchable (>= rec_start): window extends to arrival, NOT the departure
-        # - arrival missed (< rec_start): window extends to departure (still catchable)
-        _end_candidates = []
-        for f in cluster_flights:
-            _arr_in = cluster_start <= f.arrival_ts <= cluster_end
-            _dep_in = bool(f.dep_ts and cluster_start <= f.dep_ts <= cluster_end)
-            if _arr_in and f.arrival_ts >= recommended_start_ts:
-                _end_candidates.append(f.arrival_ts)
-            elif _dep_in and (not _arr_in or f.arrival_ts < recommended_start_ts):
-                _end_candidates.append(f.dep_ts)
-        cluster_end_ts = max(_end_candidates) if _end_candidates else recommended_start_ts
-
-        # Lull detection: for each flight, use the earliest event the user must be present for.
-        # - If arrival is catchable (>= recommended_start_ts): use arrival. Departure is skipped
-        #   because the user is already at the airport for the arrival.
-        # - If arrival is before recommended_start_ts (user misses it): use departure instead,
-        #   since they can still catch the plane departing.
-        lull_ts_set: set = set()
-        for f in cluster_flights:
-            arr_in = cluster_start <= f.arrival_ts <= cluster_end
-            dep_in = bool(f.dep_ts and cluster_start <= f.dep_ts <= cluster_end)
-            arrival_catchable = arr_in and f.arrival_ts >= recommended_start_ts
-            if arrival_catchable:
-                lull_ts_set.add(f.arrival_ts)
-            elif dep_in:
-                lull_ts_set.add(f.dep_ts)
-        event_times = sorted(ts for ts in lull_ts_set
-                             if recommended_start_ts <= ts <= cluster_end_ts)
-        gaps = [
-            (event_times[i+1] - event_times[i], event_times[i], event_times[i+1])
-            for i in range(len(event_times) - 1)
-            if event_times[i+1] - event_times[i] > notable_lull_secs
-        ]
-        gaps.sort(reverse=True)
-        lulls = sorted((s, e) for _, s, e in gaps[:max_lulls])
-
-        result.append(SpotCluster(
-            flights=sorted(cluster_flights, key=lambda x: x.arrival_ts),
-            filtered=[],
-            start_ts=cluster_start,
-            end_ts=cluster_end_ts,
-            recommended_start_ts=recommended_start_ts,
-            lulls=lulls,
-        ))
-
-    # Assign filtered flights to a cluster only if arrival falls within its time range.
-    # Flights outside all clusters go into orphaned_filtered (shown as a separate section).
-    orphaned_filtered: List[FlightEval] = []
-    for f in filtered:
-        f.lighting_zone = _flight_lighting_zone(f, **lighting_kwargs)
+    def _lighting_for(f: FlightEval, w_start: int, w_end: int) -> FlightEval:
+        """Set arr/dep lighting zones on a FlightEval copy scoped to [w_start, w_end]."""
+        arr_in = w_start <= f.arrival_ts <= w_end
+        dep_in = bool(f.dep_ts and w_start <= f.dep_ts <= w_end)
+        check_ts = ([f.arrival_ts] if arr_in else []) + ([f.dep_ts] if dep_in and f.dep_ts else [])
+        zones = [z for ts in check_ts if (z := _lighting_quality(ts, **lighting_kwargs))]
+        f.lighting_zone     = min(zones, key=lambda z: _PRIORITY[z]) if zones else None
         f.arr_lighting_zone = _lighting_quality(f.arrival_ts, **lighting_kwargs)
         f.dep_lighting_zone = _lighting_quality(f.dep_ts, **lighting_kwargs) if f.dep_ts else None
-        cluster_match = next(
-            (c for c in result if c.recommended_start_ts <= f.arrival_ts <= c.end_ts), None
-        )
-        if cluster_match:
-            cluster_match.filtered.append(f)
-        else:
-            orphaned_filtered.append(f)
+        return f
 
-    for c in result:
-        c.filtered.sort(key=lambda x: x.arrival_ts)
-    orphaned_filtered.sort(key=lambda x: x.arrival_ts)
+    # Phase A: iterative extraction using only cluster_qualifying (flights with valid events)
+    pool = _gap_cluster_raw(cluster_qualifying, max_gap_secs, valid_ts_set)
 
-    return result, orphaned_filtered
+    while pool:
+        # Pick cluster with most flights; tie-break: earliest arrival
+        pool.sort(key=lambda c: (-len(c), min(f.arrival_ts for f in c)))
+        best = pool[0]
+        rest = pool[1:]
+
+        if len(best) <= 1:
+            # All remaining clusters are singles → stop
+            for cluster in pool:
+                for f in cluster:
+                    if f.registration not in seen_registrations:
+                        seen_registrations.add(f.registration)
+                        also_interesting.append(dc_replace(f))
+            break
+
+        window_start, window_end = _compute_window_bounds(best, valid_ts_set)
+        alt_windows = _compute_alternative_windows(best, window_start, window_end, valid_ts_set)
+
+        # Build per-window flight copies with lighting zones
+        window_flights = [
+            _lighting_for(dc_replace(f), window_start, window_end)
+            for f in best
+        ]
+
+        windows.append(SpotCluster(
+            flights=sorted(window_flights, key=lambda x: x.arrival_ts),
+            filtered=[],        # filled in Phase B
+            start_ts=window_start,
+            end_ts=window_end,
+            recommended_start_ts=window_start,
+            lulls=[],           # filled in Phase C
+            alternative_windows=alt_windows,
+        ))
+
+        # Release remaining clusters back to pool; deduplicate flights by identity
+        seen_ids: set = set()
+        remaining: List[FlightEval] = []
+        for cluster in rest:
+            for f in cluster:
+                if id(f) not in seen_ids:
+                    seen_ids.add(id(f))
+                    remaining.append(f)
+        pool = _gap_cluster_raw(remaining, max_gap_secs, valid_ts_set)
+
+    # Phase B: assign filtered flights to windows or also_interesting
+    for f in filtered:
+        f_copy = dc_replace(f)
+        f_copy.lighting_zone = _flight_lighting_zone(f_copy, **lighting_kwargs)
+        f_copy.arr_lighting_zone = _lighting_quality(f_copy.arrival_ts, **lighting_kwargs)
+        f_copy.dep_lighting_zone = _lighting_quality(f_copy.dep_ts, **lighting_kwargs) if f_copy.dep_ts else None
+
+        assigned = False
+        for w in windows:
+            if (w.start_ts <= f_copy.arrival_ts <= w.end_ts
+                    or (f_copy.dep_ts and w.start_ts <= f_copy.dep_ts <= w.end_ts)):
+                w.filtered.append(f_copy)
+                assigned = True
+                break
+        if not assigned:
+            also_interesting.append(f_copy)
+
+    for w in windows:
+        w.filtered.sort(key=lambda x: x.arrival_ts)
+
+    # Phase C: compute lulls per window (qualifying + filtered together)
+    for w in windows:
+        w.lulls = _compute_lulls(w.flights + w.filtered, w.start_ts, w.end_ts,
+                                  notable_lull_secs, max_lulls)
+
+    also_interesting.sort(key=lambda x: x.arrival_ts)
+    return windows, also_interesting
 
 
 def _build_clusters_message(
@@ -735,11 +916,14 @@ def _build_clusters_message(
     now_ts: int = 0,
     orphaned_filtered: List[FlightEval] = None,
 ) -> str:
-    """Build the spot check message for cluster-based (Best Time to Go) mode."""
+    """Build the spot check message for cluster-based display.
+
+    eligible: windows to show (capped by max_windows); all_clusters ignored (kept for compat).
+    orphaned_filtered: also_interesting from _cluster_flights — qualifying singles shown
+    normally, filtered orphans shown in italics (differentiated by f.qualifying).
+    """
     severe_weather = weather_gate and weather and weather.is_severe
     lines = [f"<b>{header}</b>"]
-
-    clusters_to_show = eligible if eligible else all_clusters
 
     if severe_weather:
         lines.append("Not recommended — severe weather")
@@ -748,11 +932,11 @@ def _build_clusters_message(
 
     lines.append("")
 
-    if not clusters_to_show:
+    if not eligible:
         lines.append("  No interesting flights found.")
     else:
-        multi = len(clusters_to_show) > 1
-        for i, cluster in enumerate(clusters_to_show):
+        multi = len(eligible) > 1
+        for i, cluster in enumerate(eligible):
             start_str = datetime.fromtimestamp(cluster.recommended_start_ts).astimezone(tz).strftime("%H:%M")
             end_str   = datetime.fromtimestamp(cluster.end_ts).astimezone(tz).strftime("%H:%M")
             n = len(cluster.flights)
@@ -762,23 +946,30 @@ def _build_clusters_message(
                 window_str = start_str if start_str == end_str else f"{start_str} – {end_str}"
                 lines.append(f"Window: {window_str}")
 
-            lines.extend(_render_flights_with_lulls(cluster.flights, cluster.filtered, cluster.lulls, tz, now_ts=now_ts))
+            lines.extend(_render_flights_with_lulls(cluster.flights, cluster.filtered, cluster.lulls, tz,
+                                             now_ts=now_ts, window_start=cluster.start_ts, window_end=cluster.end_ts))
+            for alt_start, alt_end in cluster.alternative_windows:
+                def _dur_str(mins):
+                    h, m = divmod(mins, 60)
+                    return f"{h}h {m}min" if h and m else (f"{h}h" if h else f"{m}min")
+                mins_earlier = (cluster.start_ts - alt_start) // 60
+                main_dur_mins = (cluster.end_ts - cluster.start_ts) // 60
+                alt_dur_mins = (alt_end - alt_start) // 60
+                mins_shorter = main_dur_mins - alt_dur_mins
+                a_str = datetime.fromtimestamp(alt_start).astimezone(tz).strftime("%H:%M")
+                b_str = datetime.fromtimestamp(alt_end).astimezone(tz).strftime("%H:%M")
+                lines.append(f"  💡 Also possible: {a_str} – {b_str} (start {_dur_str(mins_earlier)} earlier, {_dur_str(mins_shorter)} shorter)")
             lines.append("")
 
-    # Collect qualifying flights from clusters not already shown above
-    shown_set = set(id(c) for c in clusters_to_show)
-    no_cluster_qualifying = [
-        f for c in all_clusters if id(c) not in shown_set
-        for f in c.flights
-    ]
-
-    no_cluster_section = no_cluster_qualifying + (orphaned_filtered or [])
-    if no_cluster_section:
-        lines.append(f"Also interesting ({len(no_cluster_section)}):")
-        for e in no_cluster_qualifying:
-            lines.append(_flight_line(e, tz))
-        for e in (orphaned_filtered or []):
-            lines.append(f"<i>{_flight_line(e, tz, include_reason=True)}</i>")
+    # Also interesting: qualifying singles (shown normally) + filtered orphans (italics)
+    also = orphaned_filtered or []
+    if also:
+        lines.append(f"Also interesting ({len(also)}):")
+        for e in also:
+            if e.qualifying:
+                lines.append(_flight_line(e, tz, arr_important=False, dep_important=False))
+            else:
+                lines.append(f"<i>{_flight_line(e, tz, include_reason=True, arr_important=False, dep_important=False)}</i>")
         lines.append("")
 
     lines.append(f"Weather: {weather}" if weather else "Weather: unavailable")
@@ -867,21 +1058,28 @@ def _evaluate_eod_flights(cfg, tomorrow, sunrise_ts: int, sunset_ts: int) -> Lis
 
 
 def _flight_line(f: "FlightEval", tz, include_reason: bool = False,
-                 scenario_a: bool = False, now_ts: int = 0) -> str:
-    """Format a flight entry for display. Always shows arr and dep (if known)."""
+                 scenario_a: bool = False, now_ts: int = 0,
+                 arr_important: bool = True, dep_important: bool = True) -> str:
+    """Format a flight entry for display. Always shows arr and dep (if known).
+
+    arr_important / dep_important: when True the timestamp is bolded to indicate
+    the spotter must be present for that event. Non-important events are shown
+    in plain text (they fall inside a lull — the spotter need not attend).
+    """
     if f.livery:
         type_str = f"{f.notif_type} ({f.livery})"
     else:
         type_str = f.notif_type or ""
 
-    times = []
-    arr = datetime.fromtimestamp(f.arrival_ts).astimezone(tz).strftime("%H:%M")
-    arr_emoji = _LIGHT_EMOJI.get(f.arr_lighting_zone or "", "")
-    times.append(f"arr {arr}{' ' + arr_emoji if arr_emoji else ''}")
+    def _fmt(label: str, ts: int, zone: Optional[str], important: bool) -> str:
+        t = datetime.fromtimestamp(ts).astimezone(tz).strftime("%H:%M")
+        emoji = _LIGHT_EMOJI.get(zone or "", "")
+        text = f"{label} {t}{' ' + emoji if emoji else ''}"
+        return f"<b>{text}</b>" if important else text
+
+    times = [_fmt("arr", f.arrival_ts, f.arr_lighting_zone, arr_important)]
     if f.dep_ts:
-        dep = datetime.fromtimestamp(f.dep_ts).astimezone(tz).strftime("%H:%M")
-        dep_emoji = _LIGHT_EMOJI.get(f.dep_lighting_zone or "", "")
-        times.append(f"dep {dep}{' ' + dep_emoji if dep_emoji else ''}")
+        times.append(_fmt("dep", f.dep_ts, f.dep_lighting_zone, dep_important))
     time_str = " / ".join(times)
 
     flag = _registration_flag(f.registration)
@@ -894,7 +1092,7 @@ def _flight_line(f: "FlightEval", tz, include_reason: bool = False,
         parts.append(f.detail)
     if include_reason and f.reason:
         parts.append(f.reason)
-    if time_str and time_str != "—":
+    if time_str:
         parts.append(time_str)
     return " — ".join(parts)
 
@@ -929,7 +1127,6 @@ async def _run_spot_check(send_fn, context: ContextTypes.DEFAULT_TYPE, day: str)
         qualifying   = [e for e in evals if e.qualifying]
         filtered     = [e for e in evals if not e.qualifying]
         _populate_departures(qualifying + filtered, cfg, sunset_ts=sunset_ts, sunrise_ts=sunrise_ts)
-        qualifying, filtered = _apply_pre_sunrise_gate(qualifying, filtered, sunrise_ts, sunset_ts, cfg.spot_rec_lighting_gate)
         clusters, orphaned = _cluster_flights(
             qualifying, filtered,
             max_gap_secs=cfg.spot_rec_max_gap_hours * 3600,
@@ -937,9 +1134,9 @@ async def _run_spot_check(send_fn, context: ContextTypes.DEFAULT_TYPE, day: str)
             max_lulls=cfg.spot_rec_max_lulls,
             **_lighting_kwargs(cfg, sunrise_ts, sunset_ts),
         )
-        eligible = [c for c in clusters if len(c.flights) >= cfg.spot_rec_threshold][:cfg.spot_rec_max_windows]
+        eligible = clusters[:cfg.spot_rec_max_windows]
         weather  = get_current_weather(cfg.airport_lat, cfg.airport_lon, cfg.airport_tz)
-        header   = "Spot check — Today"
+        header   = f"Spot Check — {now.strftime('%A %-d %b')}"
         # now_ts=0: show all flights including past — manual check is a full-day review
         msg = _build_clusters_message(eligible, clusters, weather, cfg.spot_rec_weather_gate,
                                       header, tz, sunrise_ts, sunset_ts, now_ts=0,
@@ -952,7 +1149,6 @@ async def _run_spot_check(send_fn, context: ContextTypes.DEFAULT_TYPE, day: str)
         qualifying   = [e for e in evals if e.qualifying]
         filtered     = [e for e in evals if not e.qualifying]
         _populate_departures(qualifying + filtered, cfg, sunset_ts=sunset_ts, sunrise_ts=sunrise_ts)
-        qualifying, filtered = _apply_pre_sunrise_gate(qualifying, filtered, sunrise_ts, sunset_ts, cfg.spot_rec_lighting_gate)
         clusters, orphaned = _cluster_flights(
             qualifying, filtered,
             max_gap_secs=cfg.spot_rec_max_gap_hours * 3600,
@@ -960,9 +1156,9 @@ async def _run_spot_check(send_fn, context: ContextTypes.DEFAULT_TYPE, day: str)
             max_lulls=cfg.spot_rec_max_lulls,
             **_lighting_kwargs(cfg, sunrise_ts, sunset_ts),
         )
-        eligible = [c for c in clusters if len(c.flights) >= cfg.spot_rec_threshold][:cfg.spot_rec_max_windows]
+        eligible = clusters[:cfg.spot_rec_max_windows]
         weather  = get_forecast_weather(cfg.airport_lat, cfg.airport_lon, cfg.airport_tz, day_offset=1)
-        header   = f"Spot check — {tomorrow.strftime('%A %-d %b')}"
+        header   = f"Spot Check — {tomorrow.strftime('%A %-d %b')}"
         msg = _build_clusters_message(eligible, clusters, weather, cfg.spot_rec_weather_gate,
                                       header, tz, sunrise_ts, sunset_ts, orphaned_filtered=orphaned)
 
@@ -1009,7 +1205,6 @@ async def _send_spot_followup(context: ContextTypes.DEFAULT_TYPE) -> None:
     qualifying = [e for e in evals if e.qualifying]
     filtered   = [e for e in evals if not e.qualifying]
     _populate_departures(qualifying + filtered, cfg, sunset_ts=sunset_ts, sunrise_ts=sunrise_ts)
-    qualifying, filtered = _apply_pre_sunrise_gate(qualifying, filtered, sunrise_ts, sunset_ts, cfg.spot_rec_lighting_gate)
 
     clusters, _ = _cluster_flights(
         qualifying, filtered,
@@ -1033,7 +1228,8 @@ async def _send_spot_followup(context: ContextTypes.DEFAULT_TYPE) -> None:
             f"Window: {window_str}",
             "",
         ]
-        lines.extend(_render_flights_with_lulls(cluster.flights, cluster.filtered, cluster.lulls, tz))
+        lines.extend(_render_flights_with_lulls(cluster.flights, cluster.filtered, cluster.lulls, tz,
+                                             window_start=cluster.start_ts, window_end=cluster.end_ts))
         lines.append("")
         if weather:
             lines.append(f"Weather: {weather}")

@@ -328,7 +328,7 @@ async def _do_fn_lookup(flight_number: str, update, context) -> None:
         lines.append("")
         lines.append("No established type — route is in transition or shows regular variation.")
 
-    await update.reply_html("\n".join(lines))
+    await update.reply_html("\n".join(lines), disable_web_page_preview=True)
 
 
 async def handle_lookup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
