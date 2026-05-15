@@ -816,7 +816,10 @@ def _cluster_flights(
             if arr_ok or dep_ok:
                 cluster_qualifying.append(f)
             else:
-                # No daylight events — goes to also_interesting in italics with reason
+                # No daylight events. Only add to also_interesting if the arrival is
+                # within this window's day (arr > sunset) — not a cross-day stale flight.
+                if f.arrival_ts < sunrise_ts:
+                    continue  # arrived before window day's sunrise with no daylight dep → skip
                 if f.registration not in seen_registrations:
                     seen_registrations.add(f.registration)
                     reason = "no daylight events"
