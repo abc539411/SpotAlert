@@ -128,6 +128,21 @@ class SqliteStore:
                 conn.execute("ALTER TABLE notification_record ADD COLUMN dep_notified INTEGER NOT NULL DEFAULT 0")
 
             conn.execute("""
+                CREATE TABLE IF NOT EXISTS daily_flights (
+                    registration        TEXT NOT NULL,
+                    flight_number       TEXT NOT NULL,
+                    notif_type          TEXT,
+                    arrival_ts          INTEGER NOT NULL,
+                    detail              TEXT DEFAULT '',
+                    extra_info          TEXT DEFAULT '',
+                    first_seen_ts       INTEGER NOT NULL,
+                    last_seen_ts        INTEGER NOT NULL,
+                    cluster_notified_ts INTEGER DEFAULT NULL,
+                    PRIMARY KEY (registration, flight_number)
+                )
+            """)
+
+            conn.execute("""
                 CREATE TABLE IF NOT EXISTS notification_log (
                     id            INTEGER PRIMARY KEY AUTOINCREMENT,
                     registration  TEXT NOT NULL,
@@ -714,6 +729,44 @@ class SqliteStore:
                 "DELETE FROM notification_log WHERE notified_ts < ?",
                 (now_ts - 7 * 86400,),
             )
+            conn.execute(
+                "DELETE FROM daily_flights WHERE last_seen_ts < ?",
+                (now_ts - 86400,),
+            )
+
+    def upsert_daily_flight(self, registration: str, flight_number: str, notif_type: str,
+                            arrival_ts: int, detail: str, extra_info: str, now_ts: int) -> None:
+        """Insert or update a daily_flights row for a (registration, flight_number) pair."""
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO daily_flights
+                  (registration, flight_number, notif_type, arrival_ts, detail, extra_info,
+                   first_seen_ts, last_seen_ts)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(registration, flight_number) DO UPDATE SET
+                  arrival_ts   = excluded.arrival_ts,
+                  last_seen_ts = excluded.last_seen_ts
+                """,
+                (registration.strip(), flight_number, notif_type, arrival_ts,
+                 detail, extra_info, now_ts, now_ts),
+            )
+
+    def get_daily_flights(self) -> List[sqlite3.Row]:
+        """Return all daily_flights rows ordered by arrival time."""
+        return self._fetch("SELECT * FROM daily_flights ORDER BY arrival_ts")
+
+    def mark_daily_flight_cluster_notified(self, flights: list, ts: int) -> None:
+        """Set cluster_notified_ts for specific (registration, flight_number) pairs."""
+        if not flights:
+            return
+        with self._connect() as conn:
+            for registration, flight_number in flights:
+                conn.execute(
+                    "UPDATE daily_flights SET cluster_notified_ts = ? "
+                    "WHERE registration = ? AND flight_number = ?",
+                    (ts, registration, flight_number),
+                )
 
     def get_notification_history(self, days: int = 7) -> List[sqlite3.Row]:
         """Return notification_log entries from the last N days, newest first."""
