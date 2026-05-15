@@ -579,7 +579,7 @@ def _render_flights_with_lulls(
             line = _flight_line(f, tz, include_reason=is_filtered,
                                 arr_important=arr_imp, dep_important=dep_imp,
                                 check_date=check_date)
-            lines.append(f"<blockquote>{line}</blockquote>" if is_filtered else line)
+            lines.append(f"<blockquote><i>{line}</i></blockquote>" if is_filtered else line)
         else:
             _, _, _, _, lull_start, lull_end, _, _ = item
             lines.append(_lull_line(lull_start, lull_end, tz))
@@ -983,7 +983,7 @@ def _build_clusters_message(
             if e.qualifying:
                 lines.append(_flight_line(e, tz, arr_important=False, dep_important=False, check_date=check_date))
             else:
-                lines.append(f"<blockquote>{_flight_line(e, tz, include_reason=True, arr_important=False, dep_important=False, check_date=check_date)}</blockquote>")
+                lines.append(f"<blockquote><i>{_flight_line(e, tz, include_reason=True, arr_important=False, dep_important=False, check_date=check_date)}</i></blockquote>")
         lines.append("")
 
     lines.append(f"Weather: {weather}" if weather else "Weather: unavailable")
