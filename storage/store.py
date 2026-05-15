@@ -753,8 +753,22 @@ class SqliteStore:
             )
 
     def get_daily_flights(self) -> List[sqlite3.Row]:
-        """Return all daily_flights rows ordered by arrival time."""
-        return self._fetch("SELECT * FROM daily_flights ORDER BY arrival_ts")
+        """Return all daily_flights rows, falling back to notification_record for any
+        registration not yet in daily_flights (transition period before daily_flights is populated)."""
+        return self._fetch("""
+            SELECT registration, flight_number, notif_type, arrival_ts, detail, extra_info,
+                   first_seen_ts, last_seen_ts, cluster_notified_ts
+            FROM daily_flights
+            UNION
+            SELECT registration, flight_number, notif_type, arrival_ts, detail, extra_info,
+                   first_notified_ts AS first_seen_ts, last_seen_ts, cluster_notified_ts
+            FROM notification_record
+            WHERE NOT EXISTS (
+                SELECT 1 FROM daily_flights df
+                WHERE df.registration = notification_record.registration
+            )
+            ORDER BY arrival_ts
+        """)
 
     def mark_daily_flight_cluster_notified(self, flights: list, ts: int) -> None:
         """Set cluster_notified_ts for specific (registration, flight_number) pairs."""
