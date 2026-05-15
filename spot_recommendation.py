@@ -75,40 +75,6 @@ def _sun_line(sunrise_ts: int, sunset_ts: int, tz) -> str:
     return f"Sunrise: {rise} · Sunset: {sset}"
 
 
-def _passes_lighting_gate(arrival_ts: int, sunrise_ts: int, sunset_ts: int) -> bool:
-    """Return False if the arrival is after sunset (exclude). Before sunrise is allowed
-    since the plane will still be on the ground after sunrise."""
-    return arrival_ts <= sunset_ts
-
-
-def _apply_pre_sunrise_gate(
-    qualifying: List["FlightEval"],
-    filtered: List["FlightEval"],
-    sunrise_ts: int,
-    sunset_ts: int,
-    lighting_gate: bool,
-) -> tuple:
-    """Second lighting gate pass — run after _populate_departures so dep_ts is known.
-
-    Pre-sunrise arrivals are only kept if dep_ts is known and falls in daylight.
-    If dep_ts is unknown or also outside daylight, the flight is moved to filtered.
-    Returns (new_qualifying, new_filtered).
-    """
-    if not lighting_gate or not sunrise_ts:
-        return qualifying, filtered
-
-    still_qualifying = []
-    newly_filtered = list(filtered)
-    for e in qualifying:
-        if e.arrival_ts < sunrise_ts:
-            if e.dep_ts and sunrise_ts <= e.dep_ts <= sunset_ts:
-                still_qualifying.append(e)
-            else:
-                e.reason = "arrives before sunrise with no confirmed daylight departure"
-                newly_filtered.append(e)
-        else:
-            still_qualifying.append(e)
-    return still_qualifying, newly_filtered
 
 
 def _interesting_label(arriving_flight: dict, cfg) -> Optional[str]:
@@ -834,10 +800,14 @@ def _cluster_flights(
             if arr_ok or dep_ok:
                 cluster_qualifying.append(f)
             else:
-                # No valid events — goes to also_interesting (displayed but not clustered)
+                # No daylight events — goes to also_interesting in italics with reason
                 if f.registration not in seen_registrations:
                     seen_registrations.add(f.registration)
-                    also_interesting.append(dc_replace(f))
+                    arr_hm = datetime.fromtimestamp(f.arrival_ts).astimezone(
+                        pytz.timezone(airport_tz or "UTC")).strftime("%H:%M")
+                    reason = (f"arrives after sunset ({arr_hm})" if f.arrival_ts > sunset_ts
+                              else f"arrives before sunrise ({arr_hm}) with no daylight departure")
+                    also_interesting.append(dc_replace(f, qualifying=False, reason=reason))
     else:
         valid_ts_set = None
         cluster_qualifying = qualifying
@@ -1054,12 +1024,6 @@ def _evaluate_rolling_flights(cfg, window_start: int, window_end: int,
         livery              = extra_info if notif_type == "Special Livery" else ""
 
         spotted = cfg.catalog.get_session_count_at_airport(registration, cfg.airport_iata) if cfg.catalog else None
-
-        if cfg.spot_rec_lighting_gate and not _passes_lighting_gate(arrival_ts, sunrise_ts, sunset_ts):
-            results.append(FlightEval(arrival_ts, registration, notif_type, False,
-                                      f"arrives after sunset ({arr_str})", detail, livery, flight_number,
-                                      cluster_notified_ts=cluster_notified_ts, spotted_times=spotted))
-            continue
 
         if cfg.spot_rec_max_spotted_times > 0 and spotted is not None and spotted >= cfg.spot_rec_max_spotted_times:
             results.append(FlightEval(arrival_ts, registration, notif_type, False,
