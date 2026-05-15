@@ -1090,7 +1090,7 @@ def _flight_line(f: "FlightEval", tz, include_reason: bool = False,
     check_date: if provided, cross-day timestamps get a day label (yesterday/tomorrow/day abbrev).
     """
     if f.livery:
-        type_str = f.livery          # just the livery name — "Special Livery" prefix dropped
+        type_str = " ".join(w[0].upper() + w[1:] if w else w for w in f.livery.split())
     else:
         type_str = f.notif_type or ""  # Rego Watchlist, Rare Plane, etc. unchanged
 
