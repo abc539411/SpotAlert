@@ -807,7 +807,8 @@ def _cluster_flights(
                         pytz.timezone(airport_tz or "UTC")).strftime("%H:%M")
                     reason = (f"arrives after sunset ({arr_hm})" if f.arrival_ts > sunset_ts
                               else f"arrives before sunrise ({arr_hm}) with no daylight departure")
-                    also_interesting.append(dc_replace(f, qualifying=False, reason=reason))
+                    also_interesting.append(dc_replace(f, qualifying=False, reason=reason,
+                                                         arr_lighting_zone=_lighting_quality(f.arrival_ts, **lighting_kwargs)))
     else:
         valid_ts_set = None
         cluster_qualifying = qualifying
@@ -838,7 +839,8 @@ def _cluster_flights(
                 for f in cluster:
                     if f.registration not in seen_registrations:
                         seen_registrations.add(f.registration)
-                        also_interesting.append(dc_replace(f))
+                        also_interesting.append(dc_replace(f,
+                            arr_lighting_zone=_lighting_quality(f.arrival_ts, **lighting_kwargs)))
             break
 
         window_start, window_end = _compute_window_bounds(best, valid_ts_set)
