@@ -579,7 +579,7 @@ def _render_flights_with_lulls(
             line = _flight_line(f, tz, include_reason=is_filtered,
                                 arr_important=arr_imp, dep_important=dep_imp,
                                 check_date=check_date)
-            lines.append(f"<i>{line}</i>" if is_filtered else line)
+            lines.append(f"<blockquote>{line}</blockquote>" if is_filtered else line)
         else:
             _, _, _, _, lull_start, lull_end, _, _ = item
             lines.append(_lull_line(lull_start, lull_end, tz))
@@ -983,7 +983,7 @@ def _build_clusters_message(
             if e.qualifying:
                 lines.append(_flight_line(e, tz, arr_important=False, dep_important=False, check_date=check_date))
             else:
-                lines.append(f"<i>{_flight_line(e, tz, include_reason=True, arr_important=False, dep_important=False, check_date=check_date)}</i>")
+                lines.append(f"<blockquote>{_flight_line(e, tz, include_reason=True, arr_important=False, dep_important=False, check_date=check_date)}</blockquote>")
         lines.append("")
 
     lines.append(f"Weather: {weather}" if weather else "Weather: unavailable")
@@ -1090,9 +1090,9 @@ def _flight_line(f: "FlightEval", tz, include_reason: bool = False,
     check_date: if provided, cross-day timestamps get a day label (yesterday/tomorrow/day abbrev).
     """
     if f.livery:
-        type_str = f"{f.notif_type} ({f.livery})"
+        type_str = f.livery          # just the livery name — "Special Livery" prefix dropped
     else:
-        type_str = f.notif_type or ""
+        type_str = f.notif_type or ""  # Rego Watchlist, Rare Plane, etc. unchanged
 
     def _day_label(ts: int, ref_date) -> str:
         if ref_date is None:
@@ -1130,7 +1130,7 @@ def _flight_line(f: "FlightEval", tz, include_reason: bool = False,
         parts.append(type_str)
     if f.detail:
         parts.append(f.detail)
-    if include_reason and f.reason:
+    if include_reason and f.reason and not f.reason.startswith("photographed") and f.reason != "no daylight events":
         parts.append(f.reason)
     if time_str:
         parts.append(time_str)
