@@ -816,10 +816,7 @@ def _cluster_flights(
             if arr_ok or dep_ok:
                 cluster_qualifying.append(f)
             else:
-                # No daylight events. Only add to also_interesting if the arrival is
-                # within this window's day (arr > sunset) — not a cross-day stale flight.
-                if f.arrival_ts < sunrise_ts:
-                    continue  # arrived before window day's sunrise with no daylight dep → skip
+                # No daylight events — goes to also_interesting in italics with reason
                 if f.registration not in seen_registrations:
                     seen_registrations.add(f.registration)
                     reason = "no daylight events"
@@ -1041,6 +1038,13 @@ def _evaluate_rolling_flights(cfg, window_start: int, window_end: int,
         extra_info          = record["extra_info"] or ""
         flight_number       = record["flight_number"] or ""
         detail              = record["detail"] or ""
+
+        # Cross-day flight (arrived before window start): only include if departure
+        # falls within this window — otherwise it has nothing to offer here.
+        if arrival_ts < window_start and flight_number:
+            _, raw_dep_ts, _ = _lookup_departure_for_flight(cfg, flight_number, arrival_ts)
+            if not raw_dep_ts or not (window_start <= raw_dep_ts <= window_end):
+                continue
         # Cross-day flights (arrived before this window) are treated as fresh events —
         # Friday's arrival cluster_notified_ts must not suppress Saturday's departure cluster
         is_cross_day = arrival_ts < window_start
