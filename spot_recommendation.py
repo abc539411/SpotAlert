@@ -1114,7 +1114,7 @@ def _flight_line(f: "FlightEval", tz, include_reason: bool = False,
         day = _day_label(ts, ref_date)
         emoji = _LIGHT_EMOJI.get(zone or "", "")
         text = f"{label} {t}{day}{' ' + emoji if emoji else ''}"
-        return f"<b>{text}</b>" if important else text
+        return f"<b><u>{text}</u></b>" if important else text
 
     times = [_fmt("arr", f.arrival_ts, f.arr_lighting_zone, arr_important, check_date)]
     if f.dep_ts:
