@@ -1125,7 +1125,7 @@ def _flight_line(f: "FlightEval", tz, include_reason: bool = False,
     fr24_url = f"https://www.flightradar24.com/data/aircraft/{f.registration.lower()}"
     spotted_str = f" [{f.spotted_times}×]" if f.spotted_times else ""
     reg_str = f'<a href="{fr24_url}">{f.registration}</a>{spotted_str}{" " + flag if flag else ""}'
-    parts = [f"  • {reg_str}"]
+    parts = [f"  ✈ {reg_str}"]
     if type_str:
         parts.append(type_str)
     if f.detail:
