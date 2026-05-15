@@ -803,10 +803,7 @@ def _cluster_flights(
                 # No daylight events — goes to also_interesting in italics with reason
                 if f.registration not in seen_registrations:
                     seen_registrations.add(f.registration)
-                    arr_hm = datetime.fromtimestamp(f.arrival_ts).astimezone(
-                        pytz.timezone(airport_tz or "UTC")).strftime("%H:%M")
-                    reason = (f"arrives after sunset ({arr_hm})" if f.arrival_ts > sunset_ts
-                              else f"arrives before sunrise ({arr_hm}) with no daylight departure")
+                    reason = "no daylight events"
                     also_interesting.append(dc_replace(f, qualifying=False, reason=reason,
                                                          arr_lighting_zone=_lighting_quality(f.arrival_ts, **lighting_kwargs)))
     else:
