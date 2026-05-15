@@ -58,10 +58,10 @@ Automatically recommends whether it is worth heading out to spot based on which 
 
 **Manual `/spot` command:**
 - Choose **Today** or **Tomorrow** — fires immediately with the full cluster view for that day
-- Shows all qualifying sessions with flights, lull notices, and alternative window hints; filtered flights shown in italics within their session
+- Shows all qualifying sessions with flights, lull notices, and alternative window hints; filtered flights shown in a blockquote with italics
 
 **Filters applied to all checks:**
-- **Lighting gate** (hard) — individual events outside [sunrise, sunset] are dropped from the clustering pool before any window is computed; flights with no valid events are excluded entirely
+- **Lighting gate** (hard) — a flight is excluded only if **both** its arrival **and** departure are outside daylight; flights with at least one daylight event always qualify. Cross-day departures (arriving today, departing tomorrow) appear in both today's and tomorrow's spot check.
 - **Day gate** — automatic checks only run on qualifying days (any day, weekends only, or public holidays)
 - **Weather gate** — automatic checks suppressed when severe weather is forecast; manual checks always run and show weather with emoji (☀️ 🌤 🌧 ⛈ etc.)
 - **Spotted times** — aircraft photographed too many times at this airport can be excluded (configurable threshold)
@@ -99,8 +99,10 @@ Type any aircraft registration directly into the chat (e.g. `VH-XQU` or `9V-SWI`
 
 | Command | Description |
 |---|---|
-| `/spot` | Check interesting flights or get a spotting recommendation — choose day and period |
+| `/spot` | Check interesting flights or get a spotting recommendation — choose day |
+| `/rapid` | Toggle rapid polling mode — high-frequency checks when at the airport (admin) |
 | `/stats` | View spotting stats and notification totals (admin only) |
+| `/history` | Show notifications from the last 7 days |
 | `/filters` | Manage watchlists and exclusion list |
 | `/settings` | Configure all app settings at runtime |
 | `/status` | Show host system info and next scheduled check times |
@@ -113,6 +115,11 @@ The Spot Recommendation section uses a three-level menu to keep it manageable:
 - **Main screen** — core settings (Enabled, Day Type, Travel Time, Threshold, Notify Window, EOD Hour, Weather Gate, Max Spotted Times)
 - **Lighting →** — hard and soft lighting gates (Lighting Gate, Light Buffer, Bad Light window)
 - **Sessions →** — cluster algorithm tuning (Max Gap, Max Windows, Notable Lull, Max Lulls)
+
+**Rapid Mode** — activated with `/rapid` when at the airport. Increases polling rate to a configurable interval (default 2 min), reduces fetch pages to 1 for speed, suppresses rolling spot rec notifications (you're already there), and adds:
+- **Approach Alert** — fires when a tracked inbound flight is within N minutes of landing
+- **Departure Alert** — fires when a tracked aircraft's transponder activates (`status.live`), signalling engines running and imminent departure
+Expires after 2 hours with a prompt to extend or stop.
 
 ---
 
@@ -176,7 +183,7 @@ Key settings:
 |---|---|---|
 | `AIRPORT_CODE` | IATA or ICAO code of the airport to monitor | — |
 | `CHECK_INTERVAL_MINUTES` | How often to poll FR24 for arrivals | 30 |
-| `ARRIVALS_TO_FETCH` | How many arrivals to scan per cycle (100 per page) | 200 |
+| `FETCH_PAGES` | Number of pages to fetch per check for arrivals and departures (100 flights/page each) | 2 |
 | `REMINDER_HOURS` | Hours before arrival to send a reminder; 0 = disabled | 12 |
 | `SPECIAL_LIVERY_KEYWORDS` | Comma-separated keywords matched against airline name | Livery,livery,Sticker,sticker |
 | `RARE_PLANE_MIN_ABSENCE_DAYS` | Days a combo must be absent before being considered rare | 7 |
@@ -196,6 +203,8 @@ Key settings:
 | `SPOT_REC_LIGHT_BUFFER_MINS` | Minutes around sunrise/sunset still flagged as poor light (🌙) | 30 |
 | `SPOT_REC_BAD_LIGHT_START` | Local HH:MM start of midday bad-light window (☀️); empty = disabled | — |
 | `SPOT_REC_BAD_LIGHT_END` | Local HH:MM end of midday bad-light window | — |
+| `RAPID_MODE_INTERVAL_MINS` | Check interval (minutes) when Rapid Mode is active | 2 |
+| `APPROACH_ALERT_MINS` | Minutes before landing to fire approach alert (Rapid Mode only); 0 = disabled | 30 |
 
 All settings can also be changed at runtime via `/settings` in Telegram.
 
@@ -219,6 +228,8 @@ A SQLite database is created at `config/filters/spotalert.db` on first run. It s
 - Follow-up tracking (reminders, aircraft swaps, cancellations)
 - Sighting history — actual landing timestamps for registrations seen at the airport
 - **Departure patterns** — historical arrival→departure flight number pairings with observation counts, scheduled/estimated departure timestamps, turnaround offset (for predicting future departures), airline, and destination
+- **Daily flight visits** — all flights seen per registration per day; allows an aircraft operating multiple rotations in one day to show all of them in the spot check
+- **Notification log** — 7-day rolling log of all first-sight notifications, used by `/history`
 - Registered users (admin + read-only)
 - Any settings changed via the bot
 
