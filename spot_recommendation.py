@@ -412,6 +412,9 @@ def _lookup_departure_for_flight(
 
 _LIGHT_EMOJI = {"low_light": "🌙", "bad_light": "☀️"}
 
+# Strips common airline name suffixes before the type code parenthesis (display only)
+_AIRLINE_SUFFIX_RE = re.compile(r'\s+(Airways|Airlines|Airline|Air\s+Lines)(?=\s*\(|$)', re.IGNORECASE)
+
 
 def _lighting_quality(
     ts: int,
@@ -1130,7 +1133,7 @@ def _flight_line(f: "FlightEval", tz, include_reason: bool = False,
     if type_str:
         parts.append(type_str)
     if f.detail:
-        parts.append(f.detail)
+        parts.append(_AIRLINE_SUFFIX_RE.sub("", f.detail))
     if include_reason and f.reason:
         if f.reason.startswith("photographed"):
             parts.append("photographed")
