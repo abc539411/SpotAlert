@@ -412,7 +412,6 @@ def _lookup_departure_for_flight(
 
 
 _LIGHT_EMOJI = {"low_light": "🌙", "bad_light": "☀️"}
-_THIN_LINE = "  ──────────────────"
 
 # Strips common airline name suffixes before the type code parenthesis (display only)
 _AIRLINE_SUFFIX_RE = re.compile(r'\s+(Airways|Airlines|Airline|Air\s+Lines)(?=\s*\(|$)', re.IGNORECASE)
@@ -587,9 +586,7 @@ def _render_flights_with_lulls(
             lines.append(f"<blockquote><i>{line}</i></blockquote>" if is_filtered else line)
         else:
             _, _, _, _, lull_start, lull_end, _, _ = item
-            lines.append(_THIN_LINE)
             lines.append(_lull_line(lull_start, lull_end, tz))
-            lines.append(_THIN_LINE)
 
     return lines
 
@@ -969,8 +966,6 @@ def _build_clusters_message(
             lines.extend(_render_flights_with_lulls(cluster.flights, cluster.filtered, cluster.lulls, tz,
                                              now_ts=now_ts, window_start=cluster.start_ts, window_end=cluster.end_ts,
                                              check_date=check_date))
-            if cluster.alternative_windows:
-                lines.append(_THIN_LINE)
             for alt_start, alt_end in cluster.alternative_windows:
                 def _dur_str(mins):
                     h, m = divmod(mins, 60)
