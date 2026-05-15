@@ -214,7 +214,7 @@ async def check_rolling_recommendation(context: ContextTypes.DEFAULT_TYPE, cfg, 
 
         lines = [
             f"<b>Head out now — {n} interesting flight{'s' if n != 1 else ''}</b>",
-            f"Window: {window_str}",
+            f"<b><u>Window:</u></b> {window_str}",
             "",
         ]
         lines.extend(_render_flights_with_lulls(cluster.flights, cluster.filtered, cluster.lulls, tz,
@@ -961,7 +961,7 @@ def _build_clusters_message(
                 lines.append(f"<b>Option {i+1} — {start_str} – {end_str} · {n} flight{'s' if n != 1 else ''}</b>")
             else:
                 window_str = start_str if start_str == end_str else f"{start_str} – {end_str}"
-                lines.append(f"Window: {window_str}")
+                lines.append(f"<b><u>Window:</u></b> {window_str}")
 
             lines.extend(_render_flights_with_lulls(cluster.flights, cluster.filtered, cluster.lulls, tz,
                                              now_ts=now_ts, window_start=cluster.start_ts, window_end=cluster.end_ts,
@@ -1278,7 +1278,7 @@ async def _send_spot_followup(context: ContextTypes.DEFAULT_TYPE) -> None:
         window_str = start_str if start_str == end_str else f"{start_str} – {end_str}"
         lines = [
             f"<b>Spotting update — time to head out</b>",
-            f"Window: {window_str}",
+            f"<b><u>Window:</u></b> {window_str}",
             "",
         ]
         lines.extend(_render_flights_with_lulls(cluster.flights, cluster.filtered, cluster.lulls, tz,
