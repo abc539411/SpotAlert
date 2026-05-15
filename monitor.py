@@ -1041,7 +1041,8 @@ async def run_check(context: ContextTypes.DEFAULT_TYPE) -> None:
         # Pass 2: run filters and send notifications
         # Skip registrations already tracked in notification_record (still pending arrival)
         # to avoid double-notifying long-haul flights that appear in the schedule 12+ hours early.
-        already_tracked = {r["registration"] for r in cfg.store.get_tracked_flights()}
+        already_tracked = {r["registration"]: r for r in cfg.store.get_tracked_flights()}
+        now_ts_check = int(datetime.now().timestamp())
 
         import asyncio
         for arriving_flight in all_arriving_flights:
@@ -1049,8 +1050,24 @@ async def run_check(context: ContextTypes.DEFAULT_TYPE) -> None:
             if match is None:
                 continue
             flight, registration, notification_type, on_notified, extra = match
+
+            arr_ts = int(
+                _safe_get(flight, "time", "estimated", "arrival", default=None)
+                or _safe_get(flight, "time", "scheduled", "arrival", default=None)
+                or 0
+            )
+            fn = str(_safe_get(flight, "identification", "number", "default", default=""))
+
             if registration in already_tracked:
+                # Already notified — log this flight visit to daily_flights for spot check display
+                if fn and arr_ts:
+                    rec = already_tracked[registration]
+                    cfg.store.upsert_daily_flight(
+                        registration, fn, rec["notif_type"],
+                        arr_ts, rec["detail"] or "", rec["extra_info"] or "", now_ts_check
+                    )
                 continue
+
             await _send_notification(
                 context, cfg, chat_id, flight, registration, notification_type, on_notified,
                 extra=extra,
@@ -1186,6 +1203,10 @@ async def _send_notification(
         cfg.store.record_notified_flight(
             registration, flight_number, notification_type, arrival_ts, now_ts, now_ts, extra_info, detail
         )
+        if flight_number and arrival_ts:
+            cfg.store.upsert_daily_flight(
+                registration, flight_number, notification_type, arrival_ts, detail, extra_info, now_ts
+            )
     except Exception as exc:
         log.error("Failed to send notification for %s: %s", registration, exc, exc_info=True)
 

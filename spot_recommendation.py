@@ -234,7 +234,9 @@ async def check_rolling_recommendation(context: ContextTypes.DEFAULT_TYPE, cfg, 
                 log.error("Failed to send rolling spot recommendation to %s: %s", dest_chat_id, exc)
 
         if sent:
-            cfg.store.mark_cluster_notified([f.registration for f in cluster.flights], now_ts)
+            cfg.store.mark_daily_flight_cluster_notified(
+                [(f.registration, f.flight_number) for f in cluster.flights], now_ts
+            )
             log.info("Sent rolling spot notification for cluster %s–%s (%d flights)",
                      start_str, end_str, n)
 
@@ -1024,7 +1026,7 @@ def _evaluate_rolling_flights(cfg, window_start: int, window_end: int,
 
     lookback_start = window_start - 36 * 3600  # include prev-day arrivals with daylight departures
 
-    for record in cfg.store.get_tracked_flights():
+    for record in cfg.store.get_daily_flights():
         arrival_ts = int(record["arrival_ts"])
         if arrival_ts < lookback_start or arrival_ts > window_end:
             continue
