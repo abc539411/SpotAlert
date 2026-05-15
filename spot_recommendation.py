@@ -517,7 +517,7 @@ def _lull_line(lull_start_ts: int, lull_end_ts: int, tz) -> str:
     dur_str = f"{h}h {m}min" if h and m else (f"{h}h" if h else f"{m}min")
     start_str = datetime.fromtimestamp(lull_start_ts).astimezone(tz).strftime("%H:%M")
     end_str   = datetime.fromtimestamp(lull_end_ts).astimezone(tz).strftime("%H:%M")
-    return f"  ⏸ Break time ({start_str} – {end_str}, {dur_str})"
+    return f"  ⏸ <b>Break Time</b> ({start_str} – {end_str}, {dur_str})"
 
 
 def _render_flights_with_lulls(
@@ -972,7 +972,7 @@ def _build_clusters_message(
                 mins_shorter = main_dur_mins - alt_dur_mins
                 a_str = datetime.fromtimestamp(alt_start).astimezone(tz).strftime("%H:%M")
                 b_str = datetime.fromtimestamp(alt_end).astimezone(tz).strftime("%H:%M")
-                lines.append(f"  💡 Also possible: {a_str} – {b_str} (start {_dur_str(mins_earlier)} earlier, {_dur_str(mins_shorter)} shorter)")
+                lines.append(f"  💡 <b>Also Possible:</b> {a_str} – {b_str} (start {_dur_str(mins_earlier)} earlier, {_dur_str(mins_shorter)} shorter)")
             lines.append("")
 
     # Also interesting: qualifying singles (shown normally) + filtered orphans (italics)
