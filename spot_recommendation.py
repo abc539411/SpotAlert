@@ -312,6 +312,8 @@ async def run_eod_recommendation(context: ContextTypes.DEFAULT_TYPE) -> None:
     if not eligible:
         return
 
+    _refresh_also_interesting_deps(orphaned, cfg, sunrise_ts, sunset_ts)
+
     weather = get_forecast_weather(cfg.airport_lat, cfg.airport_lon, cfg.airport_tz, day_offset=1)
     if cfg.spot_rec_weather_gate and weather and weather.is_severe:
         return
@@ -504,6 +506,26 @@ def _lighting_kwargs(cfg, sunrise_ts: int, sunset_ts: int) -> dict:
         airport_tz=cfg.airport_tz,
         lighting_gate=cfg.spot_rec_lighting_gate,
     )
+
+
+def _refresh_also_interesting_deps(flights: list, cfg, sunrise_ts: int, sunset_ts: int) -> None:
+    """Repopulate dep_ts on also_interesting flights WITHOUT the lighting gate.
+
+    _populate_departures is called with the lighting gate on planning paths, which clears
+    dep_ts for departures after sunset. For display in also_interesting we want to show the
+    actual departure time regardless of lighting.
+    """
+    _populate_departures(flights, cfg)  # no gate
+    for e in flights:
+        if e.dep_ts:
+            e.dep_lighting_zone = _lighting_quality(
+                e.dep_ts,
+                sunrise_ts=sunrise_ts, sunset_ts=sunset_ts,
+                light_buffer_secs=cfg.spot_rec_light_buffer_mins * 60,
+                bad_light_start=cfg.spot_rec_bad_light_start,
+                bad_light_end=cfg.spot_rec_bad_light_end,
+                airport_tz=cfg.airport_tz,
+            )
 
 
 def _lull_line(lull_start_ts: int, lull_end_ts: int, tz) -> str:
@@ -1139,6 +1161,7 @@ async def _run_spot_check(send_fn, context: ContextTypes.DEFAULT_TYPE, day: str)
             **_lighting_kwargs(cfg, sunrise_ts, sunset_ts),
         )
         eligible = clusters[:cfg.spot_rec_max_windows]
+        _refresh_also_interesting_deps(orphaned, cfg, sunrise_ts, sunset_ts)
         weather  = get_current_weather(cfg.airport_lat, cfg.airport_lon, cfg.airport_tz)
         header   = f"Spot Check — {now.strftime('%A %-d %b')}"
         # now_ts=0: show all flights including past — manual check is a full-day review
@@ -1161,6 +1184,7 @@ async def _run_spot_check(send_fn, context: ContextTypes.DEFAULT_TYPE, day: str)
             **_lighting_kwargs(cfg, sunrise_ts, sunset_ts),
         )
         eligible = clusters[:cfg.spot_rec_max_windows]
+        _refresh_also_interesting_deps(orphaned, cfg, sunrise_ts, sunset_ts)
         weather  = get_forecast_weather(cfg.airport_lat, cfg.airport_lon, cfg.airport_tz, day_offset=1)
         header   = f"Spot Check — {tomorrow.strftime('%A %-d %b')}"
         msg = _build_clusters_message(eligible, clusters, weather, cfg.spot_rec_weather_gate,
