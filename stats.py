@@ -101,7 +101,27 @@ async def handle_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         )
         return
 
-    # Group by local date
+    def _best_dep_ts(flight_number: str, arrival_ts: int) -> int | None:
+        """Return the most accurate departure timestamp from DB, with plausibility check."""
+        if not flight_number or not arrival_ts:
+            return None
+        pred = cfg.store.get_predicted_departure(flight_number, cfg.airport_iata, 1)
+        if not pred:
+            return None
+        dep_info = cfg.store.get_predicted_dep_info(pred[0], cfg.airport_iata)
+        if not dep_info:
+            return None
+        lo, hi = arrival_ts, arrival_ts + 36 * 3600
+        for key in ("actual_dep_ts", "estimated_dep_ts", "scheduled_dep_ts"):
+            ts = dep_info.get(key)
+            if ts and lo <= ts <= hi:
+                return ts
+        turnaround = dep_info.get("turnaround_secs")
+        if turnaround:
+            return arrival_ts + turnaround
+        return None
+
+    # Group by local date, sort within each day by arrival time
     by_date = defaultdict(list)
     for row in rows:
         date = datetime.fromtimestamp(row["notified_ts"]).astimezone(tz).date()
@@ -111,7 +131,8 @@ async def handle_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     for date in sorted(by_date.keys(), reverse=True):
         lines.append("")
         lines.append(f"<b>{date.strftime('%a %-d %b')}</b>")
-        for row in by_date[date]:
+        day_rows = sorted(by_date[date], key=lambda r: r["arrival_ts"] or 0)
+        for row in day_rows:
             reg = row["registration"]
             flag = _registration_flag(reg)
             url = f"https://www.flightradar24.com/data/aircraft/{reg.lower()}"
@@ -123,17 +144,22 @@ async def handle_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
             type_str = f"{notif_type} ({extra_info})" if extra_info else notif_type
 
-            arr_str = ""
+            time_str = ""
             if row["arrival_ts"]:
-                arr_str = " · arr " + datetime.fromtimestamp(row["arrival_ts"]).astimezone(tz).strftime("%H:%M")
+                arr = datetime.fromtimestamp(row["arrival_ts"]).astimezone(tz).strftime("%H:%M")
+                time_str = f"arr {arr}"
+                dep_ts = _best_dep_ts(row["flight_number"] or "", row["arrival_ts"])
+                if dep_ts:
+                    dep = datetime.fromtimestamp(dep_ts).astimezone(tz).strftime("%H:%M")
+                    time_str += f" / dep {dep}"
 
-            parts = filter(None, [type_str, detail])
+            parts = list(filter(None, [type_str, detail]))
             meta = " · ".join(parts)
             line = f"  • {reg_str}"
             if meta:
                 line += f" — {meta}"
-            if arr_str:
-                line += arr_str
+            if time_str:
+                line += f" — {time_str}"
             lines.append(line)
 
     await update.message.reply_html("\n".join(lines), disable_web_page_preview=True)
