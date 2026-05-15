@@ -1130,8 +1130,13 @@ def _flight_line(f: "FlightEval", tz, include_reason: bool = False,
         parts.append(type_str)
     if f.detail:
         parts.append(f.detail)
-    if include_reason and f.reason and not f.reason.startswith("photographed") and f.reason != "no daylight events":
-        parts.append(f.reason)
+    if include_reason and f.reason:
+        if f.reason.startswith("photographed"):
+            parts.append("photographed")
+        elif f.reason == "no daylight events":
+            parts.append("no lights")
+        else:
+            parts.append(f.reason)
     if time_str:
         parts.append(time_str)
     return " — ".join(parts)
