@@ -217,7 +217,8 @@ async def check_rolling_recommendation(context: ContextTypes.DEFAULT_TYPE, cfg, 
             "",
         ]
         lines.extend(_render_flights_with_lulls(cluster.flights, cluster.filtered, cluster.lulls, tz,
-                                             window_start=cluster.start_ts, window_end=cluster.end_ts))
+                                             window_start=cluster.start_ts, window_end=cluster.end_ts,
+                                             check_date=today))
         lines.append("")
         if weather:
             lines.append(f"Weather: {weather}")
@@ -287,7 +288,8 @@ async def run_eod_recommendation(context: ContextTypes.DEFAULT_TYPE) -> None:
     day_str = tomorrow.strftime("%A %-d %b")
     header = f"Spotting Recommendation for {day_str}"
     msg = _build_clusters_message(eligible, clusters, weather, cfg.spot_rec_weather_gate,
-                                  header, tz, sunrise_ts, sunset_ts, orphaned_filtered=orphaned)
+                                  header, tz, sunrise_ts, sunset_ts, orphaned_filtered=orphaned,
+                                  check_date=tomorrow)
 
     # Keyboard: single cluster → Yes/Maybe/No; multiple → window buttons + Maybe/No
     if len(eligible) == 1:
@@ -461,6 +463,18 @@ def _flight_lighting_zone(
     return min(zones, key=lambda z: _PRIORITY[z])
 
 
+def _dep_lighting_quality(dep_ts: int, sunrise_ts: int, sunset_ts: int, **lq_kwargs) -> Optional[str]:
+    """_lighting_quality adjusted for cross-day departures.
+    Shifts sunrise/sunset to the departure day before comparing."""
+    day_offset = round((dep_ts - sunrise_ts) / 86400)
+    return _lighting_quality(
+        dep_ts,
+        sunrise_ts=sunrise_ts + day_offset * 86400,
+        sunset_ts=sunset_ts  + day_offset * 86400,
+        **lq_kwargs,
+    )
+
+
 def _lighting_kwargs(cfg, sunrise_ts: int, sunset_ts: int) -> dict:
     """Build the lighting quality keyword args for _cluster_flights from cfg."""
     return dict(
@@ -484,7 +498,7 @@ def _refresh_also_interesting_deps(flights: list, cfg, sunrise_ts: int, sunset_t
     _populate_departures(flights, cfg)  # no gate
     for e in flights:
         if e.dep_ts:
-            e.dep_lighting_zone = _lighting_quality(
+            e.dep_lighting_zone = _dep_lighting_quality(
                 e.dep_ts,
                 sunrise_ts=sunrise_ts, sunset_ts=sunset_ts,
                 light_buffer_secs=cfg.spot_rec_light_buffer_mins * 60,
@@ -509,6 +523,7 @@ def _render_flights_with_lulls(
     now_ts: int = 0,
     window_start: int = 0,
     window_end: int = 0,
+    check_date=None,
 ) -> List[str]:
     """Render qualifying flights and lull lines sorted by sort key.
 
@@ -560,7 +575,8 @@ def _render_flights_with_lulls(
         if item[3] == 'flight':
             _, _, _, _, f, arr_imp, dep_imp, is_filtered = item
             line = _flight_line(f, tz, include_reason=is_filtered,
-                                arr_important=arr_imp, dep_important=dep_imp)
+                                arr_important=arr_imp, dep_important=dep_imp,
+                                check_date=check_date)
             lines.append(f"<i>{line}</i>" if is_filtered else line)
         else:
             _, _, _, _, lull_start, lull_end, _, _ = item
@@ -818,7 +834,7 @@ def _cluster_flights(
         zones = [z for ts in check_ts if (z := _lighting_quality(ts, **lighting_kwargs))]
         f.lighting_zone     = min(zones, key=lambda z: _PRIORITY[z]) if zones else None
         f.arr_lighting_zone = _lighting_quality(f.arrival_ts, **lighting_kwargs)
-        f.dep_lighting_zone = _lighting_quality(f.dep_ts, **lighting_kwargs) if f.dep_ts else None
+        f.dep_lighting_zone = _dep_lighting_quality(f.dep_ts, **lighting_kwargs) if f.dep_ts else None
         return f
 
     # Phase A: iterative extraction using only cluster_qualifying (flights with valid events)
@@ -874,7 +890,7 @@ def _cluster_flights(
         f_copy = dc_replace(f)
         f_copy.lighting_zone = _flight_lighting_zone(f_copy, **lighting_kwargs)
         f_copy.arr_lighting_zone = _lighting_quality(f_copy.arrival_ts, **lighting_kwargs)
-        f_copy.dep_lighting_zone = _lighting_quality(f_copy.dep_ts, **lighting_kwargs) if f_copy.dep_ts else None
+        f_copy.dep_lighting_zone = _dep_lighting_quality(f_copy.dep_ts, **lighting_kwargs) if f_copy.dep_ts else None
 
         assigned = False
         for w in windows:
@@ -909,6 +925,7 @@ def _build_clusters_message(
     sunset_ts: int,
     now_ts: int = 0,
     orphaned_filtered: List[FlightEval] = None,
+    check_date=None,
 ) -> str:
     """Build the spot check message for cluster-based display.
 
@@ -941,7 +958,8 @@ def _build_clusters_message(
                 lines.append(f"Window: {window_str}")
 
             lines.extend(_render_flights_with_lulls(cluster.flights, cluster.filtered, cluster.lulls, tz,
-                                             now_ts=now_ts, window_start=cluster.start_ts, window_end=cluster.end_ts))
+                                             now_ts=now_ts, window_start=cluster.start_ts, window_end=cluster.end_ts,
+                                             check_date=check_date))
             for alt_start, alt_end in cluster.alternative_windows:
                 def _dur_str(mins):
                     h, m = divmod(mins, 60)
@@ -961,9 +979,9 @@ def _build_clusters_message(
         lines.append(f"Also interesting ({len(also)}):")
         for e in also:
             if e.qualifying:
-                lines.append(_flight_line(e, tz, arr_important=False, dep_important=False))
+                lines.append(_flight_line(e, tz, arr_important=False, dep_important=False, check_date=check_date))
             else:
-                lines.append(f"<i>{_flight_line(e, tz, include_reason=True, arr_important=False, dep_important=False)}</i>")
+                lines.append(f"<i>{_flight_line(e, tz, include_reason=True, arr_important=False, dep_important=False, check_date=check_date)}</i>")
         lines.append("")
 
     lines.append(f"Weather: {weather}" if weather else "Weather: unavailable")
@@ -1004,9 +1022,11 @@ def _evaluate_rolling_flights(cfg, window_start: int, window_end: int,
     results = []
     tz = pytz.timezone(cfg.airport_tz)
 
+    lookback_start = window_start - 36 * 3600  # include prev-day arrivals with daylight departures
+
     for record in cfg.store.get_tracked_flights():
         arrival_ts = int(record["arrival_ts"])
-        if arrival_ts < window_start or arrival_ts > window_end:
+        if arrival_ts < lookback_start or arrival_ts > window_end:
             continue
 
         registration  = record["registration"]
@@ -1018,7 +1038,11 @@ def _evaluate_rolling_flights(cfg, window_start: int, window_end: int,
         extra_info          = record["extra_info"] or ""
         flight_number       = record["flight_number"] or ""
         detail              = record["detail"] or ""
-        cluster_notified_ts = record["cluster_notified_ts"] if "cluster_notified_ts" in record.keys() else None
+        # Cross-day flights (arrived before this window) are treated as fresh events —
+        # Friday's arrival cluster_notified_ts must not suppress Saturday's departure cluster
+        is_cross_day = arrival_ts < window_start
+        raw_cluster_ts = record["cluster_notified_ts"] if "cluster_notified_ts" in record.keys() else None
+        cluster_notified_ts = None if is_cross_day else raw_cluster_ts
         arr_str             = datetime.fromtimestamp(arrival_ts).astimezone(tz).strftime("%H:%M")
         livery              = extra_info if notif_type == "Special Livery" else ""
 
@@ -1047,27 +1071,45 @@ def _evaluate_eod_flights(cfg, tomorrow, sunrise_ts: int, sunset_ts: int) -> Lis
 
 def _flight_line(f: "FlightEval", tz, include_reason: bool = False,
                  scenario_a: bool = False, now_ts: int = 0,
-                 arr_important: bool = True, dep_important: bool = True) -> str:
+                 arr_important: bool = True, dep_important: bool = True,
+                 check_date=None) -> str:
     """Format a flight entry for display. Always shows arr and dep (if known).
 
     arr_important / dep_important: when True the timestamp is bolded to indicate
     the spotter must be present for that event. Non-important events are shown
     in plain text (they fall inside a lull — the spotter need not attend).
+    check_date: if provided, cross-day timestamps get a day label (yesterday/tomorrow/day abbrev).
     """
     if f.livery:
         type_str = f"{f.notif_type} ({f.livery})"
     else:
         type_str = f.notif_type or ""
 
-    def _fmt(label: str, ts: int, zone: Optional[str], important: bool) -> str:
+    def _day_label(ts: int, ref_date) -> str:
+        if ref_date is None:
+            return ""
+        ts_date = datetime.fromtimestamp(ts).astimezone(tz).date()
+        diff = (ts_date - ref_date).days
+        if diff == 1:
+            return " tomorrow"
+        elif diff > 1:
+            return " " + ts_date.strftime("%a")
+        elif diff == -1:
+            return " yesterday"
+        elif diff < -1:
+            return " " + ts_date.strftime("%a")
+        return ""
+
+    def _fmt(label: str, ts: int, zone: Optional[str], important: bool, ref_date=None) -> str:
         t = datetime.fromtimestamp(ts).astimezone(tz).strftime("%H:%M")
+        day = _day_label(ts, ref_date)
         emoji = _LIGHT_EMOJI.get(zone or "", "")
-        text = f"{label} {t}{' ' + emoji if emoji else ''}"
+        text = f"{label} {t}{day}{' ' + emoji if emoji else ''}"
         return f"<b>{text}</b>" if important else text
 
-    times = [_fmt("arr", f.arrival_ts, f.arr_lighting_zone, arr_important)]
+    times = [_fmt("arr", f.arrival_ts, f.arr_lighting_zone, arr_important, check_date)]
     if f.dep_ts:
-        times.append(_fmt("dep", f.dep_ts, f.dep_lighting_zone, dep_important))
+        times.append(_fmt("dep", f.dep_ts, f.dep_lighting_zone, dep_important, check_date))
     time_str = " / ".join(times)
 
     flag = _registration_flag(f.registration)
@@ -1130,7 +1172,7 @@ async def _run_spot_check(send_fn, context: ContextTypes.DEFAULT_TYPE, day: str)
         # now_ts=0: show all flights including past — manual check is a full-day review
         msg = _build_clusters_message(eligible, clusters, weather, cfg.spot_rec_weather_gate,
                                       header, tz, sunrise_ts, sunset_ts, now_ts=0,
-                                      orphaned_filtered=orphaned)
+                                      orphaned_filtered=orphaned, check_date=target_date)
 
     else:  # tomorrow
         tomorrow = (now + timedelta(days=1)).date()
@@ -1151,7 +1193,8 @@ async def _run_spot_check(send_fn, context: ContextTypes.DEFAULT_TYPE, day: str)
         weather  = get_forecast_weather(cfg.airport_lat, cfg.airport_lon, cfg.airport_tz, day_offset=1)
         header   = f"Spot Check — {tomorrow.strftime('%A %-d %b')}"
         msg = _build_clusters_message(eligible, clusters, weather, cfg.spot_rec_weather_gate,
-                                      header, tz, sunrise_ts, sunset_ts, orphaned_filtered=orphaned)
+                                      header, tz, sunrise_ts, sunset_ts, orphaned_filtered=orphaned,
+                                      check_date=tomorrow)
 
     await send_fn(msg, parse_mode="HTML", disable_web_page_preview=True)
 
@@ -1220,7 +1263,8 @@ async def _send_spot_followup(context: ContextTypes.DEFAULT_TYPE) -> None:
             "",
         ]
         lines.extend(_render_flights_with_lulls(cluster.flights, cluster.filtered, cluster.lulls, tz,
-                                             window_start=cluster.start_ts, window_end=cluster.end_ts))
+                                             window_start=cluster.start_ts, window_end=cluster.end_ts,
+                                             check_date=today))
         lines.append("")
         if weather:
             lines.append(f"Weather: {weather}")
