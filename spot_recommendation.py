@@ -1051,11 +1051,16 @@ def _evaluate_rolling_flights(cfg, window_start: int, window_end: int,
             _, raw_dep_ts, _ = _lookup_departure_for_flight(cfg, flight_number, arrival_ts)
             if not raw_dep_ts or not (window_start <= raw_dep_ts <= window_end):
                 continue
-        # Cross-day flights (arrived before this window) are treated as fresh events —
-        # Friday's arrival cluster_notified_ts must not suppress Saturday's departure cluster
+        # Cross-day flights (arrived before this window) should fire once per day's context.
+        # Force None only when never marked OR marked before today's window (yesterday's mark
+        # should not suppress today's notification). Honour marks made within today's window
+        # so a cross-day cluster that already notified today doesn't fire again every cycle.
         is_cross_day = arrival_ts < window_start
         raw_cluster_ts = record["cluster_notified_ts"] if "cluster_notified_ts" in record.keys() else None
-        cluster_notified_ts = None if is_cross_day else raw_cluster_ts
+        if is_cross_day:
+            cluster_notified_ts = None if (raw_cluster_ts is None or raw_cluster_ts < window_start) else raw_cluster_ts
+        else:
+            cluster_notified_ts = raw_cluster_ts
         arr_str             = datetime.fromtimestamp(arrival_ts).astimezone(tz).strftime("%H:%M")
         livery              = extra_info if notif_type == "Special Livery" else ""
 
