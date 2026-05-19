@@ -949,9 +949,9 @@ def _build_clusters_message(
 
     lines.append("")
 
-    if not eligible:
+    if not eligible and not orphaned_filtered:
         lines.append("  No interesting flights found.")
-    else:
+    elif not eligible:
         multi = len(eligible) > 1
         for i, cluster in enumerate(eligible):
             start_str = datetime.fromtimestamp(cluster.recommended_start_ts).astimezone(tz).strftime("%H:%M")
