@@ -1,0 +1,12 @@
+.git/
+.claude/
+__pycache__/
+*.pyc
+*.pyo
+config/filters/
+config/config.env
+lightroom/
+logs/
+deploy/
+docs/
+to_do.md

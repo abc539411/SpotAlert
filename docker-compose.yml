@@ -1,0 +1,11 @@
+services:
+  spotalert:
+    build: .
+    container_name: spotalert
+    restart: unless-stopped
+    volumes:
+      - /volume1/docker/spotalert/config:/app/config
+      - /volume1/docker/spotalert/lightroom:/app/lightroom
+      - /volume1/docker/spotalert/logs:/app/logs
+    environment:
+      - TZ=Australia/Sydney
