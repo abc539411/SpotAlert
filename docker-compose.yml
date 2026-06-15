@@ -4,8 +4,8 @@ services:
     container_name: spotalert
     restart: unless-stopped
     volumes:
-      - /volume1/docker/spotalert/config:/app/config
-      - /volume1/docker/spotalert/lightroom:/app/lightroom
-      - /volume1/docker/spotalert/logs:/app/logs
+      - /Volume2/public/docker/spotalert/config:/app/config
+      - /Volume2/public/docker/spotalert/lightroom:/app/lightroom
+      - /Volume2/public/docker/spotalert/logs:/app/logs
     environment:
       - TZ=Australia/Sydney
