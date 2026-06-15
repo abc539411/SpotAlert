@@ -4,7 +4,7 @@ services:
     container_name: spotalert
     restart: unless-stopped
     ports:
-      - "8080:8080"
+      - "8080:8088"
     volumes:
       - /Volume2/public/docker/spotalert/config:/app/config
       - /Volume2/public/docker/spotalert/lightroom:/app/lightroom

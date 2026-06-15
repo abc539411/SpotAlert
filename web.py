@@ -26,18 +26,19 @@ STATIC_DIR = Path(__file__).parent / "static"
 
 def _load_standalone():
     """Load config and store the same way main.py does, for standalone uvicorn runs."""
-    import math
     from environs import Env
     from storage import SqliteStore
 
-    config_file = "config/config.env"
+    # Allow overriding paths via env vars for testing
+    config_file  = os.environ.get("SPOTALERT_CONFIG",  "config/config.env")
+    filters_dir  = os.environ.get("SPOTALERT_FILTERS", "config/filters/")
+
     if not os.path.isfile(config_file):
         raise RuntimeError(f"Config not found: {config_file}")
 
     env = Env()
     env.read_env(config_file)
 
-    filters_dir = "config/filters/"
     os.makedirs(filters_dir, exist_ok=True)
     store = SqliteStore(os.path.join(filters_dir, "spotalert.db"), config_file=config_file)
 
@@ -119,9 +120,40 @@ def create_app(cfg=None) -> FastAPI:
     @app.get("/api/settings")
     async def get_settings():
         store = app.state.store
+        # Start with config.env values as base
+        result = {}
+        try:
+            from environs import Env as _Env
+            _e = _Env()
+            _e.read_env("config/config.env")
+            for key in [
+                "AIRPORT_CODE", "FETCH_PAGES", "CHECK_INTERVAL_MINUTES", "REMINDER_HOURS",
+                "APPROACH_ALERT_MINS", "RAPID_MODE_INTERVAL_MINS", "DEPARTURE_PATTERN_THRESHOLD",
+                "SPECIAL_LIVERY_RENOTIFY_HOURS", "SPECIAL_LIVERY_ARRIVAL_WINDOW",
+                "SPECIAL_LIVERY_ACTIVE_DAYS", "SPECIAL_LIVERY_KEYWORDS", "SPECIAL_LIVERY_EXCLUDE_KEYWORDS",
+                "RARE_PLANE_MIN_ABSENCE_DAYS", "RARE_PLANE_ARRIVAL_WINDOW", "RARE_PLANE_ACTIVE_DAYS",
+                "REGO_WATCHLIST_RENOTIFY_HOURS", "REGO_WATCHLIST_ARRIVAL_WINDOW", "REGO_WATCHLIST_ACTIVE_DAYS",
+                "TYPE_WATCHLIST_RENOTIFY_HOURS", "TYPE_WATCHLIST_ARRIVAL_WINDOW", "TYPE_WATCHLIST_ACTIVE_DAYS",
+                "AIRLINE_WATCHLIST_RENOTIFY_HOURS", "AIRLINE_WATCHLIST_ARRIVAL_WINDOW", "AIRLINE_WATCHLIST_ACTIVE_DAYS",
+                "MILITARY_CHECK_INTERVAL_MINUTES", "MILITARY_RADIUS_NM", "MILITARY_MAX_ALT_FT", "MILITARY_RENOTIFY_HOURS",
+                "SPOT_REC_ENABLED", "SPOT_REC_DAY_TYPE", "SPOT_REC_TRAVEL_MINS", "SPOT_REC_NOTIFY_WINDOW_HOURS",
+                "SPOT_REC_THRESHOLD", "SPOT_REC_EOD_HOUR", "SPOT_REC_MAX_GAP_HOURS", "SPOT_REC_NOTABLE_LULL_MINS",
+                "SPOT_REC_MAX_LULLS", "SPOT_REC_MAX_WINDOWS", "SPOT_REC_WEATHER_GATE", "SPOT_REC_LIGHTING_GATE",
+                "SPOT_REC_MAX_SPOTTED_TIMES", "SPOT_REC_LIGHT_BUFFER_MINS", "SPOT_REC_BAD_LIGHT_START", "SPOT_REC_BAD_LIGHT_END",
+                "ROUTE_TYPE_MIN_DAYS", "ROUTE_TYPE_DOMINANCE_X", "ROUTE_TYPE_LOOKBACK_DAYS",
+                "ROUTE_TYPE_RENOTIFY_DAYS", "ROUTE_TYPE_ARRIVAL_WINDOW", "ROUTE_TYPE_ACTIVE_DAYS",
+            ]:
+                val = _e.str(key, default=None)
+                if val is not None:
+                    result[key] = val
+        except Exception:
+            pass
+        # DB values override config.env (they were explicitly set)
         with store._connect() as conn:
             rows = conn.execute("SELECT key, value FROM app_settings ORDER BY key").fetchall()
-        return JSONResponse({r["key"]: r["value"] for r in rows})
+        for r in rows:
+            result[r["key"]] = r["value"]
+        return JSONResponse(result)
 
     @app.put("/api/settings")
     async def put_settings(request: Request):

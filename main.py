@@ -238,6 +238,60 @@ async def _backup_db(context) -> None:
     log.info("DB backup saved: %s", path)
 
 
+import asyncio
+import uvicorn
+from web import create_app
+
+
+class _NoopBot:
+    """Drop-in replacement for telegram.Bot — all sends are silent no-ops."""
+    async def send_message(self, *a, **kw): pass
+    async def send_photo(self, *a, **kw): pass
+
+
+class _FakeJob:
+    def __init__(self, data): self.data = data
+
+
+class _FakeContext:
+    """Minimal context stub so monitor.py / military.py run without Telegram."""
+    def __init__(self, cfg):
+        from datetime import datetime, timezone
+        self.bot_data = {"cfg": cfg, "start_time": datetime.now(timezone.utc)}
+        self.bot = _NoopBot()
+        self.job = _FakeJob(cfg.chat_id)
+
+
+async def _run_monitor(cfg: AppConfig) -> None:
+    ctx = _FakeContext(cfg)
+    while True:
+        try:
+            await run_check(ctx)
+        except Exception:
+            log.exception("Arrivals check failed")
+        await asyncio.sleep(cfg.check_interval)
+
+
+async def _run_military(cfg: AppConfig) -> None:
+    ctx = _FakeContext(cfg)
+    while True:
+        try:
+            await check_military(ctx)
+        except Exception:
+            log.exception("Military check failed")
+        await asyncio.sleep(cfg.military_check_interval)
+
+
+async def _run_backup(store) -> None:
+    while True:
+        await asyncio.sleep(86400)
+        try:
+            path = store.backup()
+            log.info("DB backup saved: %s", path)
+        except Exception:
+            log.exception("DB backup failed")
+
+
 def main() -> None:
     log_format = logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 
@@ -271,65 +325,26 @@ def main() -> None:
     catalog = find_catalog()
     cfg = build_config(env, fr_api, store, catalog)
 
-    # Seed primary user in DB
-    if not store.get_user(cfg.chat_id):
-        store.upsert_user(cfg.chat_id, is_admin=True)
-    else:
-        store.upsert_user(cfg.chat_id, is_admin=True)
-
     log.info(
-        "Monitoring %s (%s) — checking every %s min",
-        cfg.airport_name, cfg.airport_iata,
-        env.str("CHECK_INTERVAL_MINUTES"),
+        "Monitoring %s (%s) — check every %ds, web on :%d",
+        cfg.airport_name, cfg.airport_iata, cfg.check_interval, port,
     )
 
-    async def _set_commands(application: Application) -> None:
-        await application.bot.set_my_commands([
-            BotCommand("spot",      "Check interesting flights or get a spotting recommendation"),
-            BotCommand("rapid",     "Toggle rapid polling mode (use when at the airport)"),
-            BotCommand("stats",     "View spotting stats and notification totals"),
-            BotCommand("history",   "Show notifications from the last 7 days"),
-            BotCommand("filters",   "Manage watchlists & exclusion list"),
-            BotCommand("settings",  "Configure filter intervals, days & windows"),
-            BotCommand("status",    "Show bot status and next check times"),
-        ])
+    web_app = create_app(cfg)
+    port = int(os.environ.get("WEB_PORT", "8088"))
+    web_config = uvicorn.Config(web_app, host="0.0.0.0", port=port, log_level="warning",
+                                timeout_graceful_shutdown=1)
+    web_server = uvicorn.Server(web_config)
 
-    token = env.str("TELEGRAM_BOT_TOKEN")
-    app = Application.builder().token(token).post_init(_set_commands).build()
-    from datetime import datetime, timezone
-    app.bot_data["cfg"] = cfg
-    app.bot_data["start_time"] = datetime.now(timezone.utc)
-
-    register_handlers(app)
-    register_settings_handlers(app)
-    register_lookup_handler(app)
-    register_stats_handlers(app)
-    register_spot_rec_handlers(app)
-    register_user_handlers(app)
-    register_rapid_handler(app)
-    # Named so settings.py can reschedule it when the interval changes
-    app.job_queue.run_repeating(
-        run_check, interval=cfg.check_interval, first=10,
-        data=cfg.chat_id, name="arrivals_check",
-    )
-    app.job_queue.run_repeating(
-        check_military, interval=cfg.military_check_interval, first=15,
-        name="military_check",
-    )
-    app.job_queue.run_repeating(
-        _backup_db, interval=86400, first=60,
-        name="daily_backup",
-    )
-    if cfg.spot_rec_enabled:
-        import datetime as _dt
-        eod_time = _dt.time(
-            hour=cfg.spot_rec_eod_hour, minute=0,
-            tzinfo=pytz.timezone(cfg.airport_tz),
+    async def _run_all():
+        await asyncio.gather(
+            web_server.serve(),
+            _run_monitor(cfg),
+            _run_military(cfg),
+            _run_backup(store),
         )
-        app.job_queue.run_daily(run_eod_recommendation, time=eod_time, name="eod_rec")
-        log.info("Spot recommendation enabled — EOD check at %02d:00 local", cfg.spot_rec_eod_hour)
 
-    app.run_polling(drop_pending_updates=True)
+    asyncio.run(_run_all())
 
 
 if __name__ == "__main__":
