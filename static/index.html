@@ -34,28 +34,31 @@
     /* ── Header ─────────────────────────────────────────────────────────── */
     header {
       background: var(--surface); border-bottom: 1px solid var(--border);
-      padding: 0 16px; display: flex; align-items: stretch;
-      gap: 0; flex-shrink: 0; height: 44px;
+      padding: 0 16px; padding-top: env(safe-area-inset-top);
+      display: flex; align-items: center;
+      flex-shrink: 0; min-height: calc(44px + env(safe-area-inset-top));
     }
     .header-logo {
       font-size: 15px; font-weight: 700; white-space: nowrap;
-      display: flex; align-items: center; padding-right: 20px;
-      border-right: 1px solid var(--border); margin-right: 4px;
+      display: flex; align-items: center;
     }
     .header-logo span { color: var(--accent); margin-right: 6px; }
 
-    /* ── Nav tabs ────────────────────────────────────────────────────────── */
-    .nav-tabs { display: flex; align-items: stretch; gap: 0; overflow-x: auto; }
-    .nav-tabs::-webkit-scrollbar { display: none; }
-    .nav-tab {
-      background: none; border: none; border-bottom: 2px solid transparent;
-      color: var(--dim); padding: 0 14px; font-size: 13px; font-weight: 500;
-      cursor: pointer; white-space: nowrap; border-radius: 0;
-      transition: color .12s, border-color .12s;
-      display: flex; align-items: center;
+    /* ── Bottom nav ──────────────────────────────────────────────────────── */
+    .nav-tabs {
+      display: flex; background: var(--surface); border-top: 1px solid var(--border);
+      padding-bottom: env(safe-area-inset-bottom); flex-shrink: 0;
     }
+    .nav-tab {
+      flex: 1; background: none; border: none; color: var(--dim);
+      padding: 8px 4px 6px; font-size: 10px; font-weight: 500;
+      cursor: pointer; border-radius: 0; display: flex; flex-direction: column;
+      align-items: center; gap: 3px; transition: color .12s;
+      white-space: nowrap;
+    }
+    .nav-tab .tab-icon { font-size: 20px; line-height: 1; }
     .nav-tab:hover { color: var(--text); }
-    .nav-tab.active { color: var(--text); border-bottom-color: var(--accent); }
+    .nav-tab.active { color: var(--accent); }
 
     /* ── Pages ───────────────────────────────────────────────────────────── */
     #app { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
@@ -194,7 +197,7 @@
     #rapid-badge {
       margin-left: auto; background: var(--danger); color: #fff;
       font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 10px;
-      text-transform: uppercase; letter-spacing: .06em; display: none;
+      text-transform: uppercase; letter-spacing: .06em; display: none; align-self: center;
     }
     #rapid-badge.visible { display: inline-block; }
   </style>
@@ -209,13 +212,6 @@
 <header>
   <div class="header-logo"><span>✈</span>SpotAlert</div>
   <div id="rapid-badge">RAPID</div>
-  <nav class="nav-tabs" id="nav-tabs">
-    <button class="nav-tab active" data-tab="feed">Feed</button>
-    <button class="nav-tab" data-tab="history">History</button>
-    <button class="nav-tab" data-tab="stats">Stats</button>
-    <button class="nav-tab" data-tab="filters">Filters</button>
-    <button class="nav-tab" data-tab="settings">Settings</button>
-  </nav>
 </header>
 
 <div id="app">
@@ -284,15 +280,35 @@
     <div class="section-heading" style="margin-top:8px">Rare Plane</div>
     <div class="settings-group" id="settings-rare"></div>
 
-    <div class="section-heading" style="margin-top:8px">Watchlist Cooldowns</div>
-    <div class="settings-group" id="settings-watchlist"></div>
+    <div class="section-heading" style="margin-top:8px">Rego Watchlist</div>
+    <div class="settings-group" id="settings-rego"></div>
+
+    <div class="section-heading" style="margin-top:8px">Type Watchlist</div>
+    <div class="settings-group" id="settings-type"></div>
+
+    <div class="section-heading" style="margin-top:8px">Airline Watchlist</div>
+    <div class="settings-group" id="settings-airline"></div>
 
     <div class="section-heading" style="margin-top:8px">Military</div>
     <div class="settings-group" id="settings-military"></div>
 
+    <div class="section-heading" style="margin-top:8px">Spot Recommendation</div>
+    <div class="settings-group" id="settings-spotrec"></div>
+
+    <div class="section-heading" style="margin-top:8px">Route Type Filter</div>
+    <div class="settings-group" id="settings-routetype"></div>
+
     <div class="save-hint">Changes are saved immediately.</div>
   </div>
 </div>
+
+<nav class="nav-tabs" id="nav-tabs">
+  <button class="nav-tab active" data-tab="feed"><span class="tab-icon">📡</span>Feed</button>
+  <button class="nav-tab" data-tab="history"><span class="tab-icon">🕐</span>History</button>
+  <button class="nav-tab" data-tab="stats"><span class="tab-icon">📊</span>Stats</button>
+  <button class="nav-tab" data-tab="filters"><span class="tab-icon">🔍</span>Filters</button>
+  <button class="nav-tab" data-tab="settings"><span class="tab-icon">⚙️</span>Settings</button>
+</nav>
 
 <div id="toast"></div>
 

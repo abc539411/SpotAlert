@@ -304,24 +304,73 @@ async function delAirline(icao, type) {
 // ── Settings ──────────────────────────────────────────────────────────────────
 
 const SETTINGS_SCHEMA = [
-  { group: 'monitoring', key: 'CHECK_INTERVAL_MINUTES', label: 'Check interval', desc: 'Arrivals feed polling interval (minutes)' },
-  { group: 'monitoring', key: 'REMINDER_HOURS', label: 'Reminder hours', desc: 'Hours before arrival to send a reminder (0 = off)' },
-  { group: 'livery', key: 'SPECIAL_LIVERY_RENOTIFY_HOURS', label: 'Re-notify cooldown (hrs)', desc: 'Minimum hours between livery alerts for the same registration' },
-  { group: 'rare', key: 'RARE_PLANE_MIN_ABSENCE_DAYS', label: 'Min absence days', desc: 'Days without sighting before a type is considered rare' },
-  { group: 'watchlist', key: 'REGO_WATCHLIST_RENOTIFY_HOURS', label: 'Rego cooldown (hrs)', desc: '' },
-  { group: 'watchlist', key: 'TYPE_WATCHLIST_RENOTIFY_HOURS', label: 'Type cooldown (hrs)', desc: '' },
-  { group: 'watchlist', key: 'AIRLINE_WATCHLIST_RENOTIFY_HOURS', label: 'Airline cooldown (hrs)', desc: '' },
-  { group: 'military', key: 'MILITARY_RADIUS_NM', label: 'Radius (nm)', desc: 'Search radius for military traffic' },
-  { group: 'military', key: 'MILITARY_MAX_ALT_FT', label: 'Max altitude (ft)', desc: '' },
-  { group: 'military', key: 'MILITARY_RENOTIFY_HOURS', label: 'Re-notify cooldown (hrs)', desc: '' },
+  // Monitoring
+  { group: 'monitoring', key: 'CHECK_INTERVAL_MINUTES',        label: 'Check interval (min)',       desc: 'How often to poll the arrivals feed' },
+  { group: 'monitoring', key: 'REMINDER_HOURS',                label: 'Reminder hours',             desc: 'Hours before arrival to send a reminder (0 = off)' },
+  { group: 'monitoring', key: 'FETCH_PAGES',                   label: 'Fetch pages',                desc: 'Number of FR24 arrivals pages to fetch (100 flights/page)' },
+  { group: 'monitoring', key: 'APPROACH_ALERT_MINS',           label: 'Approach alert (min)',        desc: 'Rapid mode: alert when flight is this many minutes out (0 = off)' },
+  { group: 'monitoring', key: 'RAPID_MODE_INTERVAL_MINS',      label: 'Rapid mode interval (min)',   desc: 'Polling interval when rapid mode is active' },
+  { group: 'monitoring', key: 'DEPARTURE_PATTERN_THRESHOLD',   label: 'Dep pattern threshold (%)',  desc: 'Min confidence % to show a predicted departure flight' },
+  // Special Livery
+  { group: 'livery', key: 'SPECIAL_LIVERY_RENOTIFY_HOURS',     label: 'Re-notify cooldown (hrs)',   desc: 'Min hours between alerts for the same registration' },
+  { group: 'livery', key: 'SPECIAL_LIVERY_ARRIVAL_WINDOW',     label: 'Arrival window',             desc: 'Daylight / Off / (blank = always)' },
+  { group: 'livery', key: 'SPECIAL_LIVERY_ACTIVE_DAYS',        label: 'Active days',                desc: 'Comma-separated: Mon,Tue,Wed,Thu,Fri,Sat,Sun' },
+  { group: 'livery', key: 'SPECIAL_LIVERY_KEYWORDS',           label: 'Keywords',                   desc: 'Comma-separated livery keywords to match' },
+  { group: 'livery', key: 'SPECIAL_LIVERY_EXCLUDE_KEYWORDS',   label: 'Exclude keywords',           desc: 'Comma-separated keywords to exclude' },
+  // Rare Plane
+  { group: 'rare', key: 'RARE_PLANE_MIN_ABSENCE_DAYS',         label: 'Min absence days',           desc: 'Days without sighting before a type is considered rare' },
+  { group: 'rare', key: 'RARE_PLANE_ARRIVAL_WINDOW',           label: 'Arrival window',             desc: 'Daylight / Off / (blank = always)' },
+  { group: 'rare', key: 'RARE_PLANE_ACTIVE_DAYS',              label: 'Active days',                desc: 'Comma-separated days' },
+  // Rego Watchlist
+  { group: 'rego', key: 'REGO_WATCHLIST_RENOTIFY_HOURS',       label: 'Re-notify cooldown (hrs)',   desc: '' },
+  { group: 'rego', key: 'REGO_WATCHLIST_ARRIVAL_WINDOW',       label: 'Arrival window',             desc: 'Daylight / Off / (blank = always)' },
+  { group: 'rego', key: 'REGO_WATCHLIST_ACTIVE_DAYS',          label: 'Active days',                desc: 'Comma-separated days' },
+  // Type Watchlist
+  { group: 'type', key: 'TYPE_WATCHLIST_RENOTIFY_HOURS',       label: 'Re-notify cooldown (hrs)',   desc: '' },
+  { group: 'type', key: 'TYPE_WATCHLIST_ARRIVAL_WINDOW',       label: 'Arrival window',             desc: 'Daylight / Off / (blank = always)' },
+  { group: 'type', key: 'TYPE_WATCHLIST_ACTIVE_DAYS',          label: 'Active days',                desc: 'Comma-separated days' },
+  // Airline Watchlist
+  { group: 'airline', key: 'AIRLINE_WATCHLIST_RENOTIFY_HOURS', label: 'Re-notify cooldown (hrs)',   desc: '' },
+  { group: 'airline', key: 'AIRLINE_WATCHLIST_ARRIVAL_WINDOW', label: 'Arrival window',             desc: 'Daylight / Off / (blank = always)' },
+  { group: 'airline', key: 'AIRLINE_WATCHLIST_ACTIVE_DAYS',    label: 'Active days',                desc: 'Comma-separated days' },
+  // Military
+  { group: 'military', key: 'MILITARY_CHECK_INTERVAL_MINUTES', label: 'Check interval (min)',       desc: '' },
+  { group: 'military', key: 'MILITARY_RADIUS_NM',              label: 'Radius (nm)',                desc: 'Search radius for military traffic' },
+  { group: 'military', key: 'MILITARY_MAX_ALT_FT',             label: 'Max altitude (ft)',          desc: '' },
+  { group: 'military', key: 'MILITARY_RENOTIFY_HOURS',         label: 'Re-notify cooldown (hrs)',   desc: '' },
+  // Spot Recommendation
+  { group: 'spotrec', key: 'SPOT_REC_ENABLED',                 label: 'Enabled',                    desc: 'true / false' },
+  { group: 'spotrec', key: 'SPOT_REC_DAY_TYPE',                label: 'Day type',                   desc: 'Any / WeekendPublicHoliday' },
+  { group: 'spotrec', key: 'SPOT_REC_TRAVEL_MINS',             label: 'Travel time (min)',           desc: 'Time to get to the airport' },
+  { group: 'spotrec', key: 'SPOT_REC_NOTIFY_WINDOW_HOURS',     label: 'Notify window (hrs)',         desc: 'Notify if cluster starts within N hours' },
+  { group: 'spotrec', key: 'SPOT_REC_THRESHOLD',               label: 'Threshold (flights)',         desc: 'Min flights in a cluster to recommend' },
+  { group: 'spotrec', key: 'SPOT_REC_EOD_HOUR',                label: 'EOD check hour',             desc: 'Hour (local) to send end-of-day recommendation' },
+  { group: 'spotrec', key: 'SPOT_REC_MAX_GAP_HOURS',           label: 'Max gap (hrs)',              desc: 'Gap that splits events into separate clusters' },
+  { group: 'spotrec', key: 'SPOT_REC_NOTABLE_LULL_MINS',       label: 'Notable lull (min)',         desc: 'Gap within a cluster worth flagging' },
+  { group: 'spotrec', key: 'SPOT_REC_MAX_LULLS',               label: 'Max lulls shown',            desc: '' },
+  { group: 'spotrec', key: 'SPOT_REC_MAX_WINDOWS',             label: 'Max clusters shown',         desc: '' },
+  { group: 'spotrec', key: 'SPOT_REC_WEATHER_GATE',            label: 'Weather gate',               desc: 'true / false' },
+  { group: 'spotrec', key: 'SPOT_REC_LIGHTING_GATE',           label: 'Lighting gate',              desc: 'true / false' },
+  { group: 'spotrec', key: 'SPOT_REC_MAX_SPOTTED_TIMES',       label: 'Max spotted times',          desc: '0 = disabled' },
+  { group: 'spotrec', key: 'SPOT_REC_LIGHT_BUFFER_MINS',       label: 'Light buffer (min)',          desc: 'Minutes around sunrise/sunset considered poor light' },
+  { group: 'spotrec', key: 'SPOT_REC_BAD_LIGHT_START',         label: 'Bad light start (HH:MM)',    desc: 'Midday bad-light window start; blank = off' },
+  { group: 'spotrec', key: 'SPOT_REC_BAD_LIGHT_END',           label: 'Bad light end (HH:MM)',      desc: '' },
+  // Route Type filter
+  { group: 'routetype', key: 'ROUTE_TYPE_MIN_DAYS',            label: 'Min history days',           desc: 'Min days of history before filter fires' },
+  { group: 'routetype', key: 'ROUTE_TYPE_DOMINANCE_X',         label: 'Dominance multiplier',       desc: 'Dominant type must be >= N× next type count' },
+  { group: 'routetype', key: 'ROUTE_TYPE_LOOKBACK_DAYS',       label: 'Lookback days',              desc: 'Observation window' },
+  { group: 'routetype', key: 'ROUTE_TYPE_RENOTIFY_DAYS',       label: 'Re-notify cooldown (days)',  desc: 'Cooldown per (flight, type) pairing' },
+  { group: 'routetype', key: 'ROUTE_TYPE_ARRIVAL_WINDOW',      label: 'Arrival window',             desc: 'Daylight / Off / (blank = always)' },
+  { group: 'routetype', key: 'ROUTE_TYPE_ACTIVE_DAYS',         label: 'Active days',                desc: 'Comma-separated days' },
 ];
 
 async function loadSettings() {
   try {
     const s = await api('/settings');
-    const groups = ['monitoring', 'livery', 'rare', 'watchlist', 'military'];
+    const groups = [...new Set(SETTINGS_SCHEMA.map(x => x.group))];
     groups.forEach(g => {
       const el = $('settings-' + g);
+      if (!el) return;
       const items = SETTINGS_SCHEMA.filter(x => x.group === g);
       el.innerHTML = items.map(item => `
         <div class="setting-row">
