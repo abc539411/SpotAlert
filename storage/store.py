@@ -256,6 +256,17 @@ class SqliteStore:
             if "photo_url" not in af_cols:
                 conn.execute("ALTER TABLE airframe_db ADD COLUMN photo_url TEXT DEFAULT NULL")
 
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS push_subscriptions (
+                    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                    endpoint     TEXT NOT NULL UNIQUE,
+                    p256dh       TEXT NOT NULL,
+                    auth         TEXT NOT NULL,
+                    user_agent   TEXT DEFAULT '',
+                    created_ts   INTEGER NOT NULL
+                )
+            """)
+
     # ------------------------------------------------------------------
     # App settings (bot-managed, persisted across restarts)
     # ------------------------------------------------------------------
@@ -812,6 +823,27 @@ class SqliteStore:
                     "SELECT COUNT(*) FROM airline_watchlist WHERE last_notified_ts > 0"
                 ).fetchone()[0],
             }
+
+    # ------------------------------------------------------------------
+    # Web Push subscriptions
+    # ------------------------------------------------------------------
+
+    def add_push_subscription(self, endpoint: str, p256dh: str, auth: str,
+                               user_agent: str, ts: int) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """INSERT OR REPLACE INTO push_subscriptions
+                   (endpoint, p256dh, auth, user_agent, created_ts)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (endpoint, p256dh, auth, user_agent, ts),
+            )
+
+    def remove_push_subscription(self, endpoint: str) -> None:
+        with self._connect() as conn:
+            conn.execute("DELETE FROM push_subscriptions WHERE endpoint = ?", (endpoint,))
+
+    def get_push_subscriptions(self) -> List[sqlite3.Row]:
+        return self._fetch("SELECT * FROM push_subscriptions")
 
     # ------------------------------------------------------------------
     # Departure pattern learning

@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#111111">
+  <title>SpotAlert</title>
+  <link rel="manifest" href="/manifest.json">
+  <link rel="apple-touch-icon" href="/icons/icon-192.png">
+  <style>
+    :root {
+      --bg: #111;
+      --surface: #1c1c1c;
+      --surface2: #252525;
+      --border: #333;
+      --accent: #3b82f6;
+      --accent-dim: rgba(59,130,246,0.15);
+      --danger: #ef4444;
+      --success: #22c55e;
+      --warn: #f59e0b;
+      --text: #e2e2e2;
+      --dim: #666;
+      --r: 7px;
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg); color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      font-size: 14px; height: 100dvh; display: flex; flex-direction: column; overflow: hidden;
+    }
+
+    /* ── Header ─────────────────────────────────────────────────────────── */
+    header {
+      background: var(--surface); border-bottom: 1px solid var(--border);
+      padding: 0 16px; display: flex; align-items: stretch;
+      gap: 0; flex-shrink: 0; height: 44px;
+    }
+    .header-logo {
+      font-size: 15px; font-weight: 700; white-space: nowrap;
+      display: flex; align-items: center; padding-right: 20px;
+      border-right: 1px solid var(--border); margin-right: 4px;
+    }
+    .header-logo span { color: var(--accent); margin-right: 6px; }
+
+    /* ── Nav tabs ────────────────────────────────────────────────────────── */
+    .nav-tabs { display: flex; align-items: stretch; gap: 0; overflow-x: auto; }
+    .nav-tabs::-webkit-scrollbar { display: none; }
+    .nav-tab {
+      background: none; border: none; border-bottom: 2px solid transparent;
+      color: var(--dim); padding: 0 14px; font-size: 13px; font-weight: 500;
+      cursor: pointer; white-space: nowrap; border-radius: 0;
+      transition: color .12s, border-color .12s;
+      display: flex; align-items: center;
+    }
+    .nav-tab:hover { color: var(--text); }
+    .nav-tab.active { color: var(--text); border-bottom-color: var(--accent); }
+
+    /* ── Pages ───────────────────────────────────────────────────────────── */
+    #app { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
+    .page { flex: 1; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+    .page.hidden { display: none !important; }
+
+    /* ── Cards ───────────────────────────────────────────────────────────── */
+    .card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--r); padding: 12px 14px;
+    }
+    .card-row { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin-bottom: 4px; }
+    .card-row:last-child { margin-bottom: 0; }
+
+    /* ── Registration badge ──────────────────────────────────────────────── */
+    .rego {
+      font-size: 15px; font-weight: 700; letter-spacing: .04em; color: var(--text);
+    }
+    .flight-num { color: var(--dim); font-size: 13px; }
+
+    /* ── Type chips ──────────────────────────────────────────────────────── */
+    .chip {
+      display: inline-block; padding: 2px 7px; border-radius: 4px;
+      font-size: 11px; font-weight: 600; white-space: nowrap;
+      letter-spacing: .04em; text-transform: uppercase;
+    }
+    .chip-livery  { background: rgba(59,130,246,.18); color: #93c5fd; }
+    .chip-rare    { background: rgba(245,158,11,.15);  color: #fbbf24; }
+    .chip-rego    { background: rgba(34,197,94,.15);   color: #86efac; }
+    .chip-type    { background: rgba(168,85,247,.15);  color: #d8b4fe; }
+    .chip-airline { background: rgba(239,68,68,.15);   color: #fca5a5; }
+    .chip-military{ background: rgba(239,68,68,.2);    color: #f87171; }
+    .chip-route   { background: rgba(99,102,241,.18);  color: #a5b4fc; }
+    .chip-unknown { background: var(--surface2); color: var(--dim); }
+
+    /* ── Label style (section headers in cards) ──────────────────────────── */
+    .label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .07em; color: var(--dim); }
+
+    /* ── Detail row ──────────────────────────────────────────────────────── */
+    .detail { color: var(--dim); font-size: 12px; }
+    .detail strong { color: var(--text); }
+
+    /* ── Time display ────────────────────────────────────────────────────── */
+    .ts { color: var(--dim); font-size: 12px; font-variant-numeric: tabular-nums; }
+
+    /* ── Empty state ─────────────────────────────────────────────────────── */
+    .empty { color: var(--dim); font-size: 13px; text-align: center; padding: 40px 0; }
+
+    /* ── Section heading ─────────────────────────────────────────────────── */
+    .section-heading {
+      font-size: 11px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: .07em; color: var(--dim); padding: 4px 2px 6px;
+    }
+
+    /* ── History date group ──────────────────────────────────────────────── */
+    .date-group { display: flex; flex-direction: column; gap: 6px; }
+
+    /* ── Stats grid ──────────────────────────────────────────────────────── */
+    .stats-grid {
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px;
+    }
+    .stat-card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--r); padding: 12px 14px;
+    }
+    .stat-value { font-size: 26px; font-weight: 700; color: var(--text); line-height: 1; }
+    .stat-label { font-size: 11px; color: var(--dim); margin-top: 4px; text-transform: uppercase; letter-spacing: .06em; }
+
+    /* ── Filters page ────────────────────────────────────────────────────── */
+    .filter-section { display: flex; flex-direction: column; gap: 6px; }
+    .filter-row {
+      background: var(--surface2); border-radius: var(--r);
+      padding: 8px 10px; display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    }
+    .filter-row .main { flex: 1; min-width: 0; }
+    .filter-primary { font-weight: 600; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .filter-secondary { color: var(--dim); font-size: 12px; }
+    .del-btn {
+      background: none; border: none; color: var(--danger); font-size: 16px; padding: 0 4px;
+      cursor: pointer; opacity: .6; flex-shrink: 0; line-height: 1;
+    }
+    .del-btn:hover { opacity: 1; }
+    .add-row { display: flex; gap: 6px; margin-top: 4px; }
+    .add-row input {
+      flex: 1; background: var(--surface2); border: 1px solid var(--border);
+      color: var(--text); padding: 6px 8px; border-radius: var(--r); font-size: 13px; min-width: 0;
+    }
+    .add-row input:focus { outline: none; border-color: var(--accent); }
+    .add-row input::placeholder { color: var(--dim); }
+    .add-btn {
+      background: var(--accent); border: none; color: #fff;
+      padding: 6px 12px; border-radius: var(--r); font-size: 13px; font-weight: 600; cursor: pointer; flex-shrink: 0;
+    }
+    .add-btn:hover { background: #2563eb; }
+
+    /* ── Settings page ───────────────────────────────────────────────────── */
+    .settings-group { display: flex; flex-direction: column; gap: 1px; margin-bottom: 8px; }
+    .setting-row {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 0; padding: 10px 14px;
+      display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    }
+    .settings-group .setting-row:first-child { border-radius: var(--r) var(--r) 0 0; }
+    .settings-group .setting-row:last-child  { border-radius: 0 0 var(--r) var(--r); }
+    .settings-group .setting-row:only-child  { border-radius: var(--r); }
+    .setting-label { flex: 1; }
+    .setting-key   { font-size: 13px; font-weight: 500; }
+    .setting-desc  { font-size: 11px; color: var(--dim); margin-top: 2px; }
+    .setting-input {
+      background: var(--surface2); border: 1px solid var(--border); color: var(--text);
+      padding: 5px 8px; border-radius: 5px; font-size: 13px; width: 110px; text-align: right;
+    }
+    .setting-input:focus { outline: none; border-color: var(--accent); }
+    .save-hint { font-size: 11px; color: var(--dim); text-align: right; padding: 2px 4px; }
+
+    /* ── Toast ───────────────────────────────────────────────────────────── */
+    #toast {
+      position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(80px);
+      background: var(--surface); border: 1px solid var(--border);
+      color: var(--text); padding: 9px 18px; border-radius: 20px;
+      font-size: 13px; white-space: nowrap; transition: transform .2s;
+      z-index: 999; pointer-events: none;
+    }
+    #toast.show { transform: translateX(-50%) translateY(0); }
+
+    /* ── Install banner ──────────────────────────────────────────────────── */
+    #install-banner {
+      background: var(--accent-dim); border-bottom: 1px solid var(--accent);
+      padding: 8px 16px; font-size: 12px; color: var(--text);
+      display: flex; align-items: center; gap: 10px; flex-shrink: 0;
+    }
+    #install-banner.hidden { display: none; }
+    #install-banner .close-banner { margin-left: auto; background: none; border: none; color: var(--dim); font-size: 16px; cursor: pointer; padding: 0; }
+
+    /* ── Rapid mode badge ────────────────────────────────────────────────── */
+    #rapid-badge {
+      margin-left: auto; background: var(--danger); color: #fff;
+      font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 10px;
+      text-transform: uppercase; letter-spacing: .06em; display: none;
+    }
+    #rapid-badge.visible { display: inline-block; }
+  </style>
+</head>
+<body>
+
+<div id="install-banner" class="hidden">
+  ✈ Add to Home Screen in Safari to enable push notifications.
+  <button class="close-banner" onclick="document.getElementById('install-banner').classList.add('hidden')">✕</button>
+</div>
+
+<header>
+  <div class="header-logo"><span>✈</span>SpotAlert</div>
+  <div id="rapid-badge">RAPID</div>
+  <nav class="nav-tabs" id="nav-tabs">
+    <button class="nav-tab active" data-tab="feed">Feed</button>
+    <button class="nav-tab" data-tab="history">History</button>
+    <button class="nav-tab" data-tab="stats">Stats</button>
+    <button class="nav-tab" data-tab="filters">Filters</button>
+    <button class="nav-tab" data-tab="settings">Settings</button>
+  </nav>
+</header>
+
+<div id="app">
+  <!-- Feed -->
+  <div class="page" id="tab-feed">
+    <div class="section-heading">Today's flights</div>
+    <div id="feed-list"><div class="empty">Loading…</div></div>
+  </div>
+
+  <!-- History -->
+  <div class="page hidden" id="tab-history">
+    <div class="section-heading">Last 7 days</div>
+    <div id="history-list"><div class="empty">Loading…</div></div>
+  </div>
+
+  <!-- Stats -->
+  <div class="page hidden" id="tab-stats">
+    <div class="section-heading">All-time notification counts</div>
+    <div class="stats-grid" id="stats-grid"><div class="empty">Loading…</div></div>
+  </div>
+
+  <!-- Filters -->
+  <div class="page hidden" id="tab-filters">
+    <div class="section-heading">Exclusion List</div>
+    <div class="filter-section" id="fl-exclusion"></div>
+    <div class="add-row">
+      <input id="excl-rego" placeholder="Registration" style="max-width:110px">
+      <input id="excl-desc" placeholder="Description">
+      <button class="add-btn" onclick="addExclusion()">Add</button>
+    </div>
+
+    <div class="section-heading" style="margin-top:8px">Rego Watchlist</div>
+    <div class="filter-section" id="fl-rego"></div>
+    <div class="add-row">
+      <input id="rego-rego" placeholder="Registration" style="max-width:110px">
+      <input id="rego-desc" placeholder="Description">
+      <button class="add-btn" onclick="addRego()">Add</button>
+    </div>
+
+    <div class="section-heading" style="margin-top:8px">Type Watchlist</div>
+    <div class="filter-section" id="fl-type"></div>
+    <div class="add-row">
+      <input id="type-airline" placeholder="Airline ICAO">
+      <input id="type-ac" placeholder="Aircraft type">
+      <button class="add-btn" onclick="addType()">Add</button>
+    </div>
+
+    <div class="section-heading" style="margin-top:8px">Airline / Operator Watchlist</div>
+    <div class="filter-section" id="fl-airline"></div>
+    <div class="add-row">
+      <input id="al-icao" placeholder="ICAO code" style="max-width:90px">
+      <input id="al-type" placeholder="airline/operator" style="max-width:110px">
+      <input id="al-name" placeholder="Name">
+      <button class="add-btn" onclick="addAirline()">Add</button>
+    </div>
+  </div>
+
+  <!-- Settings -->
+  <div class="page hidden" id="tab-settings">
+    <div class="section-heading">Monitoring</div>
+    <div class="settings-group" id="settings-monitoring"></div>
+
+    <div class="section-heading" style="margin-top:8px">Special Livery</div>
+    <div class="settings-group" id="settings-livery"></div>
+
+    <div class="section-heading" style="margin-top:8px">Rare Plane</div>
+    <div class="settings-group" id="settings-rare"></div>
+
+    <div class="section-heading" style="margin-top:8px">Watchlist Cooldowns</div>
+    <div class="settings-group" id="settings-watchlist"></div>
+
+    <div class="section-heading" style="margin-top:8px">Military</div>
+    <div class="settings-group" id="settings-military"></div>
+
+    <div class="save-hint">Changes are saved immediately.</div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
