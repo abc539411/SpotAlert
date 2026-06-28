@@ -13,7 +13,7 @@ import pytz
 from environs import Env
 
 from flightradar24api import FlightRadar24API
-from storage import SqliteStore
+from store import SqliteStore
 from monitor import run_check
 from military import check_military
 from lightroom import find_catalog
@@ -314,8 +314,8 @@ def main() -> None:
 
     logging.basicConfig(level=logging.INFO, handlers=[stdout_handler, file_handler])
 
-    filters_dir = "config/filters/"
-    os.makedirs(filters_dir, exist_ok=True)
+    data_dir = "data/"
+    os.makedirs(data_dir, exist_ok=True)
 
     fr_api = FlightRadar24API()
 
@@ -328,8 +328,8 @@ def main() -> None:
     except Exception as _e:
         log.warning("Cloudflare warm-up failed (will retry on first API call): %s", _e)
 
-    store = SqliteStore(os.path.join(filters_dir, "spotalert.db"))
-    store.migrate_from_csv_folder(filters_dir)
+    store = SqliteStore(os.path.join(data_dir, "spotalert.db"))
+    store.migrate_from_csv_folder(data_dir)
 
     catalog = find_catalog()
     cfg = build_config(fr_api, store, catalog)

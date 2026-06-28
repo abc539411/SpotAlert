@@ -30,7 +30,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from environs import Env
 
 from flightradar24api import FlightRadar24API
-from storage import SqliteStore
+from store import SqliteStore
 
 log = logging.getLogger(__name__)
 
@@ -264,8 +264,8 @@ def main() -> None:
     username = env.str("FR24_USERNAME", "")
     password = env.str("FR24_PASSWORD", "")
 
-    filters_dir = "config/filters/"
-    store = SqliteStore(os.path.join(filters_dir, "spotalert.db"), config_file=config_file)
+    data_dir = "data/"
+    store = SqliteStore(os.path.join(data_dir, "spotalert.db"), config_file=config_file)
 
     fr_api = FlightRadar24API()
     if username and password:

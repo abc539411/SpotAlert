@@ -8,7 +8,7 @@ Usage:
 import csv, io, sqlite3, urllib.request
 from pathlib import Path
 
-DB  = Path(__file__).parent.parent / "config" / "filters" / "spotalert.db"
+DB  = Path(__file__).parent.parent / "data" / "spotalert.db"
 URL = "https://raw.githubusercontent.com/rikgale/ICAOList/main/ICAOList.csv"
 
 print(f"Downloading {URL} …")

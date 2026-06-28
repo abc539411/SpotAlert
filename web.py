@@ -61,11 +61,11 @@ _live_status_cache: dict = {"ts": 0, "schedule": None}
 
 def _load_standalone():
     """Load config and store the same way main.py does, for standalone uvicorn runs."""
-    from storage import SqliteStore
+    from store import SqliteStore
 
-    filters_dir = os.environ.get("SPOTALERT_FILTERS", "config/filters/")
-    os.makedirs(filters_dir, exist_ok=True)
-    store = SqliteStore(os.path.join(filters_dir, "spotalert.db"))
+    data_dir = os.environ.get("SPOTALERT_DATA", "data/")
+    os.makedirs(data_dir, exist_ok=True)
+    store = SqliteStore(os.path.join(data_dir, "spotalert.db"))
 
     try:
         from lightroom import find_catalog
@@ -296,7 +296,7 @@ def create_app(cfg=None) -> FastAPI:
 
     @app.post("/api/refresh-fr24")
     async def refresh_fr24():
-        """Re-seed FR24 cookies from disk (call after copying fresh .fr24_cookies.pkl to config/)."""
+        """Re-seed FR24 cookies from disk (call after copying fresh .fr24_cookies.pkl to data/)."""
         from flightradar24api.request import reload_cookies
         ok = reload_cookies()
         return JSONResponse({"ok": ok, "msg": "Cookies reloaded" if ok else "No cookie file found"})
@@ -2508,7 +2508,7 @@ def create_app(cfg=None) -> FastAPI:
     def _fetch_airforce_roundel(icao: str):
         """Fetch air force roundel from GitHub CDN, save to disk. Returns (Path, media_type) or None."""
         import json as _json, requests as _req
-        mapping_path = Path(__file__).parent / "config" / "airforce_roundels.json"
+        mapping_path = Path(__file__).parent / "static" / "airforce_roundels.json"
         if not mapping_path.exists():
             return None, None
         try:
@@ -2518,7 +2518,7 @@ def create_app(cfg=None) -> FastAPI:
         filename = mapping.get(icao.upper())
         if not filename:
             return None, None
-        cache_path = Path(__file__).parent / "config" / "airline_logos" / f"{icao}_af.png"
+        cache_path = Path(__file__).parent / "static" / "airline_logos" / f"{icao}_af.png"
         if cache_path.exists():
             return cache_path, "image/png"
         url = f"https://cdn.jsdelivr.net/gh/chaseAEd/World-Airforce-Insignia@master/Flags/{filename}"
@@ -2571,13 +2571,13 @@ def create_app(cfg=None) -> FastAPI:
                 pass
         ext = "svg" if is_svg else "png"
         media = "image/svg+xml" if is_svg else "image/png"
-        cache_path = Path(__file__).parent / "config" / "airline_logos" / f"{icao}.{ext}"
+        cache_path = Path(__file__).parent / "static" / "airline_logos" / f"{icao}.{ext}"
         cache_path.write_bytes(r.content)
         return cache_path, media
 
     def _cached_logo_path(icao: str):
         """Return (Path, media_type) for a cached logo, checking both .png and .svg."""
-        base = Path(__file__).parent / "config" / "airline_logos"
+        base = Path(__file__).parent / "static" / "airline_logos"
         for ext, mt in (("png", "image/png"), ("svg", "image/svg+xml")):
             p = base / f"{icao}.{ext}"
             if p.exists():
@@ -2613,7 +2613,7 @@ def create_app(cfg=None) -> FastAPI:
         if not name:
             raise HTTPException(400, "Name required")
         # Check name→icao mapping cache
-        mapping_path = Path(__file__).parent / "config" / "airline_logos" / "_name_icao.json"
+        mapping_path = Path(__file__).parent / "static" / "airline_logos" / "_name_icao.json"
         mapping: dict = {}
         if mapping_path.exists():
             try:

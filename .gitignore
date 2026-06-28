@@ -4,15 +4,19 @@
 # Secrets and personal config — never commit these
 config/config.env
 config/filters/
-config/.fr24_cookies.pkl
-config/airline_logos/
+data/.fr24_cookies.pkl
+
+# Runtime downloaded assets — fetched on demand, not committed
+static/airline_logos/
+
+# Runtime database in data/ — static JSON files in data/ are tracked
+data/*.db
+data/*.db-shm
+data/*.db-wal
+data/backups/
 
 # Logs
 logs/
-
-# Deployment scripts (contain credentials)
-deploy/
-deploy_deck.py
 
 # Personal planning notes and docs
 to_do.md

@@ -15,7 +15,7 @@ import requests.structures
 
 from .errors import CloudflareError
 
-_COOKIE_FILE = os.path.join("config", ".fr24_cookies.pkl")
+_COOKIE_FILE = os.path.join("data", ".fr24_cookies.pkl")
 _cookie_file_mtime: float = 0.0
 
 def _save_cookies(s: cloudscraper.CloudScraper) -> None:
