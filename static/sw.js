@@ -1,22 +1,44 @@
-const CACHE = 'spotalert-v1';
+const CACHE        = 'spotalert-v279';
+const LOGOS_CACHE  = 'airline-logos-v3';  // persistent — never cleared on SW update
 const PRECACHE = ['/', '/static/app.js', '/manifest.json'];
 
 self.addEventListener('install', e => {
   e.waitUntil(
-    caches.open(CACHE).then(c => c.addAll(PRECACHE)).then(() => self.skipWaiting())
+    caches.open(CACHE).then(c =>
+      Promise.all(PRECACHE.map(url =>
+        fetch(new Request(url, { cache: 'reload' })).then(r => c.put(url, r))
+      ))
+    ).then(() => self.skipWaiting())
   );
 });
 
 self.addEventListener('activate', e => {
   e.waitUntil(
     caches.keys().then(keys =>
-      Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k)))
+      Promise.all(keys.filter(k => k !== CACHE && k !== LOGOS_CACHE).map(k => caches.delete(k)))
     ).then(() => self.clients.claim())
   );
 });
 
 self.addEventListener('fetch', e => {
-  if (e.request.url.includes('/api/')) return; // never cache API calls
+  // Airline logos (both local API and legacy CDN) — cache-first, persistent
+  if (e.request.url.includes('/api/airline-logo/') || e.request.url.includes('airline-logos')) {
+    e.respondWith(
+      caches.open(LOGOS_CACHE).then(cache =>
+        cache.match(e.request).then(cached => {
+          if (cached) return cached;
+          return fetch(e.request).then(resp => {
+            if (resp && resp.status === 200) cache.put(e.request, resp.clone());
+            return resp;
+          }).catch(() => new Response('', { status: 404 }));
+        })
+      )
+    );
+    return;
+  }
+
+  if (e.request.url.includes('/api/')) return;
+
   e.respondWith(
     caches.match(e.request).then(cached => cached || fetch(e.request))
   );

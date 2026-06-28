@@ -8,9 +8,9 @@ Reads config/config.env. Set FR24_USERNAME and FR24_PASSWORD for premium access
 (higher rate limits and deeper history).
 
 Populates three tables:
-  - sighting_history          last time each registration was seen at the airport
-  - rare_plane_history        last time each airline+type combo visited
-  - flight_departure_pattern  arrival -> departure pairings with turnaround offset
+  - rego_sightings          last time each registration was seen at the airport
+  - rare_plane_cooldowns        last time each airline+type combo visited
+  - departure_patterns  arrival -> departure pairings with turnaround offset
                               (scheduled_arr_ts + scheduled_dep_ts used to compute
                                turnaround_secs so future predicted departure times
                                are derived from published schedule gaps, not actuals)
@@ -22,7 +22,10 @@ import logging
 import os
 import sys
 import time
+from pathlib import Path
 from typing import Optional
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from environs import Env
 
@@ -115,7 +118,7 @@ def backfill(
                     dest.get("name"), dest_code.get("iata"), dest_code.get("icao"),
                 )
 
-                # Also track departure flight numbers in route_type_history
+                # Also track departure flight numbers in route_type_tracker
                 ac_type = _safe_get(fl, "aircraft", "model", "code") or ""
                 if fn and ac_type and best_dep:
                     all_route_types.setdefault((fn, ac_type), set()).add(int(best_dep))
@@ -214,7 +217,7 @@ def backfill(
         with store._connect() as conn:
             conn.executemany(
                 """
-                INSERT INTO route_type_history
+                INSERT INTO route_type_tracker
                     (flight_number, aircraft_type, airport_iata, count, first_seen_ts, last_seen_ts)
                 VALUES (?, ?, ?, ?, ?, ?)
                 ON CONFLICT(flight_number, aircraft_type, airport_iata) DO UPDATE SET

@@ -61,149 +61,6 @@ _REG_PREFIXES: list = [
 ]
 
 
-_IATA_COUNTRY: dict = {
-    # Australia & Pacific
-    "SYD": "AU", "MEL": "AU", "BNE": "AU", "PER": "AU", "ADL": "AU",
-    "CBR": "AU", "OOL": "AU", "CNS": "AU", "HBA": "AU", "DRW": "AU",
-    "TSV": "AU", "MKY": "AU", "LST": "AU", "HTI": "AU",
-    "AKL": "NZ", "CHC": "NZ", "WLG": "NZ", "ZQN": "NZ", "DUD": "NZ",
-    "NAN": "FJ", "SUV": "FJ",
-    "POM": "PG", "LAE": "PG",
-    "HIR": "SB", "VLI": "VU",
-    "PPT": "PF",
-    # East & Southeast Asia
-    "SIN": "SG",
-    "HKG": "HK",
-    "MFM": "MO",
-    "NRT": "JP", "HND": "JP", "KIX": "JP", "ITM": "JP", "NGO": "JP", "CTS": "JP",
-    "ICN": "KR", "GMP": "KR", "PUS": "KR", "CJU": "KR",
-    "PEK": "CN", "PKX": "CN", "PVG": "CN", "SHA": "CN", "CAN": "CN",
-    "CTU": "CN", "SZX": "CN", "XIY": "CN", "KMG": "CN", "CSX": "CN",
-    "WUH": "CN", "NKG": "CN", "HGH": "CN", "TNA": "CN", "CKG": "CN",
-    "TPE": "TW", "TSA": "TW", "KHH": "TW",
-    "MNL": "PH", "CEB": "PH", "DVO": "PH",
-    "CGK": "ID", "DPS": "ID", "SUB": "ID", "UPG": "ID", "MDC": "ID",
-    "KUL": "MY", "BKI": "MY", "KCH": "MY", "PEN": "MY",
-    "BKK": "TH", "DMK": "TH", "CNX": "TH", "HKT": "TH", "HDY": "TH",
-    "HAN": "VN", "SGN": "VN", "DAD": "VN",
-    "RGN": "MM",
-    "PNH": "KH", "REP": "KH",
-    "VTE": "LA",
-    # South Asia
-    "DEL": "IN", "BOM": "IN", "MAA": "IN", "BLR": "IN", "CCU": "IN",
-    "HYD": "IN", "AMD": "IN", "COK": "IN",
-    "CMB": "LK",
-    "DAC": "BD", "CGP": "BD",
-    "KTM": "NP",
-    "KHI": "PK", "LHE": "PK", "ISB": "PK",
-    "MLE": "MV",
-    # Middle East & Central Asia
-    "DXB": "AE", "AUH": "AE", "SHJ": "AE",
-    "DOH": "QA",
-    "BAH": "BH",
-    "MCT": "OM",
-    "KWI": "KW",
-    "AMM": "JO", "AQJ": "JO",
-    "BEY": "LB",
-    "RUH": "SA", "JED": "SA", "DMM": "SA",
-    "TLV": "IL",
-    "IST": "TR", "SAW": "TR", "AYT": "TR",
-    "GYD": "AZ",
-    "TAS": "UZ",
-    "ALA": "KZ",
-    # Africa
-    "JNB": "ZA", "CPT": "ZA", "DUR": "ZA",
-    "NBO": "KE", "MBA": "KE",
-    "ADD": "ET",
-    "LOS": "NG", "ABV": "NG",
-    "ACC": "GH",
-    "CMN": "MA", "RAK": "MA",
-    "ALG": "DZ",
-    "CAI": "EG", "HRG": "EG",
-    # Europe
-    "LHR": "GB", "LGW": "GB", "MAN": "GB", "EDI": "GB", "STN": "GB",
-    "CDG": "FR", "ORY": "FR", "NCE": "FR",
-    "FRA": "DE", "MUC": "DE", "DUS": "DE", "BER": "DE",
-    "AMS": "NL", "EIN": "NL",
-    "MAD": "ES", "BCN": "ES", "AGP": "ES",
-    "FCO": "IT", "MXP": "IT", "VCE": "IT",
-    "ZRH": "CH", "GVA": "CH",
-    "VIE": "AT",
-    "BRU": "BE",
-    "ARN": "SE", "GOT": "SE",
-    "CPH": "DK",
-    "HEL": "FI",
-    "OSL": "NO", "BGO": "NO",
-    "LIS": "PT", "OPO": "PT",
-    "OTP": "RO",
-    "WAW": "PL", "KRK": "PL",
-    "PRG": "CZ",
-    "BUD": "HU",
-    "ATH": "GR", "SKG": "GR",
-    "SVO": "RU", "DME": "RU", "LED": "RU",
-    "KBP": "UA",
-    # Americas
-    "LAX": "US", "SFO": "US", "JFK": "US", "ORD": "US", "MIA": "US",
-    "SEA": "US", "HNL": "US", "DFW": "US", "ATL": "US", "DEN": "US",
-    "LAS": "US", "PHX": "US", "IAH": "US", "BOS": "US", "EWR": "US",
-    "YVR": "CA", "YYZ": "CA", "YUL": "CA", "YYC": "CA", "YEG": "CA",
-    "GRU": "BR", "GIG": "BR", "BSB": "BR", "FOR": "BR",
-    "SCL": "CL",
-    "BOG": "CO",
-    "LIM": "PE",
-    "MEX": "MX", "CUN": "MX",
-    "EZE": "AR", "AEP": "AR",
-}
-
-
-def _iata_flag(iata: str) -> str:
-    """Return a country flag emoji for an airport IATA code, or '' if unknown."""
-    cc = _IATA_COUNTRY.get((iata or "").upper().strip(), "")
-    return _flag_emoji(cc) if cc else ""
-
-
-_IATA_COUNTRY_CACHE: dict = {}  # runtime cache for API-resolved airport countries
-
-
-def _tz_to_country_code(tz_name: str) -> str:
-    """Return ISO country code from timezone name using pytz, or ''."""
-    import pytz as _pytz
-    for code, tzs in _pytz.country_timezones.items():
-        if tz_name in tzs:
-            return code
-    return ""
-
-
-def _iata_flag_with_api(iata: str, fr_api) -> str:
-    """Return country flag emoji for an IATA code.
-
-    Checks the static dict first, then falls back to a FR24 API call
-    (deriving country from the airport's timezone). Results are cached
-    in memory so each unknown code is only resolved once per run.
-    """
-    iata = (iata or "").upper().strip()
-    if not iata:
-        return ""
-
-    flag = _iata_flag(iata)
-    if flag:
-        return flag
-
-    if iata in _IATA_COUNTRY_CACHE:
-        cc = _IATA_COUNTRY_CACHE[iata]
-        return _flag_emoji(cc) if cc else ""
-
-    try:
-        data    = fr_api.get_airport_details(code=iata)
-        details = data["airport"]["pluginData"]["details"]
-        tz_name = (details.get("timezone") or {}).get("name", "")
-        cc      = _tz_to_country_code(tz_name) if tz_name else ""
-    except Exception:
-        cc = ""
-
-    _IATA_COUNTRY_CACHE[iata] = cc
-    _IATA_COUNTRY[iata] = cc  # persist into static dict for this session
-    return _flag_emoji(cc) if cc else ""
 
 
 def _registration_flag(registration: str) -> str:
@@ -241,16 +98,16 @@ def _registration_flag(registration: str) -> str:
 # ------------------------------------------------------------------
 
 def get_flight_status(flight: dict) -> str:
-    """Return a plain-English status string derived from FR24 timestamp fields."""
+    """Return canonical status string matching the JS enum (Arrived/Arriving/Scheduled/N/A)."""
     try:
         real_dep = flight["time"]["real"]["departure"]
         real_arr = flight["time"]["real"]["arrival"]
         if real_arr is not None:
-            return "Landed"
+            return "Arrived"
         if real_dep is None:
-            return "On Ground"
+            return "Scheduled"
         if int(real_dep) <= int(datetime.now().timestamp()):
-            return "In Flight"
+            return "Arriving"
         return "Scheduled"
     except (KeyError, TypeError):
         return "N/A"
@@ -410,6 +267,47 @@ def _safe_get(d: dict, *keys, default="N/A"):
         except (KeyError, TypeError, IndexError):
             return default
     return d if d is not None else default
+
+
+_MFR_KEYWORDS = [
+    ('de havilland', 'De Havilland'),
+    ('mcdonnell', 'McDonnell Douglas'),
+    ('lockheed', 'Lockheed'),
+    ('boeing', 'Boeing'),
+    ('airbus', 'Airbus'),
+    ('embraer', 'Embraer'),
+    ('bombardier', 'Bombardier'),
+    ('cessna', 'Cessna'),
+    ('gulfstream', 'Gulfstream'),
+    ('dassault', 'Dassault'),
+    ('atr', 'ATR'),
+    ('saab', 'Saab'),
+    ('pilatus', 'Pilatus'),
+    ('beechcraft', 'Beechcraft'),
+    ('piper', 'Piper'),
+    ('cirrus', 'Cirrus'),
+    ('honda', 'Honda'),
+    ('diamond', 'Diamond'),
+    ('fokker', 'Fokker'),
+    ('comac', 'COMAC'),
+    ('antonov', 'Antonov'),
+    ('sikorsky', 'Sikorsky'),
+    ('bell', 'Bell'),
+    ('leonardo', 'Leonardo'),
+    ('bae', 'BAE Systems'),
+    ('sukhoi', 'Sukhoi'),
+]
+
+
+def _derive_manufacturer(model_text: str):
+    """Return a canonical manufacturer name from an FR24 model text string, or None."""
+    if not model_text:
+        return None
+    lower = model_text.lower()
+    for keyword, canonical in _MFR_KEYWORDS:
+        if keyword in lower:
+            return canonical
+    return None
 
 
 def format_notification(
@@ -611,10 +509,9 @@ def _passes_schedule_filters(
     time_mode values: "" = no filter (always pass), "Daylight" = daylight arrivals only,
     "Off" = filter entirely disabled (never pass).
     """
-    if allowed_days:
-        day = _scheduled_arrival_day(flight, tz_name)
-        if day is None or day not in allowed_days:
-            return False
+    day = _scheduled_arrival_day(flight, tz_name)
+    if not allowed_days or day is None or day not in allowed_days:
+        return False
     if time_mode == "Off":
         return False
     if time_mode == "Daylight":
@@ -632,7 +529,8 @@ def _is_special_livery_airline(airline_name: str, livery_keywords: list,
     like '(CZ)' or '(CSN)' are excluded by requiring at least 5 characters inside.
     Parenthetical detection is suppressed if the text inside matches any exclude_keyword.
     """
-    if any(kw in airline_name for kw in livery_keywords):
+    airline_lower = airline_name.lower()
+    if any(kw.lower() in airline_lower for kw in livery_keywords):
         return True
     m = re.search(r'\((.{5,})\)', airline_name)
     if m:
@@ -649,7 +547,10 @@ def _parse_aircraft(arriving_flight: dict) -> Optional[Tuple[str, str, dict]]:
         aircraft = arriving_flight["flight"]["aircraft"]
         if aircraft is None:
             return None
-        return aircraft["registration"], aircraft["model"]["code"], arriving_flight["flight"]
+        reg = (aircraft["registration"] or "").strip()
+        if not reg:
+            return None
+        return reg, aircraft["model"]["code"], arriving_flight["flight"]
     except (KeyError, TypeError):
         return None
 
@@ -696,19 +597,14 @@ def check_special_livery(arriving_flight: dict, cfg) -> Optional[Tuple[dict, str
 def check_rare_plane(arriving_flight: dict, cfg) -> Optional[Tuple[dict, str, callable]]:
     flight_data = arriving_flight.get("flight") or {}
 
-    # Never fire if this flight qualifies as a special livery — even if the livery
-    # filter is on cooldown, it takes permanent precedence over rare plane.
-    airline_name = (flight_data.get("airline") or {}).get("name") or ""
-    if _is_special_livery_airline(airline_name, cfg.livery_keywords, cfg.livery_exclude_keywords):
-        return None
-
-    owner = flight_data.get("owner")
-    if not owner:
-        return None
-    try:
-        airline_icao = owner["code"]["icao"]
-    except (KeyError, TypeError):
-        return None
+    # Prefer owner (operating carrier) ICAO; fall back to marketing airline ICAO.
+    # Using owner ensures codeshare flights (e.g. Atlas Air flying as QF7554) are
+    # tracked under the actual operator, not the marketing carrier.
+    owner = flight_data.get("owner") or {}
+    airline_icao = (
+        ((owner.get("code") or {}).get("icao") or "")
+        or ((flight_data.get("airline") or {}).get("code") or {}).get("icao", "")
+    )
 
     parsed = _parse_aircraft(arriving_flight)
     if parsed is None:
@@ -716,11 +612,21 @@ def check_rare_plane(arriving_flight: dict, cfg) -> Optional[Tuple[dict, str, ca
     registration, aircraft_type, flight = parsed
 
     now_ts = int(datetime.now().timestamp())
-    # Always record the sighting so frequent arrivals never cross the absence threshold.
-    # Returns True only if the combo hasn't been seen for longer than min_absence_days.
-    is_rare = cfg.store.update_rare_plane_seen(
-        airline_icao, aircraft_type, now_ts, cfg.rare_plane_min_absence_days
-    )
+    # Always record the sighting BEFORE any early-return guards so that special
+    # livery visits and excluded regos still reset the absence clock.
+    is_rare = False
+    if airline_icao and aircraft_type:
+        is_rare = cfg.store.update_rare_plane_seen(
+            airline_icao, aircraft_type, now_ts, cfg.rare_plane_min_absence_days
+        )
+
+    # Never notify if this is a special livery aircraft (but clock was already reset above)
+    airline_name = (flight_data.get("airline") or {}).get("name") or ""
+    if _is_special_livery_airline(airline_name, cfg.livery_keywords, cfg.livery_exclude_keywords):
+        return None
+
+    if not airline_icao:
+        return None
 
     if not _passes_schedule_filters(
         flight, cfg.rare_plane_days, cfg.rare_plane_time_filter,
@@ -905,6 +811,136 @@ _FILTERS = [
 ]
 
 
+def _all_matching_filters(arriving_flight: dict, cfg) -> list:
+    """Run every filter; return list of (flight, registration, notification_type, on_notified, extra)
+    for ALL matches (not just the first). on_notified callbacks are collected but NOT called —
+    cooldown tables stay unwritten so every rotation is always detected."""
+    results = []
+    for notification_type, check_fn in _FILTERS:
+        result = check_fn(arriving_flight, cfg)
+        if result is None:
+            continue
+        flight, registration, on_notified = result[0], result[1], result[2]
+        extra = None
+        if len(result) > 3:
+            if isinstance(result[3], dict):
+                extra = result[3]
+            else:
+                notification_type = result[3]
+        results.append((flight, registration, notification_type, on_notified, extra))
+    return results
+
+
+async def _enrich_and_store(
+    flight: dict,
+    registration: str,
+    arrival_fn: str,
+    notif_types: list,
+    cfg,
+    arrival_date: str = None,
+) -> None:
+    """Fetch photo/departure info from FR24, then write the match to flight_arrivals."""
+    now_ts = int(datetime.now().timestamp())
+
+    airframe  = cfg.store.get_airframe(registration)
+    photo_url = (airframe or {}).get("photo_url") or ""
+    has_dep   = bool(
+        arrival_fn and arrival_fn != "N/A"
+        and cfg.store.get_predicted_departure(arrival_fn, cfg.airport_iata, 1)
+    )
+
+    rego_details = None
+    if not photo_url or not has_dep:
+        try:
+            rego_details = cfg.fr_api.get_rego_details(registration)
+            _rd_data = (rego_details or {}).get("data") or []
+            if _rd_data:
+                _model_text = ((_rd_data[0].get("aircraft") or {}).get("model") or {}).get("text") or ""
+                try:
+                    _ac_country = (_rd_data[0].get("aircraft") or {}).get("country") or {}
+                    _cc = (_ac_country.get("alpha2") or "").upper()
+                    if _cc and "-" in registration:
+                        import re as _re2
+                        _pfx = (registration.split("-")[0] if "-" in registration else (_re2.match(r'^([A-Z]+)', registration.upper()) or _re2.match(r'^.', registration.upper())).group(0)).upper()
+                        if _pfx and not cfg.store.get_reg_prefix_country(_pfx):
+                            cfg.store.save_reg_prefix_country(_pfx, _cc, _ac_country.get("name", ""))
+                except Exception:
+                    pass
+            else:
+                _model_text = ((rego_details or {}).get("aircraftInfo") or {}).get("model", {}).get("text", "")
+            _mfr = _derive_manufacturer(_model_text)
+            if not photo_url:
+                images = (rego_details or {}).get("aircraftImages") or []
+                if images:
+                    try:
+                        imgs = images[0]["images"]
+                        large = imgs.get("large") or imgs.get("medium") or []
+                        photo_url = large[0]["src"].replace("/640cb/", "/640/") if large else ""
+                    except (KeyError, IndexError):
+                        pass
+            cfg.store.upsert_airframe_from_fr24(registration, photo_url=photo_url or None, manufacturer=_mfr)
+        except Exception as exc:
+            log.warning("Could not fetch aircraft details for %s: %s", registration, exc)
+
+    if arrival_fn and arrival_fn != "N/A" and rego_details:
+        _, dep_fn, al_name, al_iata, al_icao, dest_name, dest_iata, dest_icao, _ = get_next_departure(
+            rego_details, cfg.airport_iata, cfg.airport_tz
+        )
+        if dep_fn:
+            sched_dep_ts = _get_scheduled_dep_ts(rego_details, cfg.airport_iata, dep_fn)
+            sched_arr_raw = _safe_get(flight, "time", "scheduled", "arrival", default=None)
+            sched_arr_ts = int(sched_arr_raw) if isinstance(sched_arr_raw, (int, float)) else None
+            estimated_dep_ts = None
+            for fl in (rego_details or {}).get("data") or []:
+                try:
+                    fn = ((fl.get("identification") or {}).get("number") or {}).get("default")
+                    origin = fl["airport"]["origin"]["code"]["iata"]
+                    if fn == dep_fn and origin == cfg.airport_iata:
+                        est = (fl.get("time") or {}).get("estimated", {}).get("departure")
+                        if isinstance(est, (int, float)):
+                            estimated_dep_ts = int(est)
+                except (KeyError, TypeError):
+                    continue
+            cfg.store.record_departure_pattern(
+                arrival_fn, dep_fn, cfg.airport_iata, now_ts,
+                scheduled_dep_ts=sched_dep_ts, estimated_dep_ts=estimated_dep_ts,
+                scheduled_arr_ts=sched_arr_ts,
+                airline_name=al_name, airline_iata=al_iata, airline_icao=al_icao,
+                dest_name=dest_name, dest_iata=dest_iata, dest_icao=dest_icao,
+            )
+
+    arr_ts = int(
+        _safe_get(flight, "time", "estimated", "arrival", default=None)
+        or _safe_get(flight, "time", "scheduled", "arrival", default=None)
+        or 0
+    )
+    airline_raw   = (flight.get("airline") or {}).get("name") or (flight.get("owner") or {}).get("name") or ""
+    arr_airline_icao = _safe_get(flight, "airline", "code", "icao") or ""
+    aircraft_code = _safe_get(flight, "aircraft", "model", "code", default="")
+    clean_airline = re.sub(r'\s*\(.*?\)', '', airline_raw).strip()
+    detail = f"{clean_airline} ({aircraft_code})" if clean_airline and aircraft_code else (clean_airline or aircraft_code)
+
+    extra_info = ""
+    if "Special Livery" in notif_types:
+        m = re.search(r'\((.+?)\)', airline_raw)
+        extra_info = m.group(1) if m else airline_raw
+
+    _origin     = (flight.get("airport") or {}).get("origin") or {}
+    origin_iata = _safe_get(_origin, "code", "iata") or None
+    origin_name = _origin.get("name") or None
+    if origin_iata and origin_name:
+        _origin_cc = _safe_get(_origin, "position", "country", "code") or ""
+        cfg.store.upsert_airport(origin_iata, origin_name, _origin_cc, source='fr24')
+
+    cfg.store.record_filter_match(
+        registration, arrival_fn, notif_types, arr_ts, now_ts,
+        detail=detail, extra_info=extra_info,
+        origin_iata=origin_iata, origin_name=origin_name,
+        arrival_date=arrival_date,
+        airline_icao=arr_airline_icao,
+    )
+
+
 def _first_matching_filter(arriving_flight: dict, cfg) -> Optional[tuple]:
     """Run filters in priority order; stop at the first match.
 
@@ -938,50 +974,43 @@ async def run_check(context: ContextTypes.DEFAULT_TYPE) -> None:
 
     log.info("Checking arrivals at %s...", cfg.airport_iata)
 
-    # Build maps of currently visible arrivals and departures for follow-up checks.
-    current_arrivals: dict = {}             # registration  → flight dict
-    arrivals_by_flight_number: dict = {}    # flight_number → (registration, flight dict)
-    current_departures: dict = {}           # registration  → departure flight dict
+    # ── Step 1: Pull API — positive pages (live board) + negative pages (hist) ──────────
+    # all_arrivals / all_departures hold ALL flights per rego (list), not just the first.
+    all_arrivals:  dict = {}  # reg → list[flight]
+    all_departures: dict = {}  # reg → list[flight]
+    hist_arrivals:  dict = {}  # reg → flight  (real arrival only, negative pages)
+    hist_departures: dict = {}  # reg → flight  (real departure only, negative pages)
 
     try:
-        # Pass 1: collect all arrivals and departures from every page
-        all_arriving_flights = []
+        import asyncio
+
+        # Positive pages — current live board
         for page in cfg.fetch_pages:
             try:
                 data = cfg.fr_api.get_airport_details(code=cfg.airport_code, page=page)
-                schedule = data["airport"]["pluginData"]["schedule"]
+                schedule   = data["airport"]["pluginData"]["schedule"]
                 arrivals   = schedule["arrivals"]["data"]
                 departures = schedule.get("departures", {}).get("data") or []
             except Exception as exc:
                 log.warning("Failed to fetch arrivals (page %d): %s", page, exc)
                 continue
 
-            for arriving_flight in arrivals:
-                parsed = _parse_aircraft(arriving_flight)
+            for entry in arrivals:
+                parsed = _parse_aircraft(entry)
                 if parsed:
-                    registration, _, flight = parsed
-                    if registration not in current_arrivals:
-                        current_arrivals[registration] = flight
-                    fn = str(_safe_get(flight, "identification", "number", "default", default=""))
-                    if fn and fn not in arrivals_by_flight_number:
-                        arrivals_by_flight_number[fn] = (registration, flight)
-                all_arriving_flights.append(arriving_flight)
+                    reg, _, flight = parsed
+                    all_arrivals.setdefault(reg, []).append(flight)
 
-            for dep_flight in departures:
-                parsed = _parse_aircraft(dep_flight)
+            for entry in departures:
+                parsed = _parse_aircraft(entry)
                 if parsed:
-                    registration, _, flight = parsed
-                    if registration not in current_departures:
-                        current_departures[registration] = flight
+                    reg, _, flight = parsed
+                    all_departures.setdefault(reg, []).append(flight)
 
-        # Fetch pages -1 and -2 for passive DB updates (arrivals and departures).
-        # These are flights with real timestamps that may have rotated off the
-        # positive pages — never fed into the notification pipeline.
-        hist_arrivals: dict = {}   # registration → flight (real arrival only)
-        hist_departures: dict = {} # registration → flight (real departure only)
+        # Negative pages — recently rotated off, real timestamps only
         for hist_page in [-p for p in cfg.fetch_pages]:
             try:
-                hist_data = cfg.fr_api.get_airport_details(code=cfg.airport_code, page=hist_page)
+                hist_data     = cfg.fr_api.get_airport_details(code=cfg.airport_code, page=hist_page)
                 hist_schedule = hist_data["airport"]["pluginData"]["schedule"]
                 for entry in (hist_schedule.get("arrivals", {}).get("data") or []):
                     parsed = _parse_aircraft(entry)
@@ -996,91 +1025,568 @@ async def run_check(context: ContextTypes.DEFAULT_TYPE) -> None:
                         continue
                     reg, _, flight = parsed
                     if isinstance(_safe_get(flight, "time", "real", "departure", default=None), (int, float)):
-                        hist_departures.setdefault(reg, flight)
+                        hist_departures.setdefault(reg, []).append(flight)
             except Exception as exc:
                 log.debug("Failed to fetch page %d for passive updates: %s", hist_page, exc)
 
-        # Record sightings — real arrivals from positive pages and page -1
-        landed = {}
-        for reg, flight in current_arrivals.items():
+        # ── Step 2: Passive DB updates (unchanged) ────────────────────────────────────────
+        landed = {}   # reg → {"ts": int, "manufacturer": str, "airline": str}
+        route_type_records = []
+        actual_departures  = []
+
+        def _sighting_entry(flight, ts: int) -> dict:
+            return {"ts": ts}
+
+        def _iata(flight, *keys):
+            v = _safe_get(flight, *keys, default=None)
+            return str(v).strip().upper() if v and str(v).strip() not in ("N/A", "N\\A", "") else None
+
+        def _airline(flight):
+            import re as _re
+            raw = _safe_get(flight, "airline", "name", default="") or ""
+            name = _re.sub(r'\s*\(.+?\)', '', raw).strip()
+            return name or None
+
+        for reg, flights in all_arrivals.items():
+            for flight in flights:
+                real_arr = _safe_get(flight, "time", "real", "arrival", default=None)
+                if isinstance(real_arr, (int, float)):
+                    ts = int(real_arr)
+                    if ts > (landed.get(reg, {}).get("ts", 0) if isinstance(landed.get(reg), dict) else landed.get(reg, 0)):
+                        landed[reg] = _sighting_entry(flight, ts)
+                    fn      = str(_safe_get(flight, "identification", "number", "default", default=""))
+                    ac_type = _safe_get(flight, "aircraft", "model", "code", default="")
+                    if fn and fn != "N/A" and ac_type and ac_type != "N/A":
+                        origin = _iata(flight, "airport", "origin", "code", "iata")
+                        route_type_records.append((fn, ac_type, cfg.airport_iata, ts, origin, None, _airline(flight)))
+
+        for reg, flight in hist_arrivals.items():
             real_arr = _safe_get(flight, "time", "real", "arrival", default=None)
             if isinstance(real_arr, (int, float)):
-                landed[reg] = int(real_arr)
-        for reg, flight in hist_arrivals.items():
-            real_arr = int(_safe_get(flight, "time", "real", "arrival"))
-            landed[reg] = max(landed.get(reg, 0), real_arr)
+                ts = int(real_arr)
+                if ts > (landed.get(reg, {}).get("ts", 0) if isinstance(landed.get(reg), dict) else landed.get(reg, 0)):
+                    landed[reg] = _sighting_entry(flight, ts)
+                fn      = str(_safe_get(flight, "identification", "number", "default", default=""))
+                ac_type = _safe_get(flight, "aircraft", "model", "code", default="")
+                if fn and fn != "N/A" and ac_type and ac_type != "N/A":
+                    origin = _iata(flight, "airport", "origin", "code", "iata")
+                    route_type_records.append((fn, ac_type, cfg.airport_iata, ts, origin, None, _airline(flight)))
+
+        for reg, flights in all_departures.items():
+            for flight in flights:
+                real_dep = _safe_get(flight, "time", "real", "departure", default=None)
+                if not isinstance(real_dep, (int, float)):
+                    continue
+                fn      = str(_safe_get(flight, "identification", "number", "default", default=""))
+                ac_type = _safe_get(flight, "aircraft", "model", "code", default="")
+                if fn and fn != "N/A" and ac_type and ac_type != "N/A":
+                    dest = _iata(flight, "airport", "destination", "code", "iata")
+                    route_type_records.append((fn, ac_type, cfg.airport_iata, int(real_dep), None, dest, _airline(flight)))
+                if fn and fn not in ("N/A", "N\\A"):
+                    actual_departures.append((fn, int(real_dep)))
+
+        for reg, flights in hist_departures.items():
+            for flight in flights:
+                real_dep = _safe_get(flight, "time", "real", "departure", default=None)
+                if not isinstance(real_dep, (int, float)):
+                    continue
+                fn      = str(_safe_get(flight, "identification", "number", "default", default=""))
+                ac_type = _safe_get(flight, "aircraft", "model", "code", default="")
+                if fn and fn != "N/A" and ac_type and ac_type != "N/A":
+                    dest = _iata(flight, "airport", "destination", "code", "iata")
+                    route_type_records.append((fn, ac_type, cfg.airport_iata, int(real_dep), None, dest, _airline(flight)))
+                if fn and fn not in ("N/A", "N\\A"):
+                    actual_departures.append((fn, int(real_dep)))
+
         if landed:
             cfg.store.bulk_update_sightings(landed)
+        if route_type_records:
+            cfg.store.bulk_update_route_types(route_type_records)
+        for dep_fn, dep_ts_val in actual_departures:
+            cfg.store.record_actual_departure(dep_fn, cfg.airport_iata, dep_ts_val)
 
-        # Record route type history for arrivals and departures (passive learning)
-        route_type_records = []
-        for reg, flight in {**current_arrivals, **hist_arrivals}.items():
+        # ── Step 3: Filter matching → matched_regos ───────────────────────────────────────
+        # Run filters on each flight per rego; union notif_types across all flights.
+        matched_regos: dict = {}  # reg → {"notif_types": list, "flights": list}
+        now_ts_check = int(datetime.now().timestamp())
+        _tz_obj = pytz.timezone(cfg.airport_tz)
+
+        for reg, flights in all_arrivals.items():
+            for flight_entry in flights:
+                # all_arrivals stores the inner flight dict from _parse_aircraft;
+                # filter functions expect the outer {"flight": ...} entry format.
+                matches = _all_matching_filters({"flight": flight_entry}, cfg)
+                if not matches:
+                    continue
+                if reg not in matched_regos:
+                    matched_regos[reg] = {"notif_types": [], "flights": []}
+                for m in matches:
+                    nt = m[2]
+                    if nt not in matched_regos[reg]["notif_types"]:
+                        matched_regos[reg]["notif_types"].append(nt)
+
+        # ── Step 4: Enrich and store NEW filter-matched flights ───────────────────────────
+        # Only flights that pass filters and aren't yet stored get _enrich_and_store called.
+        for reg, info in matched_regos.items():
+            notif_types = info["notif_types"]
+            for flight in all_arrivals.get(reg, []):
+                fn = str(_safe_get(flight, "identification", "number", "default", default=""))
+                if not fn or fn in ("N/A", "N\\A"):
+                    continue
+                _real_arr  = _safe_get(flight, "time", "real",      "arrival", default=None)
+                _est_arr   = _safe_get(flight, "time", "estimated", "arrival", default=None)
+                _sched_arr = _safe_get(flight, "time", "scheduled", "arrival", default=None)
+                if isinstance(_real_arr, (int, float)):
+                    arr_ts = int(_real_arr)
+                elif isinstance(_est_arr, (int, float)):
+                    arr_ts = int(_est_arr)
+                elif isinstance(_sched_arr, (int, float)):
+                    arr_ts = int(_sched_arr)
+                else:
+                    continue
+                arr_date = datetime.fromtimestamp(arr_ts, _tz_obj).strftime("%Y-%m-%d")
+                if not cfg.store.flight_event_exists(reg, fn, arrival_date=arr_date):
+                    await _enrich_and_store(flight, reg, fn, notif_types, cfg,
+                                            arrival_date=arr_date)
+                    await asyncio.sleep(0.5)
+
+        # ── Step 5: Refresh arrival time + label for ALL stored flights visible on board ──
+        # This is NOT gated on matched_regos — filter checks (e.g. rare_plane absence)
+        # can exclude a flight on subsequent runs even though it's already stored.
+        # Every flight in flight_arrivals deserves an arrival time update while FR24 shows it.
+        for reg, flights in all_arrivals.items():
+            for flight in flights:
+                fn = str(_safe_get(flight, "identification", "number", "default", default=""))
+                if not fn or fn in ("N/A", "N\\A"):
+                    continue
+                _real_arr  = _safe_get(flight, "time", "real",      "arrival", default=None)
+                _est_arr   = _safe_get(flight, "time", "estimated", "arrival", default=None)
+                _sched_arr = _safe_get(flight, "time", "scheduled", "arrival", default=None)
+                if isinstance(_real_arr, (int, float)):
+                    arr_ts    = int(_real_arr)
+                    arr_label = "Arrived"
+                elif isinstance(_est_arr, (int, float)):
+                    arr_ts    = int(_est_arr)
+                    arr_label = "Estimated"
+                elif isinstance(_sched_arr, (int, float)):
+                    arr_ts    = int(_sched_arr)
+                    arr_label = "Scheduled"
+                else:
+                    continue
+                arr_date       = datetime.fromtimestamp(arr_ts, _tz_obj).strftime("%Y-%m-%d")
+                current_status = get_flight_status(flight)
+                if cfg.store.flight_event_exists(reg, fn, arrival_date=arr_date):
+                    cfg.store.update_flight_event_status(reg, fn, current_status, arr_ts,
+                                                         arrival_date=arr_date,
+                                                         arr_label=arr_label)
+
+        # ── Step 6: Status update from hist_arrivals (landed, off positive pages) ─────────
+        for reg, flight in hist_arrivals.items():
+            fn = str(_safe_get(flight, "identification", "number", "default", default=""))
+            if not fn:
+                continue
             real_arr = _safe_get(flight, "time", "real", "arrival", default=None)
             if not isinstance(real_arr, (int, float)):
                 continue
-            fn      = str(_safe_get(flight, "identification", "number", "default", default=""))
-            ac_type = _safe_get(flight, "aircraft", "model", "code", default="")
-            if fn and fn != "N/A" and ac_type and ac_type != "N/A":
-                route_type_records.append((fn, ac_type, cfg.airport_iata, int(real_arr)))
-        actual_departures = []  # (dep_fn, actual_dep_ts)
-        for reg, flight in {**current_departures, **hist_departures}.items():
-            real_dep = _safe_get(flight, "time", "real", "departure", default=None)
-            if not isinstance(real_dep, (int, float)):
+            real_arr_date = datetime.fromtimestamp(int(real_arr), _tz_obj).strftime("%Y-%m-%d")
+            if not cfg.store.flight_event_exists(reg, fn, arrival_date=real_arr_date):
                 continue
-            fn      = str(_safe_get(flight, "identification", "number", "default", default=""))
-            ac_type = _safe_get(flight, "aircraft", "model", "code", default="")
-            if fn and fn != "N/A" and ac_type and ac_type != "N/A":
-                route_type_records.append((fn, ac_type, cfg.airport_iata, int(real_dep)))
-            if fn and fn not in ("N/A", "N\\A"):
-                actual_departures.append((fn, int(real_dep)))
-        if route_type_records:
-            cfg.store.bulk_update_route_types(route_type_records)
-        for dep_fn, dep_ts in actual_departures:
-            cfg.store.record_actual_departure(dep_fn, cfg.airport_iata, dep_ts)
+            cfg.store.update_flight_event_status(reg, fn, get_flight_status(flight),
+                                                 int(real_arr), arrival_date=real_arr_date,
+                                                 arr_label="Arrived")
 
-        # Pass 2: run filters and send notifications
-        # Skip registrations already tracked in notification_record (still pending arrival)
-        # to avoid double-notifying long-haul flights that appear in the schedule 12+ hours early.
-        already_tracked = {r["registration"]: r for r in cfg.store.get_tracked_flights()}
-        now_ts_check = int(datetime.now().timestamp())
+        # ── Step 7: Pair each arrival with its next departure ─────────────────────────────
+        # Iterate ALL arrivals visible to FR24 this check (positive + negative pages),
+        # sorted by arr_ts ascending so earlier arrivals get first pick of departures.
+        # Flights not in flight_arrivals (non-matched regos) are skipped.
+        # Each live departure flight number can only be claimed once per rego.
+        try:
+            def _dep_ts_for(flight_dict: dict) -> Optional[int]:
+                """Extract best available departure timestamp: real → estimated → scheduled."""
+                for key in ("real", "estimated", "scheduled"):
+                    v = _safe_get(flight_dict, "time", key, "departure", default=None)
+                    if isinstance(v, (int, float)):
+                        return int(v)
+                return None
 
-        import asyncio
-        for arriving_flight in all_arriving_flights:
-            match = _first_matching_filter(arriving_flight, cfg)
-            if match is None:
-                continue
-            flight, registration, notification_type, on_notified, extra = match
-
-            arr_ts = int(
-                _safe_get(flight, "time", "estimated", "arrival", default=None)
-                or _safe_get(flight, "time", "scheduled", "arrival", default=None)
-                or 0
-            )
-            fn = str(_safe_get(flight, "identification", "number", "default", default=""))
-
-            if registration in already_tracked:
-                # Already notified — log this flight visit to daily_flights for spot check display
-                if fn and arr_ts:
-                    rec = already_tracked[registration]
-                    cfg.store.upsert_daily_flight(
-                        registration, fn, rec["notif_type"],
-                        arr_ts, rec["detail"] or "", rec["extra_info"] or "", now_ts_check
+            # Build a flat list of (arr_ts, reg, fn, flight_dict, arr_date) for all visible arrivals
+            all_visible: list = []
+            for reg, flights in all_arrivals.items():
+                for flight in flights:
+                    fn = str(_safe_get(flight, "identification", "number", "default", default=""))
+                    arr_ts = int(
+                        _safe_get(flight, "time", "real",      "arrival", default=None)
+                        or _safe_get(flight, "time", "estimated", "arrival", default=None)
+                        or _safe_get(flight, "time", "scheduled", "arrival", default=None)
+                        or 0
                     )
-                continue
+                    if fn and arr_ts:
+                        arr_date = datetime.fromtimestamp(arr_ts, _tz_obj).strftime("%Y-%m-%d")
+                        all_visible.append((arr_ts, reg, fn, flight, arr_date))
 
-            await _send_notification(
-                context, cfg, chat_id, flight, registration, notification_type, on_notified,
-                extra=extra,
-            )
-            await asyncio.sleep(1)  # avoid Telegram rate limits when sending many at once
+            for reg, flight in hist_arrivals.items():
+                fn = str(_safe_get(flight, "identification", "number", "default", default=""))
+                real_arr = _safe_get(flight, "time", "real", "arrival", default=None)
+                if fn and isinstance(real_arr, (int, float)):
+                    arr_date = datetime.fromtimestamp(int(real_arr), _tz_obj).strftime("%Y-%m-%d")
+                    all_visible.append((int(real_arr), reg, fn, flight, arr_date))
+
+            all_visible.sort(key=lambda x: x[0])  # earliest arrival first
+
+            claimed: dict = {}  # reg → set of dep_flight strings already claimed this check
+
+            for arr_ts, reg, fn, flight, arr_date in all_visible:
+                # Skip if this rego/flight isn't in flight_arrivals (not filter-matched)
+                with cfg.store._connect() as conn:
+                    fe_row = conn.execute(
+                        "SELECT id FROM flight_arrivals "
+                        "WHERE registration = ? AND flight_number = ? AND arrival_date = ?",
+                        (reg, fn, arr_date),
+                    ).fetchone()
+                if not fe_row:
+                    continue
+                arrival_id = fe_row["id"]
+                rego_claimed = claimed.setdefault(reg, set())
+
+                dep_fn         = None
+                dep_ts         = None
+                dep_dest_iata  = None
+                dep_dest_name  = None
+                is_pred        = False
+                dep_label      = None
+                dep_confidence = None
+
+                # Source 1: live board — closest unclaimed departure after arr_ts
+                live_candidates = []
+                for dep_flight in all_departures.get(reg, []):
+                    d_fn = str(_safe_get(dep_flight, "identification", "number", "default", default=""))
+                    if not d_fn or d_fn in ("N/A", "N\\A") or d_fn in rego_claimed:
+                        continue
+                    d_ts = _dep_ts_for(dep_flight)
+                    if d_ts and d_ts > arr_ts:
+                        live_candidates.append((d_ts, d_fn, dep_flight))
+                live_candidates.sort(key=lambda x: x[0])
+                live_best = live_candidates[0] if live_candidates else None  # (ts, fn, flight)
+
+                # Source 2: hist_departures — all confirmed real departures per rego,
+                # pick the earliest unclaimed one after arr_ts.
+                hist_candidates = []
+                for h_fl in hist_departures.get(reg, []):
+                    h_fn = str(_safe_get(h_fl, "identification", "number", "default", default=""))
+                    h_ts = _safe_get(h_fl, "time", "real", "departure", default=None)
+                    if (h_fn and h_fn not in ("N/A", "N\\A")
+                            and h_fn not in rego_claimed
+                            and isinstance(h_ts, (int, float))
+                            and int(h_ts) > arr_ts):
+                        hist_candidates.append((int(h_ts), h_fn, h_fl))
+                hist_candidates.sort(key=lambda x: x[0])
+                hist_best = hist_candidates[0] if hist_candidates else None  # (ts, fn, flight)
+
+                # Pick the candidate closest to arr_ts (smallest dep_ts - arr_ts).
+                # Hist (confirmed departed) beats live at equal distance.
+                if hist_best and live_best:
+                    winner = hist_best if hist_best[0] <= live_best[0] else live_best
+                elif hist_best:
+                    winner = hist_best
+                elif live_best:
+                    winner = live_best
+                else:
+                    winner = None
+
+                if winner:
+                    w_ts, w_fn, w_fl = winner
+                    dep_fn        = w_fn
+                    dep_ts        = w_ts
+                    dep_dest_iata = _safe_get(w_fl, "airport", "destination", "code", "iata") or None
+                    dep_dest_name = _safe_get(w_fl, "airport", "destination", "name") or None
+                    rego_claimed.add(dep_fn)
+                    if winner is hist_best:
+                        dep_label = "Departed"
+                    else:
+                        _live_real  = _safe_get(w_fl, "time", "real",      "departure", default=None)
+                        _live_est   = _safe_get(w_fl, "time", "estimated", "departure", default=None)
+                        _live_sched = _safe_get(w_fl, "time", "scheduled", "departure", default=None)
+                        if isinstance(_live_real, (int, float)) and int(_live_real) == dep_ts:
+                            dep_label = "Departed"
+                        elif isinstance(_live_est, (int, float)) and int(_live_est) == dep_ts:
+                            dep_label = "Estimated"
+                        else:
+                            dep_label = "Scheduled"
+                        cfg.store.update_departure_timestamps(
+                            fn, dep_fn, cfg.airport_iata,
+                            int(_live_est)   if isinstance(_live_est,   (int, float)) else None,
+                            int(_live_sched) if isinstance(_live_sched, (int, float)) else None,
+                        )
+
+                # Source 3: prediction fallback
+                if not dep_ts and fn and fn not in ("N/A", "N\\A"):
+                    pred = cfg.store.get_predicted_departure(fn, cfg.airport_iata,
+                                                             cfg.departure_pattern_threshold)
+                    if pred:
+                        p_fn, p_conf = pred[0], round(pred[1])
+                        di   = cfg.store.get_predicted_dep_info(p_fn, cfg.airport_iata) or {}
+                        dep_dest_iata  = di.get("dest_iata")
+                        dep_dest_name  = di.get("dest_name")
+                        dep_confidence = p_conf
+                        # Use scheduled time-of-day projected forward from arr_ts.
+                        # The stored scheduled_dep_ts is from a past occurrence — extract
+                        # HH:MM and find the next occurrence of that time after arr_ts.
+                        _sched = di.get("scheduled_dep_ts")
+                        if _sched:
+                            _tz_p = pytz.timezone(cfg.airport_tz)
+                            _sched_dt = datetime.fromtimestamp(int(_sched), _tz_p)
+                            _arr_dt   = datetime.fromtimestamp(arr_ts, _tz_p)
+                            _candidate = _arr_dt.replace(
+                                hour=_sched_dt.hour, minute=_sched_dt.minute,
+                                second=0, microsecond=0,
+                            )
+                            if _candidate.timestamp() <= arr_ts:
+                                from datetime import timedelta as _td
+                                _candidate = _candidate + _td(days=1)
+                            dep_fn    = p_fn
+                            dep_ts    = int(_candidate.timestamp())
+                            is_pred   = True
+                            dep_label = "Predicted"
+                        # Turnaround fallback when no scheduled time available
+                        if not dep_ts and di.get("turnaround_secs"):
+                            dep_fn    = p_fn
+                            dep_ts    = arr_ts + int(di["turnaround_secs"])
+                            is_pred   = True
+                            dep_label = "Predicted"
+
+                if dep_ts:
+                    cfg.store.upsert_flight_departure(
+                        arrival_id, dep_fn, dep_ts, dep_dest_iata, dep_dest_name,
+                        is_prediction=is_pred, dep_label=dep_label,
+                        dep_confidence=dep_confidence,
+                    )
+
+                # Cancellation / diversion: remove from feed
+                live_arr_flights = all_arrivals.get(reg, [])
+                for _lf in live_arr_flights:
+                    _lf_fn = str(_safe_get(_lf, "identification", "number", "default", default=""))
+                    if _lf_fn == fn:
+                        _status_text, _ = _get_fr24_status(_lf)
+                        if _status_text in ("canceled", "diverted"):
+                            with cfg.store._connect() as conn:
+                                conn.execute(
+                                    "DELETE FROM flight_arrivals "
+                                    "WHERE registration = ? AND flight_number = ? AND arrival_date = ?",
+                                    (reg, fn, arr_date),
+                                )
+                            log.info("Removed %s %s from feed (%s)", reg, fn, _status_text)
+                        break
+
+        except Exception as _exc:
+            log.warning("Step 7 (departure pairing) failed: %s", _exc, exc_info=True)
 
     except Exception as exc:
         log.error("Unexpected error in run_check: %s", exc, exc_info=True)
 
-    await check_follow_ups(context, cfg, chat_id, current_arrivals, arrivals_by_flight_number, current_departures)
+    # Prune stale flight_arrivals rows (30 days)
+    cfg.store.cleanup_arrived_flights(int(datetime.now().timestamp()))
 
-    from spot_recommendation import check_rolling_recommendation
-    await check_rolling_recommendation(context, cfg, chat_id)
+    # ── Timeline cache: pre-compute clusters for yesterday, today, future ────────────────
+    # Past days (2+ days ago) are already cached and won't change — skip them.
+    # Weather is fetched only for today + future (4 days).
+    try:
+        import json as _jc, urllib.request as _ur
+        from datetime import timedelta as __timedelta
+        from web import cluster_day_for_cache
+
+        _tz_c   = pytz.timezone(cfg.airport_tz)
+        _now_c  = datetime.now(_tz_c)
+        _today  = _now_c.date()
+
+        # Days to (re-)cluster: yesterday, today, +1, +2, +3
+        _cluster_dates = [_today + __timedelta(days=d) for d in range(-1, 4)]
+
+        # Fetch weather for today + future only (4 days)
+        _weather: dict = {}
+        _lat = getattr(cfg, 'airport_lat', 0) or 0
+        _lon = getattr(cfg, 'airport_lon', 0) or 0
+        if _lat and _lon:
+            try:
+                _tz_enc = cfg.airport_tz.replace("/", "%2F")
+                _url = (f"https://historical-forecast-api.open-meteo.com/v1/forecast"
+                        f"?latitude={_lat}&longitude={_lon}"
+                        f"&start_date={_today}&end_date={_today + __timedelta(days=3)}"
+                        f"&daily=sunrise,sunset,weathercode,temperature_2m_max,temperature_2m_min"
+                        f"&timezone={_tz_enc}")
+                with _ur.urlopen(_url, timeout=10) as _resp:
+                    _om = _jc.loads(_resp.read())
+                _daily = _om.get("daily", {})
+                _SEVERE = {75, 82, 86, 95, 96, 99}
+                for _wi, _wd in enumerate(_daily.get("time", [])):
+                    try:
+                        _sr_s = (_daily.get("sunrise") or [])[_wi]
+                        _ss_s = (_daily.get("sunset")  or [])[_wi]
+                        _wc   = int((_daily.get("weathercode") or [])[_wi] or 0)
+                        _sr   = int(datetime.fromisoformat(_sr_s).timestamp()) if _sr_s else 0
+                        _ss   = int(datetime.fromisoformat(_ss_s).timestamp()) if _ss_s else 0
+                        _tmax = (_daily.get("temperature_2m_max") or [])[_wi]
+                        _tmin = (_daily.get("temperature_2m_min") or [])[_wi]
+                        _weather[_wd] = {
+                            "sunrise_ts": _sr, "sunset_ts": _ss,
+                            "weather_code": _wc, "weather_severe": _wc in _SEVERE,
+                            "temp_max": round(_tmax) if _tmax is not None else None,
+                            "temp_min": round(_tmin) if _tmin is not None else None,
+                        }
+                    except Exception:
+                        pass
+            except Exception as _we:
+                log.warning("Timeline cache: Open-Meteo fetch failed: %s", _we)
+
+        # Catalog snapshot — one call per rego, not per flight per day
+        _catalog = getattr(cfg, 'catalog', None)
+        _spotted_map: dict = {}          # reg → total session count (non-livery flights)
+        _livery_spotted_map: dict = {}   # (reg, livery_lower) → livery-matched session count
+        if _catalog and getattr(cfg, 'spot_rec_max_spotted_times', 0):
+            try:
+                with cfg.store._connect() as _sc:
+                    _regs = [r[0] for r in _sc.execute(
+                        "SELECT DISTINCT registration FROM flight_arrivals").fetchall()]
+                for _r in _regs:
+                    try:
+                        _spotted_map[_r] = _catalog.get_session_count_at_airport(
+                            _r, cfg.airport_iata) or 0
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+        # Pre-fetch excluded registrations once
+        _excluded = set()
+        try:
+            with cfg.store._connect() as _ec:
+                _excluded = {r[0] for r in _ec.execute(
+                    "SELECT registration FROM filter_exclusions").fetchall()}
+        except Exception:
+            pass
+
+        # Read algorithm settings
+        def _cfg_int(key, attr, default):
+            v = cfg.store.load_setting(key)
+            if v:
+                try: return int(v)
+                except: pass
+            return int(getattr(cfg, attr, default) or default)
+
+        _max_gap    = _cfg_int("SPOT_MAX_GAP_HOURS",     "spot_rec_max_gap_hours",     3) * 3600
+        _lull_secs  = _cfg_int("SPOT_LULL_MINS",         "spot_rec_notable_lull_mins", 60) * 60
+        _max_spot   = _cfg_int("SPOT_MAX_SPOTTED",       "spot_rec_max_spotted_times", 0)
+        _dep_thr    = _cfg_int("DEPARTURE_PATTERN_THRESHOLD","departure_pattern_threshold", 80)
+        _light_buf  = _cfg_int("SPOT_LIGHT_BUFFER_MINS", "spot_rec_light_buffer_mins", 30) * 60
+        _max_lulls  = _cfg_int("SPOT_MAX_LULLS",         "spot_rec_max_lulls",         2)
+        _light_gate = cfg.store.load_setting("SPOT_LIGHTING_GATE")
+        _light_gate = (_light_gate.lower() == "true") if _light_gate else getattr(cfg, "spot_rec_lighting_gate", True)
+        _bl_start   = cfg.store.load_setting("SPOT_BAD_LIGHT_START") or getattr(cfg, "spot_rec_bad_light_start", "") or ""
+        _bl_end     = cfg.store.load_setting("SPOT_BAD_LIGHT_END")   or getattr(cfg, "spot_rec_bad_light_end",   "") or ""
+
+        # Query all flight_arrivals rows covering the cluster date window in one shot
+        _date_strs = [_cd.strftime("%Y-%m-%d") for _cd in _cluster_dates]
+        _ph = ",".join("?" * len(_date_strs))
+        with cfg.store._connect() as _dbc:
+            _fe_rows = _dbc.execute(f"""
+                SELECT fe.registration, fe.flight_number, fe.arrival_ts,
+                       fe.notif_types, fe.detail, fe.extra_info, fe.airline_icao,
+                       fe.origin_iata, fe.current_status, fe.arr_label,
+                       fd.dep_flight, fd.dep_ts, fd.dep_dest_iata, fd.dep_dest_name,
+                       fd.dep_confidence, fd.dep_label,
+                       a.photo_url, a.manufacturer
+                FROM flight_arrivals fe
+                LEFT JOIN flight_departures fd ON fd.arrival_id = fe.id
+                LEFT JOIN airframes a ON a.registration = fe.registration
+                WHERE fe.arrival_date IN ({_ph})
+                ORDER BY fe.arrival_ts ASC
+            """, _date_strs).fetchall()
+
+        def _get_spotted(reg: str, livery: str) -> int:
+            if not _catalog or not livery:
+                return _spotted_map.get(reg, 0)
+            key = (reg, livery.strip().lower())
+            if key not in _livery_spotted_map:
+                try:
+                    _livery_spotted_map[key] = _catalog.get_livery_session_count_at_airport(
+                        reg, cfg.airport_iata, livery) or 0
+                except Exception:
+                    _livery_spotted_map[key] = _spotted_map.get(reg, 0)
+            return _livery_spotted_map[key]
+
+        # Build flat independent events keyed by their own timestamp's date.
+        # Arrivals → bucketed by date(arrival_ts).
+        # Departures → bucketed by date(dep_ts).
+        # No cross-midnight logic needed: each event lands in the right day naturally.
+        _events_by_date: dict = {}
+        for _fr in _fe_rows:
+            _arr_ts = _fr["arrival_ts"]
+            _dep_ts = _fr["dep_ts"]
+            if _dep_ts and not (_arr_ts <= _dep_ts <= _arr_ts + 36 * 3600):
+                _dep_ts = None
+            try:
+                _nt = _jc.loads(_fr["notif_types"] or "[]")
+            except Exception:
+                _nt = []
+
+            _common = {
+                "registration":  _fr["registration"],
+                "flight_number": _fr["flight_number"],
+                "notif_types":   _nt,
+                "detail":        _fr["detail"] or "",
+                "extra_info":    _fr["extra_info"] or "",
+                "airline_icao":  _fr["airline_icao"] or "",
+                "photo_url":     _fr["photo_url"] or "",
+                "manufacturer":  _fr["manufacturer"] or "",
+                "origin_iata":   _fr["origin_iata"],
+                "dep_flight":    _fr["dep_flight"],
+                "dep_ts":        _dep_ts,
+                "dep_dest_iata": _fr["dep_dest_iata"],
+                "dep_dest_name": _fr["dep_dest_name"],
+                "dep_confidence":_fr["dep_confidence"],
+                "dep_label":     _fr["dep_label"],
+                "current_status":_fr["current_status"],
+                "arrival_ts":    _arr_ts,
+                "arr_label":     _fr["arr_label"],
+                "_spotted":      _get_spotted(_fr["registration"], _fr["extra_info"] or ""),
+            }
+
+            # Arrival event — belongs to date of arrival_ts
+            _arr_date = datetime.fromtimestamp(_arr_ts, _tz_c).strftime("%Y-%m-%d")
+            _events_by_date.setdefault(_arr_date, []).append({
+                **_common, "ts": _arr_ts, "side": "arrival",
+            })
+
+            # Departure event — belongs to date of dep_ts (independent of arrival date)
+            if _dep_ts:
+                _dep_date = datetime.fromtimestamp(_dep_ts, _tz_c).strftime("%Y-%m-%d")
+                _events_by_date.setdefault(_dep_date, []).append({
+                    **_common, "ts": _dep_ts, "side": "departure",
+                })
+
+        for _cd in _cluster_dates:
+            _ds  = _cd.strftime("%Y-%m-%d")
+            _sw  = _weather.get(_ds, {})
+            _sr, _ss = _sw.get("sunrise_ts", 0), _sw.get("sunset_ts", 0)
+
+            _clusters = cluster_day_for_cache(
+                _events_by_date.get(_ds, []), _sr, _ss, _tz_c,
+                max_gap_secs=_max_gap, notable_lull_secs=_lull_secs,
+                max_spotted=_max_spot, dep_threshold=_dep_thr,
+                light_buf_secs=_light_buf, lighting_gate=_light_gate,
+                bad_light_start=_bl_start, bad_light_end=_bl_end,
+                max_lulls=_max_lulls, excluded_regs=_excluded,
+            )
+
+            _weather_json = _jc.dumps(_sw) if _sw else None
+            cfg.store.upsert_timeline_cache(
+                _ds, _jc.dumps(_clusters),
+                weather_json=_weather_json,
+            )
+            log.debug("Timeline cache updated for %s (%d clusters)", _ds, len(_clusters))
+
+    except Exception as _ce:
+        log.warning("Timeline cache update failed: %s", _ce, exc_info=True)
+
 
 
 async def _send_notification(
@@ -1110,14 +1616,32 @@ async def _send_notification(
     if not photo_url or not has_dep_pattern:
         try:
             rego_details = cfg.fr_api.get_rego_details(registration)
+            _rd_data = (rego_details or {}).get("data") or []
+            if _rd_data:
+                _model_text = ((_rd_data[0].get("aircraft") or {}).get("model") or {}).get("text") or ""
+                try:
+                    _ac_country = (_rd_data[0].get("aircraft") or {}).get("country") or {}
+                    _cc = (_ac_country.get("alpha2") or "").upper()
+                    if _cc and "-" in registration:
+                        import re as _re2
+                        _pfx = (registration.split("-")[0] if "-" in registration else (_re2.match(r'^([A-Z]+)', registration.upper()) or _re2.match(r'^.', registration.upper())).group(0)).upper()
+                        if _pfx and not cfg.store.get_reg_prefix_country(_pfx):
+                            cfg.store.save_reg_prefix_country(_pfx, _cc, _ac_country.get("name", ""))
+                except Exception:
+                    pass
+            else:
+                _model_text = ((rego_details or {}).get("aircraftInfo") or {}).get("model", {}).get("text", "")
+            _mfr = _derive_manufacturer(_model_text)
             if not photo_url:
                 images = (rego_details or {}).get("aircraftImages") or []
                 if images:
                     try:
-                        photo_url = images[0]["images"]["medium"][0]["link"]
-                        cfg.store.upsert_airframe_from_fr24(registration, photo_url=photo_url)
+                        imgs = images[0]["images"]
+                        large = imgs.get("large") or imgs.get("medium") or []
+                        photo_url = large[0]["src"].replace("/640cb/", "/640/") if large else ""
                     except (KeyError, IndexError):
                         pass
+            cfg.store.upsert_airframe_from_fr24(registration, photo_url=photo_url or None, manufacturer=_mfr)
         except Exception as exc:
             log.warning("Could not fetch aircraft details for %s: %s", registration, exc)
 
@@ -1200,128 +1724,15 @@ async def _send_notification(
         else:
             detail = clean_airline or aircraft_code
 
+        _origin      = (flight.get("airport") or {}).get("origin") or {}
+        origin_iata  = _safe_get(_origin, "code", "iata") or None
+        origin_name  = _origin.get("name") or None
         cfg.store.record_notified_flight(
-            registration, flight_number, notification_type, arrival_ts, now_ts, now_ts, extra_info, detail
+            registration, flight_number, notification_type, arrival_ts, now_ts, now_ts, extra_info, detail,
+            origin_iata=origin_iata, origin_name=origin_name,
         )
-        if flight_number and arrival_ts:
-            cfg.store.upsert_daily_flight(
-                registration, flight_number, notification_type, arrival_ts, detail, extra_info, now_ts
-            )
     except Exception as exc:
         log.error("Failed to send notification for %s: %s", registration, exc, exc_info=True)
-
-
-# ------------------------------------------------------------------
-# Follow-up checks: 12hr arrival reminder + cancellation/diversion
-# ------------------------------------------------------------------
-
-async def check_follow_ups(context, cfg, chat_id: str, current_arrivals: dict,
-                           arrivals_by_flight_number: dict = None,
-                           current_departures: dict = None) -> None:
-    now_ts = int(datetime.now().timestamp())
-    cfg.store.cleanup_arrived_flights(now_ts)
-
-    for record in cfg.store.get_tracked_flights():
-        registration    = record["registration"]
-        flight_number   = record["flight_number"] or ""
-        notification_type = record["notif_type"] or ""
-        original_arr_ts = int(record["original_arr_ts"])   # arrival time at point of first notification
-        arrival_ts      = int(record["arrival_ts"])         # latest estimated arrival (may shift)
-        first_notified_ts = int(record["first_notified_ts"])
-        reminder_sent   = bool(record["reminder_sent"])
-        last_seen_ts    = int(record["last_seen_ts"])
-
-        approach_notified = bool(record["approach_notified"]) if "approach_notified" in record.keys() else False
-        dep_notified      = bool(record["dep_notified"])      if "dep_notified"      in record.keys() else False
-
-        if registration in current_arrivals:
-            current_flight = current_arrivals[registration]
-
-            # Keep the estimated arrival time up to date as delays accumulate
-            current_arrival_ts = int(
-                _safe_get(current_flight, "time", "estimated", "arrival", default=None)
-                or _safe_get(current_flight, "time", "scheduled", "arrival", default=None)
-                or arrival_ts
-            )
-            cfg.store.update_tracked_flight(registration, now_ts, current_arrival_ts)
-
-            # Refresh departure timestamps from current departures schedule
-            if current_departures and registration in current_departures and flight_number:
-                dep_flight = current_departures[registration]
-                dep_fn = str(_safe_get(dep_flight, "identification", "number", "default", default=""))
-                if dep_fn and dep_fn != "N/A":
-                    estimated_dep_ts = _safe_get(dep_flight, "time", "estimated", "departure", default=None)
-                    scheduled_dep_ts = _safe_get(dep_flight, "time", "scheduled", "departure", default=None)
-                    estimated_dep_ts = int(estimated_dep_ts) if isinstance(estimated_dep_ts, (int, float)) else None
-                    scheduled_dep_ts = int(scheduled_dep_ts) if isinstance(scheduled_dep_ts, (int, float)) else None
-                    cfg.store.update_departure_timestamps(
-                        flight_number, dep_fn, cfg.airport_iata, estimated_dep_ts, scheduled_dep_ts
-                    )
-
-            # Check FR24 status for confirmed cancellation or diversion
-            status_text, diverted_airport = _get_fr24_status(current_flight)
-            if status_text == "canceled":
-                await _send_cancellation_notice(context, cfg, registration, flight_number, notification_type, arrival_ts)
-                cfg.store.delete_tracked_flight(registration)
-                continue
-            elif status_text == "diverted":
-                await _send_diversion_notice(context, cfg, registration, flight_number, notification_type, arrival_ts, diverted_airport)
-                cfg.store.delete_tracked_flight(registration)
-                continue
-
-            # Send a 12-hour reminder only if:
-            #   • we haven't already sent one
-            #   • the flight is still in the future
-            #   • it's now within 12h of arrival
-            #   • the original schedule was 12h+ after the initial notification
-            #     (no point reminding if you were notified when it was already close)
-            if (not reminder_sent
-                    and cfg.reminder_hours > 0
-                    and current_arrival_ts > now_ts
-                    and (current_arrival_ts - now_ts) <= cfg.reminder_hours * _HOURS
-                    and (original_arr_ts - first_notified_ts) > cfg.reminder_hours * _HOURS):
-                await _send_arrival_reminder(context, cfg, current_flight, registration, notification_type, flight_number)
-                cfg.store.mark_reminder_sent(registration)
-
-            # Approach alert — Rapid Mode only, fires once when flight is within window
-            if (cfg.rapid_mode
-                    and cfg.approach_alert_mins > 0
-                    and not approach_notified
-                    and current_arrival_ts > now_ts
-                    and (current_arrival_ts - now_ts) <= cfg.approach_alert_mins * 60):
-                await _send_approach_alert(context, cfg, registration, record, current_arrival_ts, now_ts)
-                cfg.store.mark_approach_notified(registration)
-
-        # Departure alert — Rapid Mode only, fires when status.live flips True
-        if (cfg.rapid_mode
-                and not dep_notified
-                and current_departures):
-            dep_flight = current_departures.get(registration)
-            if dep_flight and (dep_flight.get("status") or {}).get("live"):
-                await _send_departure_alert(context, cfg, registration, record, dep_flight)
-                cfg.store.mark_dep_notified(registration)
-
-        if registration not in current_arrivals:
-            # Flight is no longer in the arrivals board
-            if arrival_ts > now_ts:
-                # Wait for 2 full check cycles to rule out transient FR24 gaps
-                if now_ts - last_seen_ts > 2 * cfg.check_interval:
-                    # Check if the flight number reappeared under a different registration
-                    # on the same day — ignores tomorrow's scheduled flights with the same number
-                    swap = arrivals_by_flight_number.get(flight_number) if arrivals_by_flight_number and flight_number else None
-                    if swap and swap[0] != registration:
-                        tz = pytz.timezone(cfg.airport_tz)
-                        orig_date = datetime.fromtimestamp(arrival_ts, tz).date()
-                        new_arr_ts = _safe_get(swap[1], "time", "scheduled", "arrival", default=None) \
-                                     or _safe_get(swap[1], "time", "estimated", "arrival", default=None)
-                        swap_date = datetime.fromtimestamp(new_arr_ts, tz).date() if isinstance(new_arr_ts, (int, float)) else None
-                        if swap_date != orig_date:
-                            swap = None
-                    if swap and swap[0] != registration:
-                        new_rego, new_flight = swap
-                        await _send_aircraft_swap_notice(context, cfg, registration, new_rego, new_flight, flight_number, notification_type, arrival_ts)
-                    # If no confirmed status and no swap, silently remove — likely landed early or FR24 data gap
-                    cfg.store.delete_tracked_flight(registration)
 
 
 async def _send_approach_alert(context, cfg, registration: str, record, arrival_ts: int, now_ts: int) -> None:

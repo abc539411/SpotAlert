@@ -38,18 +38,6 @@ class FlightRadar24API:
     def get_airlines(self) -> List[Dict]:
         return APIRequest(Core.airlines_data_url, headers=Core.json_headers).get_content()["rows"]
 
-    def get_airline_logo(self, iata: str, icao: str) -> Optional[Tuple[bytes, str]]:
-        iata, icao = iata.upper(), icao.upper()
-        url1 = Core.airline_logo_url.format(iata, icao)
-        r = APIRequest(url1, headers=Core.image_headers, exclude_status_codes=[403])
-        if not str(r.get_status_code()).startswith("4"):
-            return r.get_content(), url1.split(".")[-1]
-        url2 = Core.alternative_airline_logo_url.format(icao)
-        r = APIRequest(url2, headers=Core.image_headers)
-        if not str(r.get_status_code()).startswith("4"):
-            return r.get_content(), url2.split(".")[-1]
-        return None
-
     def get_airport(self, code: str, *, details: bool = False) -> Airport:
         if not (3 <= len(code) <= 4):
             raise ValueError(f"Invalid airport code: '{code}'")
@@ -119,14 +107,6 @@ class FlightRadar24API:
         lat_min, lon_max = _corner(225)
         return self.get_bounds({"tl_y": lat_max, "br_y": lat_min, "tl_x": lon_min, "br_x": lon_max})
 
-    def get_country_flag(self, country: str) -> Optional[Tuple[bytes, str]]:
-        url = Core.country_flag_url.format(country.lower().replace(" ", "-"))
-        headers = {k: v for k, v in Core.image_headers.items() if k != "origin"}
-        r = APIRequest(url, headers=headers)
-        if not str(r.get_status_code()).startswith("4"):
-            return r.get_content(), url.split(".")[-1]
-        return None
-
     def get_flight_details(self, flight: Flight) -> Dict[Any, Any]:
         return APIRequest(Core.flight_data_url.format(flight.id), headers=Core.json_headers).get_content()
 
@@ -152,37 +132,6 @@ class FlightRadar24API:
                 raise ValueError(errors["limit"]["notBetween"])
             raise AirportNotFoundError(f"Could not find aircraft: '{aircraft}'", errors)
         return content["result"]["response"]
-
-    def get_flights(
-        self,
-        airline: Optional[str] = None,
-        bounds: Optional[str] = None,
-        registration: Optional[str] = None,
-        aircraft_type: Optional[str] = None,
-        *,
-        details: bool = False,
-    ) -> List[Flight]:
-        params = dataclasses.asdict(self.__flight_tracker_config)
-        if self.__login_data:
-            params["enc"] = self.__login_data["cookies"]["_frPl"]
-        if airline:
-            params["airline"] = airline
-        if bounds:
-            params["bounds"] = bounds.replace(",", "%2C")
-        if registration:
-            params["reg"] = registration
-        if aircraft_type:
-            params["type"] = aircraft_type
-        response = APIRequest(Core.real_time_flight_tracker_data_url, params, Core.json_headers).get_content()
-        flights = []
-        for flight_id, info in response.items():
-            if not flight_id[0].isnumeric():
-                continue
-            f = Flight(flight_id, info)
-            if details:
-                f.set_flight_details(self.get_flight_details(f))
-            flights.append(f)
-        return flights
 
     def get_flight_tracker_config(self) -> FlightTrackerConfig:
         return dataclasses.replace(self.__flight_tracker_config)

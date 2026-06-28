@@ -4,6 +4,8 @@
 # Secrets and personal config — never commit these
 config/config.env
 config/filters/
+config/.fr24_cookies.pkl
+config/airline_logos/
 
 # Logs
 logs/
@@ -21,6 +23,24 @@ lightroom/*.lrcat
 lightroom/*.lrcat-journal
 lightroom/*.lrcat-shm
 lightroom/*.lrcat-wal
+
+# Catalog working folder (drop .lrcat here, get cleaned .lrcat out)
+catalog/*.lrcat
+catalog/*.lrcat-journal
+catalog/*.lrcat-shm
+catalog/*.lrcat-wal
+catalog/fr24_cache.json
+catalog/airline_codes.json
+catalog/user_overrides.json
+
+# Scripts catalog folder — same rules
+scripts/catalog/*.lrcat
+scripts/catalog/*.lrcat-journal
+scripts/catalog/*.lrcat-shm
+scripts/catalog/*.lrcat-wal
+scripts/catalog/fr24_cache.json
+scripts/catalog/airline_codes.json
+scripts/catalog/user_overrides.json
 
 # Python
 __pycache__/

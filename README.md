@@ -1,6 +1,6 @@
 # SpotAlert
 
-A Telegram bot that monitors FlightRadar24 arrivals at a chosen airport and sends notifications when interesting aircraft are detected. Designed for aircraft spotters who want advance notice of special liveries, rare airline/type combinations, watchlisted registrations, operators, and military traffic.
+A self-hosted aircraft spotting assistant that monitors FlightRadar24 arrivals at a chosen airport and notifies you when interesting aircraft are detected. Features a Progressive Web App (PWA) front-end for real-time feed, spotting recommendations, collection tracking, and filter management.
 
 ---
 
@@ -8,136 +8,52 @@ A Telegram bot that monitors FlightRadar24 arrivals at a chosen airport and send
 
 ### Arrival Filters
 
-All filters run in the following priority order — a flight only ever triggers one notification:
+All filters run in priority order — a flight only ever triggers one match:
 
 1. **Special Livery** — detects aircraft whose airline name contains configurable keywords (e.g. "Livery", "Sticker") and extracts the livery name from the airline field (e.g. "Air New Zealand (All Blacks Livery)" → "All Blacks Livery")
-2. **Rego Watchlist** — notifies when a specific registration on your watchlist is inbound; airline is looked up automatically from FR24
+2. **Rego Watchlist** — notifies when a specific registration on your watchlist is inbound
 3. **Type Watchlist** — notifies when a specific airline + aircraft type combination is inbound
-4. **Airline/Operator Watchlist** — notifies when an aircraft from a watched airline or operator is inbound; when adding an entry you are asked whether it is an airline or an operator
-5. **Rare Plane** — notifies when an airline + aircraft type combination reappears after being absent for a configurable number of days; every sighting refreshes the clock so frequent arrivals never trigger this filter
+4. **Airline/Operator Watchlist** — notifies when an aircraft from a watched airline or operator is inbound
+5. **Rare Plane** — notifies when an airline + aircraft type combination reappears after being absent for a configurable number of days
 
-### Follow-up Notifications
+### Web App (PWA)
 
-- **Arrival reminder** — sends a reminder when a notified flight is within a configurable number of hours of arrival; only fires if the flight was originally scheduled far enough in advance to be worth a reminder; can be disabled by setting `REMINDER_HOURS = 0`
-- **Aircraft changed** — if a notified registration disappears from the board but the same flight number reappears under a different registration on the same day, an "Aircraft Changed" notice is sent; if the new aircraft matches any filter, that is noted in the alert
-- **Cancellation** — triggered by the FR24 confirmed cancellation status, not by the flight disappearing from the board
-- **Diversion** — triggered by the FR24 confirmed diversion status, including the divert destination airport
+Accessible from any browser on your local network. Installable as a home-screen app on iOS and Android.
 
-### Notifications include
-
-Each notification includes:
-- Flight number, origin airport, airline, aircraft type and registration with 🏳 country flag
-- **Last Spotted** — the date, airport, and number of times you have photographed this aircraft (sourced from your Lightroom catalog — see below)
-- **Last Seen at airport** — the last date this registration was recorded landing at the monitored airport
-- Scheduled and estimated arrival times (local)
-- **Next Departure** — the next outbound flight from the monitored airport, showing estimated/scheduled/predicted time, flight number, and destination; predicted departures use a three-tier lookup: stored timestamps → turnaround offset (derived from scheduled times) → FR24 API call
+- **Feed** — chronological day-grouped cards for every filter-matched arrival; shows flight route, status, departure prediction, and aircraft photo
+- **Timeline** — spotting window recommendations clustered by time of day; shows which flights qualify, lull periods, and lighting quality indicators
+- **Collection** — cross-references your Lightroom catalog with the flight feed; shows what you've photographed and what you're missing
+- **Fleet** — track full airline fleets from FR24; pills show which registrations you've captured and let you add unseen aircraft to your Rego Watchlist
+- **Search** — look up any registration's sighting history; browse route equipment by flight number; browse your Lightroom catalogue
+- **Settings** — manage all filters, watchlists, monitoring config, spot recommendation tuning, and airports from the web UI
 
 ### Military Traffic
 
 - Monitors nearby military aircraft via the [adsb.fi](https://opendata.adsb.fi) open data API — no API key required
-- Notifies when a military aircraft is on approach within a configurable radius and below a configurable altitude threshold; aircraft already on the ground are excluded
-- Notification includes country of origin (derived from ICAO hex address), registration, callsign, aircraft type, altitude, speed, distance, and a direct link to the aircraft on globe.adsb.fi
-- Runs on its own check interval, independent of the main arrivals check
+- Detects aircraft on approach within a configurable radius and below a configurable altitude threshold
+- Notification includes country of origin (derived from ICAO hex address), registration, callsign, aircraft type, altitude, speed, distance, and a link to globe.adsb.fi
 
 ### Spot Recommendation
 
-Automatically recommends whether it is worth heading out to spot based on which interesting aircraft are arriving (and departing) during the day. All recommendation data is read from the bot's own notification record — no additional FR24 API calls are made.
+Clusters the day's interesting arrivals into natural spotting sessions and recommends the best window to head out.
 
-**Activity clustering** — flights are grouped into natural sessions based on gaps between events. A gap larger than the configured **Max Gap** threshold means "you'd go home between those flights" — separate sessions. Smaller gaps within a session can be flagged as break time notices (☕ grab a coffee). The algorithm picks the **latest viable start time** within a session so you can sleep in without missing anything.
+- **Activity clustering** — flights grouped by gaps between events; a gap larger than the Max Gap threshold = separate session
+- **Lighting quality indicators** — 🌙 low/fading light around sunrise/sunset; ☀️ harsh overhead midday light
+- **Departure pairing** — each arrival is matched with its outbound departure (live board → historical patterns → turnaround prediction) so you can see how long an aircraft will be on the ground
+- **Weather integration** — severe weather suppresses automatic recommendations; weather always shown in the Timeline tab
 
-**Lighting quality indicators** — soft indicators on each flight line (not hard gates):
-- 🌙 arrives within the light buffer around sunrise or sunset — low or fading light
-- ☀️ arrives in the configurable midday bad-light window — harsh overhead light
+### Lightroom Catalog Integration
 
-**Automatic triggers:**
-- **Rolling check** — runs after every arrivals poll; fires a per-cluster notification when a qualifying cluster (≥ threshold flights) falls within the notify window (`travel_mins` to `notify_window_hours` from now); re-fires if a new flight joins the cluster
-- **End-of-day check** — runs once at a configurable hour each evening; clusters tomorrow's notified flights, finds the best session(s), and sends a recommendation
-  - **Single qualifying session** → Yes/Maybe/No buttons; tapping Yes schedules a "time to leave" follow-up message
-  - **Multiple qualifying sessions** → inline keyboard with one button per session + Maybe/No; tapping a session button commits to that window
-  - Tapping **No** suppresses rolling recommendations for the next day
+SpotAlert reads your Adobe Lightroom catalog (read-only) to enrich the feed and Fleet tab with your personal spotting history — last photographed date, session count, airport.
 
-**Manual `/spot` command:**
-- Choose **Today** or **Tomorrow** — fires immediately with the full cluster view for that day
-- Shows all qualifying sessions with flights, lull notices, and alternative window hints; filtered flights shown in a blockquote with italics
-
-**Filters applied to all checks:**
-- **Lighting gate** (hard) — a flight is excluded only if **both** its arrival **and** departure are outside daylight; flights with at least one daylight event always qualify. Cross-day departures (arriving today, departing tomorrow) appear in both today's and tomorrow's spot check.
-- **Day gate** — automatic checks only run on qualifying days (any day, weekends only, or public holidays)
-- **Weather gate** — automatic checks suppressed when severe weather is forecast; manual checks always run and show weather with emoji (☀️ 🌤 🌧 ⛈ etc.)
-- **Spotted times** — aircraft photographed too many times at this airport can be excluded (configurable threshold)
-- **Exclusion list** — registrations on the exclusion list are never surfaced in recommendations or notifications
-
-### Multi-User Support
-
-Multiple Telegram users can receive notifications from the same bot instance:
-
-- **Admin** — full access to `/settings`, `/filters`, `/stats`, and all management commands
-- **Read-only users** — receive all notifications and can use `/spot` and registration lookups; cannot change settings or view stats
-
-Users are managed via `/settings → Users`. Notifications are broadcast to all registered users simultaneously.
-
-### Registration Lookup
-
-Type any aircraft registration directly into the chat (e.g. `VH-XQU` or `9V-SWI`) to instantly retrieve:
-- Country flag emoji derived from registration prefix
-- Whether the registration is on the **Exclusion List** or **Rego Watchlist**
-- Aircraft type and operator (from the bot's own records first, FR24 fallback)
-- Last Seen at the monitored airport
-- Full Lightroom spotting history: every session where this registration was photographed, showing date, time, and airport
-- Link to the FR24 aircraft page
-
-### Spotting Stats (`/stats`) — Admin only
-
-- Country flags shown next to all registrations and airport codes
-- Total unique aircraft photographed and total spotting sessions
-- Top airports by number of trips
-- Top 5 most-photographed aircraft (with operator and type)
-- Top 5 aircraft spotted at the most airports
-- App notification totals (special liveries, military sightings, watchlist hits)
-
-### Telegram Bot Commands
-
-| Command | Description |
-|---|---|
-| `/spot` | Check interesting flights or get a spotting recommendation — choose day |
-| `/rapid` | Toggle rapid polling mode — high-frequency checks when at the airport (admin) |
-| `/stats` | View spotting stats and notification totals (admin only) |
-| `/history` | Show notifications from the last 7 days |
-| `/filters` | Manage watchlists and exclusion list |
-| `/settings` | Configure all app settings at runtime |
-| `/status` | Show host system info and next scheduled check times |
-
-### Runtime Configuration
-
-All settings are adjustable via `/settings` in Telegram. Changes take effect immediately and persist across restarts.
-
-The Spot Recommendation section uses a three-level menu to keep it manageable:
-- **Main screen** — core settings (Enabled, Day Type, Travel Time, Threshold, Notify Window, EOD Hour, Weather Gate, Max Spotted Times)
-- **Lighting →** — hard and soft lighting gates (Lighting Gate, Light Buffer, Bad Light window)
-- **Sessions →** — cluster algorithm tuning (Max Gap, Max Windows, Notable Lull, Max Lulls)
-
-**Rapid Mode** — activated with `/rapid` when at the airport. Increases polling rate to a configurable interval (default 2 min), reduces fetch pages to 1 for speed, suppresses rolling spot rec notifications (you're already there), and adds:
-- **Approach Alert** — fires when a tracked inbound flight is within N minutes of landing
-- **Departure Alert** — fires when a tracked aircraft's transponder activates (`status.live`), signalling engines running and imminent departure
-Expires after 2 hours with a prompt to extend or stop.
-
----
-
-## Lightroom Catalog Integration
-
-SpotAlert can read your Adobe Lightroom catalog to enrich notifications and lookups with your personal spotting history — showing when you last photographed an aircraft, how many times, and at which airports.
-
-To enable this feature, place your `.lrcat` file in the `lightroom/` folder. SpotAlert opens it read-only and never modifies it.
-
-Aircraft metadata (registration, airline, aircraft type, airport) must be tagged in Lightroom using the [AircraftMetadata Lightroom Plugin](https://github.com/aviationphoto/AircraftMetadata-Lightroom-Plugin) by [aviationphoto](https://github.com/aviationphoto).
+Aircraft metadata (registration, airline, aircraft type, airport) must be tagged using the [AircraftMetadata Lightroom Plugin](https://github.com/aviationphoto/AircraftMetadata-Lightroom-Plugin).
 
 ---
 
 ## Requirements
 
 - Python 3.10+
-- A Telegram bot token ([create one via @BotFather](https://t.me/BotFather))
-- Your Telegram chat ID
+- Docker (recommended for deployment)
 
 ```
 pip install -r requirements.txt
@@ -157,7 +73,7 @@ pip install -r requirements.txt
    ```bash
    cp config/config.env.example config/config.env
    ```
-   Edit `config/config.env` and fill in your `TELEGRAM_BOT_TOKEN`, `CHAT_ID`, and `AIRPORT_CODE`.
+   Edit `config/config.env` and set at minimum `AIRPORT_CODE` and `WEB_TIMEZONE`.
 
 3. **Install dependencies**
    ```bash
@@ -168,96 +84,83 @@ pip install -r requirements.txt
    ```bash
    python main.py
    ```
+   The web app is available at `http://localhost:8088` by default.
 
-5. **(Optional) Lightroom integration** — copy your `.lrcat` file into the `lightroom/` folder. SpotAlert will detect it automatically on next startup.
+5. **(Optional) Lightroom integration** — set `LR_CATALOG_PATH` in `config/config.env` to the path of your `.lrcat` file. SpotAlert opens it read-only.
+
+### Docker
+
+```bash
+docker compose -f docker-compose.webapp.yml up -d
+```
 
 ---
 
 ## Configuration
 
-All settings live in `config/config.env`. See [`config/config.env.example`](config/config.env.example) for a fully commented template.
-
-Key settings:
+All settings can be changed via the **Settings** tab in the web UI. Core config lives in `config/config.env`:
 
 | Setting | Description | Default |
 |---|---|---|
-| `AIRPORT_CODE` | IATA or ICAO code of the airport to monitor | — |
+| `AIRPORT_CODE` | IATA code of the airport to monitor | — |
+| `WEB_TIMEZONE` | Display timezone (IANA format, e.g. `Australia/Sydney`) | — |
 | `CHECK_INTERVAL_MINUTES` | How often to poll FR24 for arrivals | 30 |
-| `FETCH_PAGES` | Number of pages to fetch per check for arrivals and departures (100 flights/page each) | 2 |
-| `REMINDER_HOURS` | Hours before arrival to send a reminder; 0 = disabled | 12 |
-| `SPECIAL_LIVERY_KEYWORDS` | Comma-separated keywords matched against airline name | Livery,livery,Sticker,sticker |
+| `FETCH_PAGES` | Number of pages to fetch per check (100 flights/page) | 2 |
+| `SPECIAL_LIVERY_KEYWORDS` | Comma-separated keywords matched against airline name | `Livery,livery,Sticker,sticker` |
 | `RARE_PLANE_MIN_ABSENCE_DAYS` | Days a combo must be absent before being considered rare | 7 |
-| `DEPARTURE_PATTERN_THRESHOLD` | Minimum confidence % to show a predicted departure; 0 = disabled | 80 |
+| `DEPARTURE_PATTERN_THRESHOLD` | Minimum confidence % to show a predicted departure; 0 = off | 80 |
 | `MILITARY_CHECK_INTERVAL_MINUTES` | How often to check for military traffic | 15 |
 | `MILITARY_RADIUS_NM` | Search radius around the airport (nautical miles, max 250) | 50 |
 | `MILITARY_MAX_ALT_FT` | Maximum altitude to consider a military aircraft "on approach" | 5000 |
-| `SPOT_REC_ENABLED` | Enable the spot recommendation feature | false |
-| `SPOT_REC_TRAVEL_MINS` | Minutes to travel from home to airport | 30 |
-| `SPOT_REC_THRESHOLD` | Minimum interesting flights required for a recommendation | 3 |
-| `SPOT_REC_EOD_HOUR` | Local hour (0–23) to send the end-of-day recommendation | 20 |
-| `SPOT_REC_NOTIFY_WINDOW_HOURS` | Outer bound — notify rolling check if cluster starts within this many hours | 4 |
-| `SPOT_REC_MAX_GAP_HOURS` | Gap (hours) between events that splits into separate sessions | 3 |
-| `SPOT_REC_MAX_WINDOWS` | Max sessions offered in EOD keyboard and manual spot check (1–3) | 3 |
-| `SPOT_REC_NOTABLE_LULL_MINS` | Gap within a session (minutes) worth flagging as a break time notice | 60 |
-| `SPOT_REC_MAX_LULLS` | Max break time notices shown per session (longest gaps first) | 2 |
-| `SPOT_REC_LIGHT_BUFFER_MINS` | Minutes around sunrise/sunset still flagged as poor light (🌙) | 30 |
-| `SPOT_REC_BAD_LIGHT_START` | Local HH:MM start of midday bad-light window (☀️); empty = disabled | — |
-| `SPOT_REC_BAD_LIGHT_END` | Local HH:MM end of midday bad-light window | — |
-| `RAPID_MODE_INTERVAL_MINS` | Check interval (minutes) when Rapid Mode is active | 2 |
-| `APPROACH_ALERT_MINS` | Minutes before landing to fire approach alert (Rapid Mode only); 0 = disabled | 30 |
+| `LOGOSTREAM_API_KEY` | API key for airline tail logo fetching (Logostream) | — |
+| `LR_CATALOG_PATH` | Path to your Lightroom `.lrcat` file | — |
 
-All settings can also be changed at runtime via `/settings` in Telegram.
-
----
-
-## Filters: Active Days & Arrival Window
-
-Each filter supports two optional constraints:
-
-- **Active Days** — limit notifications to specific days of the week (e.g. `Sat,Sun`)
-- **Arrival Window** — `Always` (default), `Daylight Only` (between dawn and dusk at the airport), or `Off` (disabled entirely)
+Spot recommendation settings (`SPOT_REC_*`) are best managed via the web UI Settings → Recommendation tab.
 
 ---
 
 ## Data Persistence
 
 A SQLite database is created at `config/filters/spotalert.db` on first run. It stores:
-- Notification history and throttle tracking for all filters
-- Rego, type, and airline/operator watchlists
-- Exclusion list
-- Follow-up tracking (reminders, aircraft swaps, cancellations)
-- Sighting history — actual landing timestamps for registrations seen at the airport
-- **Departure patterns** — historical arrival→departure flight number pairings with observation counts, scheduled/estimated departure timestamps, turnaround offset (for predicting future departures), airline, and destination
-- **Daily flight visits** — all flights seen per registration per day; allows an aircraft operating multiple rotations in one day to show all of them in the spot check
-- **Notification log** — 7-day rolling log of all first-sight notifications, used by `/history`
-- Registered users (admin + read-only)
-- Any settings changed via the bot
 
-A daily backup is saved automatically to `config/filters/backups/`, keeping the last 7 copies.
+- All filter-matched arrivals and their departure pairings
+- Rego, type, and airline/operator watchlists + exclusion list
+- Notification cooldown state for each filter
+- Sighting history — last landing timestamps per registration
+- Departure patterns — historical arrival→departure pairings with turnaround offsets
+- Airport and aircraft type reference caches
+- Fleet cards and Lightroom session cross-references
+- Pre-computed spotting window clusters (timeline cache)
+
+A daily backup is saved to `config/filters/backups/`, keeping the last 7 copies.
 
 ---
 
 ## Utilities
 
-### check_db.py
-
-   A standalone script to inspect the contents of the database directly — useful for debugging or reviewing what the bot has recorded.
-
-```bash
-python check_db.py
-```
-
 ### backfill.py
 
-Seeds the database with historical data from FR24. Run it once after first install to bootstrap departure patterns, rare plane history, and sighting history before the bot has had time to learn from live traffic. Also safe to re-run after schema changes — it uses `INSERT OR REPLACE` / `COALESCE` logic so existing records are updated rather than duplicated.
-
-Extracts scheduled arrival and departure times separately so the `turnaround_secs` offset is computed correctly — this is what allows predicted departure times to remain accurate across weeks even when the stored timestamp becomes stale.
+Seeds the database with historical FR24 data after first install. Populates sighting history, rare plane history, and departure patterns so the app has context before live traffic accumulates.
 
 ```bash
 python backfill.py
 ```
 
-A FR24 premium account (`FR24_USERNAME` / `FR24_PASSWORD` in `config/config.env`) gives higher rate limits and deeper history, but the script runs without credentials at reduced depth.
+### _seed_cookies.py
+
+Run locally to seed Cloudflare session cookies into the webapp container when FR24 access is blocked:
+
+```bash
+python _seed_cookies.py
+```
+
+### _seed_icao_types.py
+
+Seeds the aircraft type cache from the ICAOList.csv reference data. Run once after a DB reset:
+
+```bash
+python _seed_icao_types.py
+```
 
 ---
 
@@ -269,7 +172,7 @@ This project is released under the [MIT License](LICENSE).
 
 **FlightRadarAPI** — The `flightradar24api/` module is a modified version of the [FlightRadarAPI](https://github.com/JeanExtreme002/FlightRadarAPI/tree/main/python) Python library by [JeanExtreme002](https://github.com/JeanExtreme002), released under the MIT License. Modifications: replaced `requests` with `cloudscraper` to bypass Cloudflare bot protection on `api.flightradar24.com`.
 
-**FlightRadar24 data** — This project accesses FlightRadar24's unofficial API. FlightRadar24's [Terms of Service](https://www.flightradar24.com/terms-and-conditions) restrict use of their data to **personal, non-commercial purposes only**. Do not use this project in any commercial context without obtaining a proper data licence from [FlightRadar24](https://www.flightradar24.com).
+**FlightRadar24 data** — This project accesses FlightRadar24's unofficial API. FlightRadar24's [Terms of Service](https://www.flightradar24.com/terms-and-conditions) restrict use of their data to **personal, non-commercial purposes only**. Do not use this project in any commercial context without obtaining a proper data licence from FlightRadar24.
 
 **adsb.fi open data** — Military aircraft data is sourced from [opendata.adsb.fi](https://opendata.adsb.fi). This data is provided for **personal, non-commercial use only**. See [adsb.fi](https://adsb.fi) for their full terms of use.
 

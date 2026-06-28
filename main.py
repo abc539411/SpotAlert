@@ -11,22 +11,12 @@ from typing import Dict, List, Optional
 
 import pytz
 from environs import Env
-from telegram import BotCommand
-from telegram.ext import Application
 
 from flightradar24api import FlightRadar24API
 from storage import SqliteStore
 from monitor import run_check
 from military import check_military
-from bot import register_handlers
-from settings import register_settings_handlers
 from lightroom import find_catalog
-from lookup import register_lookup_handler
-from stats import register_stats_handlers
-from spot_recommendation import register_spot_rec_handlers, run_eod_recommendation
-from users import register_user_handlers
-from rapid import register_rapid_handler
-import airframe
 
 log = logging.getLogger(__name__)
 
@@ -127,12 +117,14 @@ class AppConfig:
         return [u["chat_id"] for u in self.store.get_all_users()]
 
 
-def _fetch_airport(fr_api: FlightRadar24API, code: str, retries: int = 3) -> dict:
+def _fetch_airport(fr_api: FlightRadar24API, code: str, store=None, retries: int = 3) -> dict:
+    _CACHE_KEYS = ("_airport_name", "_airport_iata", "_airport_icao", "_airport_tz",
+                   "_airport_lat", "_airport_lon")
     for attempt in range(1, retries + 1):
         try:
             data = fr_api.get_airport_details(code=code)
             details = data["airport"]["pluginData"]["details"]
-            return {
+            info = {
                 "name": details["name"],
                 "iata": details["code"]["iata"],
                 "icao": details["code"]["icao"],
@@ -140,32 +132,46 @@ def _fetch_airport(fr_api: FlightRadar24API, code: str, retries: int = 3) -> dic
                 "lat":  details["position"]["latitude"],
                 "lon":  details["position"]["longitude"],
             }
+            if store:
+                for k, v in zip(_CACHE_KEYS, info.values()):
+                    store.save_setting(k, str(v))
+            return info
         except Exception as exc:
             log.warning("Airport fetch attempt %d/%d failed: %s", attempt, retries, exc)
             if attempt < retries:
-                time.sleep(30)
-    raise RuntimeError(f"Could not fetch airport info for '{code}' after {retries} attempts.")
+                time.sleep(5)
+    # Fall back to cached values if available
+    if store:
+        cached = [store.load_setting(k) for k in _CACHE_KEYS]
+        if all(cached):
+            log.warning("Using cached airport info for '%s'", code)
+            return {
+                "name": cached[0], "iata": cached[1], "icao": cached[2],
+                "tz": cached[3], "lat": float(cached[4]), "lon": float(cached[5]),
+            }
+    log.error("Could not fetch airport info for '%s' — using minimal fallback", code)
+    return {"name": code, "iata": code, "icao": code, "tz": "UTC", "lat": 0.0, "lon": 0.0}
 
 
-def _s(store: SqliteStore, env: Env, key: str, default: str = "") -> str:
-    """Return DB-saved value if one exists, otherwise fall back to config.env."""
-    return store.load_setting(key) or env.str(key, default=default)
+def _s(store: SqliteStore, key: str, default: str = "") -> str:
+    """Return DB-saved value, or default if not set."""
+    return store.load_setting(key) or default
 
 
-def _si(store: SqliteStore, env: Env, key: str, default: str = "0") -> int:
-    return math.ceil(float(_s(store, env, key, default=default)))
+def _si(store: SqliteStore, key: str, default: str = "0") -> int:
+    return math.ceil(float(_s(store, key, default=default)))
 
 
-def _sl(store: SqliteStore, env: Env, key: str) -> list:
-    raw = _s(store, env, key, default="")
+def _sl(store: SqliteStore, key: str) -> list:
+    raw = _s(store, key, default="")
     return [v.strip() for v in raw.split(",") if v.strip()] if raw else []
 
 
-def build_config(env: Env, fr_api: FlightRadar24API, store: SqliteStore, catalog=None) -> AppConfig:
-    airport_code = _s(store, env, "AIRPORT_CODE")
-    airport = _fetch_airport(fr_api, airport_code)
+def build_config(fr_api: FlightRadar24API, store: SqliteStore, catalog=None) -> AppConfig:
+    airport_code = _s(store, "AIRPORT_CODE")
+    airport = _fetch_airport(fr_api, airport_code, store=store)
 
-    fetch_pages_count = _si(store, env, "FETCH_PAGES", default="2")
+    fetch_pages_count = _si(store, "FETCH_PAGES", default="2")
     fetch_pages = list(range(1, fetch_pages_count + 1))
 
     return AppConfig(
@@ -177,55 +183,55 @@ def build_config(env: Env, fr_api: FlightRadar24API, store: SqliteStore, catalog
         airport_lat=airport["lat"],
         airport_lon=airport["lon"],
         fetch_pages=fetch_pages,
-        chat_id=env.str("CHAT_ID"),
-        livery_keywords=_sl(store, env, "SPECIAL_LIVERY_KEYWORDS"),
-        livery_exclude_keywords=_sl(store, env, "SPECIAL_LIVERY_EXCLUDE_KEYWORDS"),
-        livery_interval_hours=_si(store, env, "SPECIAL_LIVERY_RENOTIFY_HOURS"),
-        livery_days=_sl(store, env, "SPECIAL_LIVERY_ACTIVE_DAYS"),
-        livery_time_filter=_s(store, env, "SPECIAL_LIVERY_ARRIVAL_WINDOW"),
-        rare_plane_min_absence_days=_si(store, env, "RARE_PLANE_MIN_ABSENCE_DAYS", default="7"),
-        rare_plane_days=_sl(store, env, "RARE_PLANE_ACTIVE_DAYS"),
-        rare_plane_time_filter=_s(store, env, "RARE_PLANE_ARRIVAL_WINDOW"),
-        rego_interval_hours=_si(store, env, "REGO_WATCHLIST_RENOTIFY_HOURS"),
-        rego_days=_sl(store, env, "REGO_WATCHLIST_ACTIVE_DAYS"),
-        rego_time_filter=_s(store, env, "REGO_WATCHLIST_ARRIVAL_WINDOW"),
-        type_interval_hours=_si(store, env, "TYPE_WATCHLIST_RENOTIFY_HOURS"),
-        type_days=_sl(store, env, "TYPE_WATCHLIST_ACTIVE_DAYS"),
-        type_time_filter=_s(store, env, "TYPE_WATCHLIST_ARRIVAL_WINDOW"),
-        airline_interval_hours=_si(store, env, "AIRLINE_WATCHLIST_RENOTIFY_HOURS"),
-        airline_days=_sl(store, env, "AIRLINE_WATCHLIST_ACTIVE_DAYS"),
-        airline_time_filter=_s(store, env, "AIRLINE_WATCHLIST_ARRIVAL_WINDOW"),
-        check_interval=math.ceil(float(_s(store, env, "CHECK_INTERVAL_MINUTES", default="30")) * 60),
-        reminder_hours=_si(store, env, "REMINDER_HOURS", default="12"),
-        military_check_interval=math.ceil(float(_s(store, env, "MILITARY_CHECK_INTERVAL_MINUTES", default="15")) * 60),
-        military_radius_nm=_si(store, env, "MILITARY_RADIUS_NM", default="50"),
-        military_max_alt_ft=_si(store, env, "MILITARY_MAX_ALT_FT", default="5000"),
-        military_renotify_hours=_si(store, env, "MILITARY_RENOTIFY_HOURS", default="4"),
-        spot_rec_enabled=_s(store, env, "SPOT_REC_ENABLED", default="false").lower() == "true",
-        spot_rec_day_type=_s(store, env, "SPOT_REC_DAY_TYPE", default="Any"),
-        spot_rec_travel_mins=_si(store, env, "SPOT_REC_TRAVEL_MINS", default="30"),
-        spot_rec_notify_window_hours=_si(store, env, "SPOT_REC_NOTIFY_WINDOW_HOURS", default="4"),
-        spot_rec_threshold=_si(store, env, "SPOT_REC_THRESHOLD", default="3"),
-        spot_rec_eod_hour=_si(store, env, "SPOT_REC_EOD_HOUR", default="20"),
-        spot_rec_weather_gate=_s(store, env, "SPOT_REC_WEATHER_GATE", default="true").lower() == "true",
-        spot_rec_lighting_gate=_s(store, env, "SPOT_REC_LIGHTING_GATE", default="true").lower() == "true",
-        spot_rec_max_spotted_times=_si(store, env, "SPOT_REC_MAX_SPOTTED_TIMES", default="0"),
-        spot_rec_max_gap_hours=_si(store, env, "SPOT_REC_MAX_GAP_HOURS", default="3"),
-        spot_rec_notable_lull_mins=_si(store, env, "SPOT_REC_NOTABLE_LULL_MINS", default="60"),
-        spot_rec_max_lulls=_si(store, env, "SPOT_REC_MAX_LULLS", default="2"),
-        spot_rec_max_windows=_si(store, env, "SPOT_REC_MAX_WINDOWS", default="3"),
-        spot_rec_light_buffer_mins=_si(store, env, "SPOT_REC_LIGHT_BUFFER_MINS", default="30"),
-        spot_rec_bad_light_start=_s(store, env, "SPOT_REC_BAD_LIGHT_START", default=""),
-        spot_rec_bad_light_end=_s(store, env, "SPOT_REC_BAD_LIGHT_END", default=""),
-        departure_pattern_threshold=_si(store, env, "DEPARTURE_PATTERN_THRESHOLD", default="80"),
-        route_type_min_days=_si(store, env, "ROUTE_TYPE_MIN_DAYS", default="7"),
-        route_type_dominance_x=_si(store, env, "ROUTE_TYPE_DOMINANCE_X", default="3"),
-        route_type_lookback_days=_si(store, env, "ROUTE_TYPE_LOOKBACK_DAYS", default="90"),
-        route_type_renotify_days=_si(store, env, "ROUTE_TYPE_RENOTIFY_DAYS", default="30"),
-        route_type_days=_sl(store, env, "ROUTE_TYPE_ACTIVE_DAYS"),
-        route_type_time_filter=_s(store, env, "ROUTE_TYPE_ARRIVAL_WINDOW"),
-        approach_alert_mins=_si(store, env, "APPROACH_ALERT_MINS", default="30"),
-        rapid_mode_interval=_si(store, env, "RAPID_MODE_INTERVAL_MINS", default="2") * 60,
+        chat_id="",
+        livery_keywords=_sl(store, "SPECIAL_LIVERY_KEYWORDS"),
+        livery_exclude_keywords=_sl(store, "SPECIAL_LIVERY_EXCLUDE_KEYWORDS"),
+        livery_interval_hours=_si(store, "SPECIAL_LIVERY_RENOTIFY_HOURS"),
+        livery_days=_sl(store, "SPECIAL_LIVERY_ACTIVE_DAYS"),
+        livery_time_filter=_s(store, "SPECIAL_LIVERY_ARRIVAL_WINDOW"),
+        rare_plane_min_absence_days=_si(store, "RARE_PLANE_MIN_ABSENCE_DAYS", default="7"),
+        rare_plane_days=_sl(store, "RARE_PLANE_ACTIVE_DAYS"),
+        rare_plane_time_filter=_s(store, "RARE_PLANE_ARRIVAL_WINDOW"),
+        rego_interval_hours=_si(store, "REGO_WATCHLIST_RENOTIFY_HOURS"),
+        rego_days=_sl(store, "REGO_WATCHLIST_ACTIVE_DAYS"),
+        rego_time_filter=_s(store, "REGO_WATCHLIST_ARRIVAL_WINDOW"),
+        type_interval_hours=_si(store, "TYPE_WATCHLIST_RENOTIFY_HOURS"),
+        type_days=_sl(store, "TYPE_WATCHLIST_ACTIVE_DAYS"),
+        type_time_filter=_s(store, "TYPE_WATCHLIST_ARRIVAL_WINDOW"),
+        airline_interval_hours=_si(store, "AIRLINE_WATCHLIST_RENOTIFY_HOURS"),
+        airline_days=_sl(store, "AIRLINE_WATCHLIST_ACTIVE_DAYS"),
+        airline_time_filter=_s(store, "AIRLINE_WATCHLIST_ARRIVAL_WINDOW"),
+        check_interval=math.ceil(float(_s(store, "CHECK_INTERVAL_MINUTES", default="30")) * 60),
+        reminder_hours=_si(store, "REMINDER_HOURS", default="12"),
+        military_check_interval=math.ceil(float(_s(store, "MILITARY_CHECK_INTERVAL_MINUTES", default="15")) * 60),
+        military_radius_nm=_si(store, "MILITARY_RADIUS_NM", default="50"),
+        military_max_alt_ft=_si(store, "MILITARY_MAX_ALT_FT", default="5000"),
+        military_renotify_hours=_si(store, "MILITARY_RENOTIFY_HOURS", default="4"),
+        spot_rec_enabled=_s(store, "SPOT_REC_ENABLED", default="false").lower() == "true",
+        spot_rec_day_type=_s(store, "SPOT_REC_DAY_TYPE", default="Any"),
+        spot_rec_travel_mins=_si(store, "SPOT_REC_TRAVEL_MINS", default="30"),
+        spot_rec_notify_window_hours=_si(store, "SPOT_REC_NOTIFY_WINDOW_HOURS", default="4"),
+        spot_rec_threshold=_si(store, "SPOT_REC_THRESHOLD", default="3"),
+        spot_rec_eod_hour=_si(store, "SPOT_REC_EOD_HOUR", default="20"),
+        spot_rec_weather_gate=_s(store, "SPOT_REC_WEATHER_GATE", default="true").lower() == "true",
+        spot_rec_lighting_gate=_s(store, "SPOT_LIGHTING_GATE", default="true").lower() == "true",
+        spot_rec_max_spotted_times=_si(store, "SPOT_MAX_SPOTTED", default="0"),
+        spot_rec_max_gap_hours=_si(store, "SPOT_MAX_GAP_HOURS", default="3"),
+        spot_rec_notable_lull_mins=_si(store, "SPOT_LULL_MINS", default="60"),
+        spot_rec_max_lulls=_si(store, "SPOT_MAX_LULLS", default="2"),
+        spot_rec_max_windows=_si(store, "SPOT_REC_MAX_WINDOWS", default="3"),
+        spot_rec_light_buffer_mins=_si(store, "SPOT_LIGHT_BUFFER_MINS", default="30"),
+        spot_rec_bad_light_start=_s(store, "SPOT_BAD_LIGHT_START", default=""),
+        spot_rec_bad_light_end=_s(store, "SPOT_BAD_LIGHT_END", default=""),
+        departure_pattern_threshold=_si(store, "DEPARTURE_PATTERN_THRESHOLD", default="80"),
+        route_type_min_days=_si(store, "ROUTE_TYPE_MIN_DAYS", default="7"),
+        route_type_dominance_x=_si(store, "ROUTE_TYPE_DOMINANCE_X", default="3"),
+        route_type_lookback_days=_si(store, "ROUTE_TYPE_LOOKBACK_DAYS", default="90"),
+        route_type_renotify_days=_si(store, "ROUTE_TYPE_RENOTIFY_DAYS", default="30"),
+        route_type_days=_sl(store, "ROUTE_TYPE_ACTIVE_DAYS"),
+        route_type_time_filter=_s(store, "ROUTE_TYPE_ARRIVAL_WINDOW"),
+        approach_alert_mins=_si(store, "APPROACH_ALERT_MINS", default="30"),
+        rapid_mode_interval=_si(store, "RAPID_MODE_INTERVAL_MINS", default="2") * 60,
         fr_api=fr_api,
         store=store,
         catalog=catalog,
@@ -264,6 +270,8 @@ class _FakeContext:
 
 async def _run_monitor(cfg: AppConfig) -> None:
     ctx = _FakeContext(cfg)
+    # Wait for first interval before checking — prevents burst on every restart
+    await asyncio.sleep(cfg.check_interval)
     while True:
         try:
             await run_check(ctx)
@@ -306,32 +314,37 @@ def main() -> None:
 
     logging.basicConfig(level=logging.INFO, handlers=[stdout_handler, file_handler])
 
-    config_file = "config/config.env"
-    if not os.path.isfile(config_file):
-        log.error("Config file not found: %s", config_file)
-        sys.exit(1)
-
-    env = Env()
-    env.read_env(config_file)
-
     filters_dir = "config/filters/"
     os.makedirs(filters_dir, exist_ok=True)
 
     fr_api = FlightRadar24API()
-    store = SqliteStore(os.path.join(filters_dir, "spotalert.db"), config_file=config_file)
+
+    # Warm up cloudscraper session — hits the FR24 homepage so Cloudflare issues
+    # a cf_clearance cookie before any API calls are made.
+    try:
+        from flightradar24api.request import _scraper
+        _scraper.get("https://www.flightradar24.com/", timeout=10)
+        log.info("Cloudflare warm-up complete")
+    except Exception as _e:
+        log.warning("Cloudflare warm-up failed (will retry on first API call): %s", _e)
+
+    store = SqliteStore(os.path.join(filters_dir, "spotalert.db"))
     store.migrate_from_csv_folder(filters_dir)
-    airframe.maybe_refresh(store)
 
     catalog = find_catalog()
-    cfg = build_config(env, fr_api, store, catalog)
+    cfg = build_config(fr_api, store, catalog)
 
+    _backfilled = store.backfill_arrival_dates(cfg.airport_tz)
+    if _backfilled:
+        log.info("Backfilled arrival_date for %d flight_events rows", _backfilled)
+
+    port = int(os.environ.get("WEB_PORT", "8088"))
     log.info(
         "Monitoring %s (%s) — check every %ds, web on :%d",
         cfg.airport_name, cfg.airport_iata, cfg.check_interval, port,
     )
 
     web_app = create_app(cfg)
-    port = int(os.environ.get("WEB_PORT", "8088"))
     web_config = uvicorn.Config(web_app, host="0.0.0.0", port=port, log_level="warning",
                                 timeout_graceful_shutdown=1)
     web_server = uvicorn.Server(web_config)

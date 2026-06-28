@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import os
 import sqlite3
@@ -9,6 +10,7 @@ from typing import List, Optional, Tuple
 log = logging.getLogger(__name__)
 
 
+
 class LightroomCatalog:
     """Read-only interface to an Adobe Lightroom catalog for aircraft spotting data."""
 
@@ -16,6 +18,7 @@ class LightroomCatalog:
     _APT_KEY     = "airport_iata"
     _AIRLINE_KEY = "airline"
     _TYPE_KEY    = "aircraft_type"
+    _NOTES_KEY   = "aircraft_notes"
 
     def __init__(self, catalog_path: str) -> None:
         self._path = catalog_path
@@ -23,6 +26,7 @@ class LightroomCatalog:
         self._apt_spec_id:     Optional[int] = None
         self._airline_spec_id: Optional[int] = None
         self._type_spec_id:    Optional[int] = None
+        self._notes_spec_id:   Optional[int] = None
         self._load_spec_ids()
 
     def _connect(self) -> sqlite3.Connection:
@@ -39,6 +43,7 @@ class LightroomCatalog:
                     (self._APT_KEY,     "_apt_spec_id"),
                     (self._AIRLINE_KEY, "_airline_spec_id"),
                     (self._TYPE_KEY,    "_type_spec_id"),
+                    (self._NOTES_KEY,   "_notes_spec_id"),
                 ):
                     row = conn.execute(
                         "SELECT id_local FROM AgPhotoPropertySpec WHERE key = ?", (key,)
@@ -307,10 +312,51 @@ class LightroomCatalog:
             log.warning("Session count query failed for %s@%s: %s", registration, airport_iata, exc)
             return 0
 
-    def get_all_sessions(self, registration: str) -> List[Tuple[datetime, str]]:
-        """Return all spotting sessions as [(session_start_datetime, airport_iata), ...] newest first.
+    def get_livery_session_count_at_airport(self, registration: str, airport_iata: str, livery: str) -> int:
+        """Count sessions where catalog notes match the given livery name (case-insensitive)."""
+        if self._reg_spec_id is None or self._apt_spec_id is None or self._notes_spec_id is None:
+            return 0
+        registration = registration.strip().upper()
+        airport_iata = airport_iata.strip().upper()
+        livery_lower = livery.strip().lower()
+        try:
+            with self._connect() as conn:
+                rows = conn.execute(
+                    """
+                    SELECT img.captureTime, nt.internalValue AS notes
+                    FROM AgSearchablePhotoProperty reg
+                    JOIN Adobe_images img ON img.id_local = reg.photo
+                    JOIN AgSearchablePhotoProperty apt
+                        ON apt.photo = reg.photo AND apt.propertySpec = ?
+                    LEFT JOIN AgSearchablePhotoProperty nt
+                        ON nt.photo = reg.photo AND nt.propertySpec = ?
+                    WHERE reg.propertySpec = ?
+                      AND UPPER(TRIM(reg.internalValue)) = ?
+                      AND UPPER(TRIM(apt.internalValue)) = ?
+                    ORDER BY img.captureTime ASC
+                    """,
+                    (self._apt_spec_id, self._notes_spec_id, self._reg_spec_id, registration, airport_iata),
+                ).fetchall()
+            if not rows:
+                return 0
+            sessions, prev_dt = 0, None
+            for row in rows:
+                dt = datetime.fromisoformat(row[0].split(".")[0].rstrip("Z"))
+                notes = (row["notes"] or "").strip().lower()
+                if prev_dt is None or (dt - prev_dt).total_seconds() > 43200:
+                    if notes == livery_lower:
+                        sessions += 1
+                prev_dt = dt
+            return sessions
+        except Exception as exc:
+            log.warning("Lightroom livery session count failed for %s: %s", registration, exc)
+            return 0
+
+    def get_all_sessions(self, registration: str) -> List[Tuple[datetime, str, int]]:
+        """Return all spotting sessions as [(session_start_datetime, airport_iata, photo_count), ...] newest first.
 
         A session is a consecutive group of photos at the same airport with no gap > 12 hours.
+        photo_count is the number of individual photos in that session.
         """
         if self._reg_spec_id is None:
             return []
@@ -319,35 +365,51 @@ class LightroomCatalog:
             with self._connect() as conn:
                 rows = conn.execute(
                     """
-                    SELECT img.captureTime, apt.internalValue AS airport_iata
+                    SELECT img.captureTime, apt.internalValue AS airport_iata,
+                           nt.internalValue AS notes
                     FROM AgSearchablePhotoProperty reg
                     JOIN Adobe_images img ON img.id_local = reg.photo
                     LEFT JOIN AgSearchablePhotoProperty apt
                         ON apt.photo = reg.photo AND apt.propertySpec = ?
+                    LEFT JOIN AgSearchablePhotoProperty nt
+                        ON nt.photo = reg.photo AND nt.propertySpec = ?
                     WHERE reg.propertySpec = ?
                       AND UPPER(TRIM(reg.internalValue)) = ?
                     ORDER BY img.captureTime ASC
                     """,
-                    (self._apt_spec_id, self._reg_spec_id, registration),
+                    (self._apt_spec_id, self._notes_spec_id, self._reg_spec_id, registration),
                 ).fetchall()
 
             if not rows:
                 return []
 
-            sessions: List[Tuple[datetime, str]] = []
+            sessions: List[Tuple[datetime, str, int, str]] = []
             prev_dt = None
             prev_airport = None
             session_start = None
+            session_count = 0
+            session_notes = ""
             for row in rows:
                 dt = datetime.fromisoformat(row["captureTime"].split(".")[0].rstrip("Z"))
                 airport = (row["airport_iata"] or "").strip()
+                notes = (row["notes"] or "").strip()
                 if (prev_dt is None
                         or airport != prev_airport
                         or (dt - prev_dt).total_seconds() > 43200):
+                    if session_start is not None:
+                        sessions.append((session_start, prev_airport, session_count, session_notes))
                     session_start = dt
-                    sessions.append((session_start, airport))
+                    session_count = 1
+                    session_notes = notes
+                else:
+                    session_count += 1
+                    if notes and not session_notes:
+                        session_notes = notes
                 prev_dt = dt
                 prev_airport = airport
+
+            if session_start is not None:
+                sessions.append((session_start, prev_airport or "", session_count, session_notes))
 
             sessions.reverse()
             return sessions
@@ -355,6 +417,231 @@ class LightroomCatalog:
         except Exception as exc:
             log.warning("Lightroom sessions query failed for %s: %s", registration, exc)
         return []
+
+
+class LightroomCleanedDB:
+    """Read interface for the cleaned metadata DB produced by _update_lr_from_fr24.py."""
+
+    def __init__(self, db_path: str) -> None:
+        self._path = db_path
+
+    def _connect(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(self._path)
+        conn.row_factory = sqlite3.Row
+        return conn
+
+    def _photos_for_rego(self, conn: sqlite3.Connection, registration: str) -> list:
+        return conn.execute(
+            "SELECT capture_time, airport_iata, livery FROM photo_metadata "
+            "WHERE UPPER(TRIM(registration)) = ? ORDER BY capture_time ASC",
+            (registration.strip().upper(),),
+        ).fetchall()
+
+    def get_last_spotted(self, registration: str) -> Optional[Tuple[datetime, str, int]]:
+        try:
+            with self._connect() as conn:
+                rows = self._photos_for_rego(conn, registration)
+            if not rows:
+                return None
+            sessions = 0
+            prev_dt = None
+            prev_apt = None
+            for row in rows:
+                dt_str = (row["capture_time"] or "").split(".")[0].rstrip("Z")
+                if not dt_str:
+                    continue
+                dt = datetime.fromisoformat(dt_str)
+                apt = (row["airport_iata"] or "").strip()
+                if prev_dt is None or apt != prev_apt or (dt - prev_dt).total_seconds() > 43200:
+                    sessions += 1
+                prev_dt = dt
+                prev_apt = apt
+            last = rows[-1]
+            last_dt = datetime.fromisoformat(last["capture_time"].split(".")[0].rstrip("Z"))
+            return last_dt, (last["airport_iata"] or "").strip(), sessions
+        except Exception as exc:
+            log.warning("CleanedDB.get_last_spotted failed for %s: %s", registration, exc)
+            return None
+
+    def get_aircraft_info(self, registration: str) -> Tuple[str, str]:
+        try:
+            with self._connect() as conn:
+                row = conn.execute(
+                    "SELECT airline, aircraft_type FROM photo_metadata "
+                    "WHERE UPPER(TRIM(registration)) = ? ORDER BY capture_time DESC LIMIT 1",
+                    (registration.strip().upper(),),
+                ).fetchone()
+            if row:
+                return (row["airline"] or "").strip(), (row["aircraft_type"] or "").strip()
+        except Exception as exc:
+            log.warning("CleanedDB.get_aircraft_info failed for %s: %s", registration, exc)
+        return "", ""
+
+    def get_session_count_at_airport(self, registration: str, airport_iata: str) -> int:
+        try:
+            with self._connect() as conn:
+                rows = conn.execute(
+                    "SELECT capture_time FROM photo_metadata "
+                    "WHERE UPPER(TRIM(registration)) = ? AND UPPER(TRIM(airport_iata)) = ? "
+                    "ORDER BY capture_time ASC",
+                    (registration.strip().upper(), airport_iata.strip().upper()),
+                ).fetchall()
+            if not rows:
+                return 0
+            sessions, prev_dt = 0, None
+            for row in rows:
+                dt_str = (row["capture_time"] or "").split(".")[0].rstrip("Z")
+                if not dt_str:
+                    continue
+                dt = datetime.fromisoformat(dt_str)
+                if prev_dt is None or (dt - prev_dt).total_seconds() > 43200:
+                    sessions += 1
+                prev_dt = dt
+            return sessions
+        except Exception as exc:
+            log.warning("CleanedDB.get_session_count failed for %s@%s: %s",
+                        registration, airport_iata, exc)
+            return 0
+
+    def get_livery_session_count_at_airport(self, registration: str, airport_iata: str, livery: str) -> int:
+        livery_lower = livery.strip().lower()
+        try:
+            with self._connect() as conn:
+                rows = conn.execute(
+                    "SELECT capture_time, livery FROM photo_metadata "
+                    "WHERE UPPER(TRIM(registration)) = ? AND UPPER(TRIM(airport_iata)) = ? "
+                    "ORDER BY capture_time ASC",
+                    (registration.strip().upper(), airport_iata.strip().upper()),
+                ).fetchall()
+            if not rows:
+                return 0
+            sessions, prev_dt = 0, None
+            for row in rows:
+                dt_str = (row["capture_time"] or "").split(".")[0].rstrip("Z")
+                if not dt_str:
+                    continue
+                dt = datetime.fromisoformat(dt_str)
+                notes = (row["livery"] or "").strip().lower()
+                if prev_dt is None or (dt - prev_dt).total_seconds() > 43200:
+                    if notes == livery_lower:
+                        sessions += 1
+                prev_dt = dt
+            return sessions
+        except Exception as exc:
+            log.warning("CleanedDB.get_livery_session_count failed for %s@%s: %s",
+                        registration, airport_iata, exc)
+            return 0
+
+    def get_all_sessions(self, registration: str) -> List[Tuple[datetime, str, int, str]]:
+        try:
+            with self._connect() as conn:
+                rows = self._photos_for_rego(conn, registration)
+            if not rows:
+                return []
+            sessions: List[Tuple[datetime, str, int, str]] = []
+            prev_dt = prev_apt = session_start = None
+            session_count = 0
+            session_notes = ""
+            for row in rows:
+                dt_str = (row["capture_time"] or "").split(".")[0].rstrip("Z")
+                if not dt_str:
+                    continue
+                dt = datetime.fromisoformat(dt_str)
+                apt = (row["airport_iata"] or "").strip()
+                notes = (row["livery"] or "").strip()
+                if prev_dt is None or apt != prev_apt or (dt - prev_dt).total_seconds() > 43200:
+                    if session_start is not None:
+                        sessions.append((session_start, prev_apt or "", session_count, session_notes))
+                    session_start = dt
+                    session_count = 1
+                    session_notes = notes
+                else:
+                    session_count += 1
+                    if notes and not session_notes:
+                        session_notes = notes
+                prev_dt = dt
+                prev_apt = apt
+            if session_start is not None:
+                sessions.append((session_start, prev_apt or "", session_count, session_notes))
+            sessions.reverse()
+            return sessions
+        except Exception as exc:
+            log.warning("CleanedDB.get_all_sessions failed for %s: %s", registration, exc)
+            return []
+
+    def get_catalog_stats(self) -> dict:
+        try:
+            with self._connect() as conn:
+                unique_aircraft = conn.execute(
+                    "SELECT COUNT(DISTINCT UPPER(TRIM(registration))) FROM photo_metadata"
+                ).fetchone()[0]
+
+                total_sessions = conn.execute("""
+                    WITH flagged AS (
+                        SELECT capture_time, airport_iata,
+                               LAG(capture_time) OVER (ORDER BY capture_time) AS prev_time,
+                               LAG(airport_iata) OVER (ORDER BY capture_time) AS prev_apt
+                        FROM photo_metadata
+                        WHERE airport_iata IS NOT NULL AND TRIM(airport_iata) != ''
+                    )
+                    SELECT COUNT(*) FROM flagged
+                    WHERE prev_time IS NULL OR airport_iata != prev_apt
+                       OR (julianday(capture_time) - julianday(prev_time)) * 86400 > 43200
+                """).fetchone()[0]
+
+                top_airports = conn.execute("""
+                    WITH flagged AS (
+                        SELECT capture_time, airport_iata,
+                               LAG(capture_time) OVER (PARTITION BY airport_iata
+                                                       ORDER BY capture_time) AS prev_time
+                        FROM photo_metadata
+                        WHERE airport_iata IS NOT NULL AND TRIM(airport_iata) != ''
+                    )
+                    SELECT airport_iata, COUNT(*) AS trips FROM flagged
+                    WHERE prev_time IS NULL
+                       OR (julianday(capture_time) - julianday(prev_time)) * 86400 > 43200
+                    GROUP BY airport_iata ORDER BY trips DESC LIMIT 5
+                """).fetchall()
+
+                session_rows = conn.execute("""
+                    WITH photos AS (
+                        SELECT UPPER(TRIM(registration)) AS reg, capture_time, airport_iata,
+                               LAG(capture_time) OVER (PARTITION BY UPPER(TRIM(registration))
+                                                       ORDER BY capture_time) AS prev_t,
+                               LAG(airport_iata)  OVER (PARTITION BY UPPER(TRIM(registration))
+                                                       ORDER BY capture_time) AS prev_a
+                        FROM photo_metadata
+                    ),
+                    sessions AS (
+                        SELECT reg,
+                               SUM(CASE WHEN prev_t IS NULL OR airport_iata != prev_a
+                                             OR (julianday(capture_time)-julianday(prev_t))*86400 > 43200
+                                        THEN 1 ELSE 0 END) AS cnt
+                        FROM photos GROUP BY reg
+                    )
+                    SELECT reg, cnt FROM sessions ORDER BY cnt DESC
+                """).fetchall()
+
+                multi_airport = conn.execute("""
+                    SELECT UPPER(TRIM(registration)) AS reg,
+                           COUNT(DISTINCT airport_iata) AS n,
+                           GROUP_CONCAT(DISTINCT airport_iata) AS apts
+                    FROM photo_metadata
+                    WHERE airport_iata IS NOT NULL AND TRIM(airport_iata) != ''
+                    GROUP BY reg HAVING n >= 2
+                    ORDER BY n DESC LIMIT 5
+                """).fetchall()
+
+            return {
+                "unique_aircraft":  unique_aircraft,
+                "total_sessions":   total_sessions,
+                "top_airports":     [(r[0], r[1]) for r in top_airports],
+                "top_photographed": [(r[0], r[1]) for r in session_rows[:5]],
+                "multi_airport":    [(r[0], r[1], r[2]) for r in multi_airport],
+            }
+        except Exception as exc:
+            log.warning("CleanedDB.get_catalog_stats failed: %s", exc)
+            return {}
 
 
 def find_catalog(folder: str = "lightroom") -> Optional[LightroomCatalog]:

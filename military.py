@@ -166,12 +166,25 @@ async def check_military(context: ContextTypes.DEFAULT_TYPE) -> None:
             cfg.airport_lat, cfg.airport_lon,
         )
 
+        callsign    = (ac.get("flight") or "").strip()
+        ac_type     = ac.get("t") or ""
+        desc        = ac.get("desc") or ""
+        country     = _country_from_hex(ac.get("hex", "")) or "Unknown"
+        alt         = ac.get("alt_baro", "?")
+        speed       = ac.get("gs", "?")
+        detail      = f"{desc} ({ac_type})" if desc else ac_type
+        extra_info  = f"{country} · {alt}ft · {speed}kts · {dist_nm:.0f}nm from {cfg.airport_iata}"
+
         try:
             message = _format_notification(ac, cfg.airport_iata, dist_nm)
             for dest_chat_id in cfg.all_chat_ids:
                 await context.bot.send_message(chat_id=dest_chat_id, text=message, parse_mode="HTML",
                                                disable_web_page_preview=True)
             cfg.store.mark_military_notified(registration, now_ts)
+            cfg.store.record_filter_match(
+                registration, callsign or registration, ["Military"], now_ts, now_ts,
+                detail=detail, extra_info=extra_info,
+            )
             log.info("Military notification sent: %s", registration)
         except Exception as exc:
             log.error("Failed to send military notification for %s: %s", registration, exc)

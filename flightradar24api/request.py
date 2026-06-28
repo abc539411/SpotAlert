@@ -6,13 +6,47 @@ import brotli
 import gzip
 import json
 
+import os
+import pickle
+import time as _time
+
 import cloudscraper
 import requests.structures
 
 from .errors import CloudflareError
 
-# Single shared scraper session — reuses Cloudflare clearance cookies across requests
-_scraper = cloudscraper.create_scraper()
+_COOKIE_FILE = os.path.join("config", ".fr24_cookies.pkl")
+_cookie_file_mtime: float = 0.0
+
+def _save_cookies(s: cloudscraper.CloudScraper) -> None:
+    try:
+        os.makedirs(os.path.dirname(_COOKIE_FILE) or '.', exist_ok=True)
+        with open(_COOKIE_FILE, "wb") as f:
+            pickle.dump(dict(s.cookies), f)
+    except Exception:
+        pass
+
+def reload_cookies() -> bool:
+    """Load (or reload) cookies from disk into the scraper. Returns True if file was found."""
+    global _cookie_file_mtime
+    try:
+        if not os.path.exists(_COOKIE_FILE):
+            return False
+        mtime = os.path.getmtime(_COOKIE_FILE)
+        if mtime <= _cookie_file_mtime:
+            return True  # already up to date
+        with open(_COOKIE_FILE, "rb") as f:
+            _scraper.cookies.update(pickle.load(f))
+        _cookie_file_mtime = mtime
+        return True
+    except Exception:
+        return False
+
+# Create scraper pinned to Chrome/Windows fingerprint, then load persisted cookies
+_scraper = cloudscraper.create_scraper(
+    browser={'browser': 'chrome', 'platform': 'windows', 'mobile': False}
+)
+reload_cookies()
 
 
 class APIRequest:
@@ -38,8 +72,12 @@ class APIRequest:
             sep = "&" if "?" in url else "?"
             url += sep + "&".join(f"{k}={v}" for k, v in params.items())
 
+        # Reload cookies from disk if the file has been updated (hot-seed without restart)
+        reload_cookies()
         # Do not pass custom headers — cloudscraper must own all headers for Cloudflare bypass
         self.__response = request_method(url, cookies=cookies, data=data)
+        if self.__response.ok:
+            _save_cookies(_scraper)
 
         if self.get_status_code() == 520:
             raise CloudflareError(
