@@ -4,7 +4,6 @@ import csv
 import json
 import logging
 import os
-import re
 import sqlite3
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -19,9 +18,8 @@ class TableView:
 
 
 class SqliteStore:
-    def __init__(self, db_path: str, config_file: str = ""):
+    def __init__(self, db_path: str):
         self.db_path = db_path
-        self._config_file = config_file
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
         self._init_db()
 
@@ -192,8 +190,7 @@ class SqliteStore:
                 if col not in fdp_cols:
                     conn.execute(f"ALTER TABLE departure_patterns ADD COLUMN {col} {typ} DEFAULT NULL")
 
-            # Persists settings changed via the Telegram bot so they survive restarts.
-            # On startup, these values take precedence over config.env.
+            # All app settings — set via web UI and persisted across restarts.
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS settings (
                     key   TEXT PRIMARY KEY,
@@ -330,18 +327,33 @@ class SqliteStore:
                     iata         TEXT PRIMARY KEY,
                     name         TEXT NOT NULL,
                     country_code TEXT DEFAULT '',
-                    source       TEXT DEFAULT 'airportsdata'
+                    source       TEXT DEFAULT 'airportsdata',
+                    city         TEXT DEFAULT ''
                 )
             """)
+            _airports_cols = {row[1] for row in conn.execute("PRAGMA table_info(airports)").fetchall()}
+            if "city" not in _airports_cols:
+                conn.execute("ALTER TABLE airports ADD COLUMN city TEXT DEFAULT ''")
             # Seed from airportsdata if table is empty
             if conn.execute("SELECT COUNT(*) FROM airports").fetchone()[0] == 0:
                 try:
                     import airportsdata as _ad
                     for _iata, _a in _ad.load('IATA').items():
                         conn.execute(
-                            "INSERT OR IGNORE INTO airports(iata, name, country_code, source) VALUES(?,?,?,?)",
-                            (_iata, _a.get('name', _iata), _a.get('country', ''), 'airportsdata'),
+                            "INSERT OR IGNORE INTO airports(iata, name, country_code, source, city) VALUES(?,?,?,?,?)",
+                            (_iata, _a.get('name', _iata), _a.get('country', ''), 'airportsdata', _a.get('city', '')),
                         )
+                except Exception:
+                    pass
+            # Backfill city for any existing rows still missing it (e.g. upgraded from an older schema)
+            if conn.execute("SELECT COUNT(*) FROM airports WHERE city=''").fetchone()[0] > 0:
+                try:
+                    import airportsdata as _ad2
+                    _by_iata = _ad2.load('IATA')
+                    for row in conn.execute("SELECT iata FROM airports WHERE city=''").fetchall():
+                        _a = _by_iata.get(row['iata'])
+                        if _a and _a.get('city'):
+                            conn.execute("UPDATE airports SET city=? WHERE iata=?", (_a['city'], row['iata']))
                 except Exception:
                     pass
 
@@ -407,6 +419,10 @@ class SqliteStore:
                 text = resp.read().decode("utf-8-sig")
         except Exception as exc:
             log.warning("Failed to download ICAOList.csv: %s", exc)
+            try:
+                import system_status as _ss; _ss.record_api('icaolist_github', False, str(exc))
+            except Exception:
+                pass
             return
 
         reader = _csv.DictReader(_io.StringIO(text))
@@ -442,6 +458,10 @@ class SqliteStore:
         import time as _time2
         self.save_setting('icao_list_last_update', str(_time2.time()))
         log.info("ICAO type list refreshed — inserted: %d  updated: %d", inserted, updated)
+        try:
+            import system_status as _ss; _ss.record_api('icaolist_github', True)
+        except Exception:
+            pass
 
     def upsert_aircraft_type(self, icao: str, name: str, source: str = 'user') -> None:
         if not icao or not name:
@@ -476,7 +496,7 @@ class SqliteStore:
         return {r[0]: r[1] for r in rows}
 
     def upsert_airport(self, iata: str, name: str, country_code: str, source: str = 'fr24') -> None:
-        """Insert or update airport info. FR24 data always wins over airportsdata."""
+        """Insert or update airport info. FR24 data always wins over airportsdata. city is never overwritten (FR24 doesn't supply it)."""
         if not iata or not name:
             return
         with self._connect() as conn:
@@ -488,14 +508,14 @@ class SqliteStore:
             )
 
     def get_airport_info(self, iata: str):
-        """Return (name, country_code) or None if not cached."""
+        """Return (name, country_code, city) or None if not cached."""
         if not iata:
             return None
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT name, country_code FROM airports WHERE iata=?", (iata.upper(),)
+                "SELECT name, country_code, city FROM airports WHERE iata=?", (iata.upper(),)
             ).fetchone()
-            return (row['name'], row['country_code']) if row else None
+            return (row['name'], row['country_code'], row['city']) if row else None
 
     def upsert_timeline_cache(self, date: str, clusters_json: str,
                               weather_json: Optional[str] = None) -> None:
@@ -1161,11 +1181,27 @@ class SqliteStore:
                 )
 
     def cleanup_arrived_flights(self, now_ts: int) -> None:
-        """Prune flight_arrivals rows older than 30 days."""
+        """Prune complete days older than 30 days — never cuts through a partial day.
+        Uses arrival_date (YYYY-MM-DD) so only fully-elapsed days are removed.
+        Falls back to first_seen_ts for rows with no arrival_date set."""
+        try:
+            import system_status as _ss; _ss.record_task('feed_cleanup', True)
+        except Exception:
+            pass
+        import datetime as _dt
+        today = _dt.date.fromtimestamp(now_ts)
+        cutoff_date = (today - _dt.timedelta(days=30)).isoformat()
+        cutoff_ts   = now_ts - 30 * 86400
         with self._connect() as conn:
             conn.execute(
-                "DELETE FROM flight_arrivals WHERE first_seen_ts < ?",
-                (now_ts - 30 * 86400,),
+                "DELETE FROM flight_arrivals WHERE "
+                "(arrival_date IS NOT NULL AND arrival_date < ?) OR "
+                "(arrival_date IS NULL AND first_seen_ts < ?)",
+                (cutoff_date, cutoff_ts),
+            )
+            conn.execute(
+                "DELETE FROM timeline_cache WHERE date < ?",
+                (cutoff_date,),
             )
 
     # ------------------------------------------------------------------
@@ -1753,24 +1789,6 @@ class SqliteStore:
                  owner, operator, operator_icao, operator_iata, photo_url, now_ts),
             )
 
-
-def _update_env_file(config_file: str, key: str, value: str) -> None:
-    """Update a KEY = value line in the env file, or append if the key isn't found."""
-    try:
-        with open(config_file, "r", encoding="utf-8") as f:
-            lines = f.readlines()
-        updated = False
-        for i, line in enumerate(lines):
-            if re.match(rf"^\s*{re.escape(key)}\s*=", line):
-                lines[i] = f"{key} = {value}\n"
-                updated = True
-                break
-        if not updated:
-            lines.append(f"{key} = {value}\n")
-        with open(config_file, "w", encoding="utf-8") as f:
-            f.writelines(lines)
-    except OSError:
-        pass
 
 
 def _parse_int(value: Any) -> Optional[int]:

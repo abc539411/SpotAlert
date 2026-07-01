@@ -576,22 +576,12 @@ def check_special_livery(arriving_flight: dict, cfg) -> Optional[Tuple[dict, str
         return None
     registration, _, flight = parsed
 
-    if not _passes_schedule_filters(
-        flight, cfg.livery_days, cfg.livery_time_filter,
-        cfg.airport_tz, cfg.airport_lat, cfg.airport_lon,
-    ):
-        return None
     if not _is_special_livery_airline(airline_name, cfg.livery_keywords, cfg.livery_exclude_keywords):
         return None
     if cfg.store.is_excluded(registration):
         return None
 
-    now_ts = int(datetime.now().timestamp())
-    if cfg.store.should_notify_special_livery(registration, now_ts, cfg.livery_interval_hours):
-        def on_notified(r=registration, t=now_ts):
-            cfg.store.mark_special_livery_notified(r, t)
-        return flight, registration, on_notified
-    return None
+    return flight, registration, lambda: None
 
 
 def check_rare_plane(arriving_flight: dict, cfg) -> Optional[Tuple[dict, str, callable]]:
@@ -628,18 +618,11 @@ def check_rare_plane(arriving_flight: dict, cfg) -> Optional[Tuple[dict, str, ca
     if not airline_icao:
         return None
 
-    if not _passes_schedule_filters(
-        flight, cfg.rare_plane_days, cfg.rare_plane_time_filter,
-        cfg.airport_tz, cfg.airport_lat, cfg.airport_lon,
-    ):
-        return None
     if cfg.store.is_excluded(registration):
         return None
 
     if is_rare:
-        def on_notified(a=airline_icao, t=aircraft_type, ts=now_ts):
-            cfg.store.mark_rare_plane_notified(a, t, ts)
-        return flight, registration, on_notified
+        return flight, registration, lambda: None
     return None
 
 
@@ -654,20 +637,14 @@ def check_rego_watchlist(arriving_flight: dict, cfg) -> Optional[Tuple[dict, str
         return None
     registration, _, flight = parsed
 
-    if not _passes_schedule_filters(
-        flight, cfg.rego_days, cfg.rego_time_filter,
-        cfg.airport_tz, cfg.airport_lat, cfg.airport_lon,
-    ):
-        return None
     if cfg.store.is_excluded(registration):
         return None
 
-    now_ts = int(datetime.now().timestamp())
-    if cfg.store.should_notify_rego_watchlist(registration, now_ts, cfg.rego_interval_hours):
-        def on_notified(r=registration, t=now_ts):
-            cfg.store.mark_rego_notified(r, t)
-        return flight, registration, on_notified
-    return None
+    with cfg.store._connect() as _c:
+        if not _c.execute("SELECT 1 FROM filter_regos WHERE registration=? LIMIT 1", (registration,)).fetchone():
+            return None
+
+    return flight, registration, lambda: None
 
 
 def check_type_watchlist(arriving_flight: dict, cfg) -> Optional[Tuple[dict, str, callable]]:
@@ -689,20 +666,15 @@ def check_type_watchlist(arriving_flight: dict, cfg) -> Optional[Tuple[dict, str
         return None
     registration, aircraft_type, flight = parsed
 
-    if not _passes_schedule_filters(
-        flight, cfg.type_days, cfg.type_time_filter,
-        cfg.airport_tz, cfg.airport_lat, cfg.airport_lon,
-    ):
-        return None
     if cfg.store.is_excluded(registration):
         return None
 
-    now_ts = int(datetime.now().timestamp())
-    if cfg.store.should_notify_type_watchlist(airline_icao, aircraft_type, now_ts, cfg.type_interval_hours):
-        def on_notified(a=airline_icao, t=aircraft_type, ts=now_ts):
-            cfg.store.mark_type_notified(a, t, ts)
-        return flight, registration, on_notified
-    return None
+    with cfg.store._connect() as _c:
+        if not _c.execute("SELECT 1 FROM filter_types WHERE airline=? AND aircraft_type=? LIMIT 1",
+                          (airline_icao, aircraft_type)).fetchone():
+            return None
+
+    return flight, registration, lambda: None
 
 
 def check_airline_watchlist(arriving_flight: dict, cfg) -> Optional[Tuple]:
@@ -717,29 +689,22 @@ def check_airline_watchlist(arriving_flight: dict, cfg) -> Optional[Tuple]:
         return None
     registration, _, flight = parsed
 
-    if not _passes_schedule_filters(
-        flight, cfg.airline_days, cfg.airline_time_filter,
-        cfg.airport_tz, cfg.airport_lat, cfg.airport_lon,
-    ):
-        return None
     if cfg.store.is_excluded(registration):
         return None
 
-    now_ts = int(datetime.now().timestamp())
-
     airline_icao = _safe_get(flight_data, "airline", "code", "icao", default="")
     if airline_icao and airline_icao != "N/A":
-        if cfg.store.should_notify_airline_watchlist(airline_icao, "airline", now_ts, cfg.airline_interval_hours):
-            def on_notified(code=airline_icao, t=now_ts):
-                cfg.store.mark_airline_notified(code, "airline", t)
-            return flight, registration, on_notified, "Watchlist Airline"
+        with cfg.store._connect() as _c:
+            if _c.execute("SELECT 1 FROM filter_airlines WHERE icao_code=? AND entry_type='airline' LIMIT 1",
+                          (airline_icao,)).fetchone():
+                return flight, registration, lambda: None, "Watchlist Airline"
 
     owner_icao = _safe_get(flight_data, "owner", "code", "icao", default="")
     if owner_icao and owner_icao != "N/A":
-        if cfg.store.should_notify_airline_watchlist(owner_icao, "operator", now_ts, cfg.airline_interval_hours):
-            def on_notified(code=owner_icao, t=now_ts):
-                cfg.store.mark_airline_notified(code, "operator", t)
-            return flight, registration, on_notified, "Watchlist Operator"
+        with cfg.store._connect() as _c:
+            if _c.execute("SELECT 1 FROM filter_airlines WHERE icao_code=? AND entry_type='operator' LIMIT 1",
+                          (owner_icao,)).fetchone():
+                return flight, registration, lambda: None, "Watchlist Operator"
 
     return None
 
@@ -758,11 +723,6 @@ def check_route_type_change(arriving_flight: dict, cfg) -> Optional[Tuple]:
         return None
     registration, aircraft_type, flight = parsed
 
-    if not _passes_schedule_filters(
-        flight, cfg.route_type_days, cfg.route_type_time_filter,
-        cfg.airport_tz, cfg.airport_lat, cfg.airport_lon,
-    ):
-        return None
     if cfg.store.is_excluded(registration):
         return None
 
@@ -783,22 +743,13 @@ def check_route_type_change(arriving_flight: dict, cfg) -> Optional[Tuple]:
     if aircraft_type == established_type:
         return None  # operating as expected
 
-    now_ts = int(datetime.now().timestamp())
-    if not cfg.store.should_notify_route_type_change(
-        flight_number, aircraft_type, cfg.airport_iata, cfg.route_type_renotify_days
-    ):
-        return None
-
     extra = {
         "established_type":  established_type,
         "established_count": established_count,
         "established_since": established_since_ts,
     }
 
-    def on_notified(fn=flight_number, at=aircraft_type, iata=cfg.airport_iata, ts=now_ts):
-        cfg.store.mark_route_type_notified(fn, at, iata, ts)
-
-    return flight, registration, on_notified, extra
+    return flight, registration, lambda: None, extra
 
 
 _FILTERS = [
@@ -882,33 +833,6 @@ async def _enrich_and_store(
         except Exception as exc:
             log.warning("Could not fetch aircraft details for %s: %s", registration, exc)
 
-    if arrival_fn and arrival_fn != "N/A" and rego_details:
-        _, dep_fn, al_name, al_iata, al_icao, dest_name, dest_iata, dest_icao, _ = get_next_departure(
-            rego_details, cfg.airport_iata, cfg.airport_tz
-        )
-        if dep_fn:
-            sched_dep_ts = _get_scheduled_dep_ts(rego_details, cfg.airport_iata, dep_fn)
-            sched_arr_raw = _safe_get(flight, "time", "scheduled", "arrival", default=None)
-            sched_arr_ts = int(sched_arr_raw) if isinstance(sched_arr_raw, (int, float)) else None
-            estimated_dep_ts = None
-            for fl in (rego_details or {}).get("data") or []:
-                try:
-                    fn = ((fl.get("identification") or {}).get("number") or {}).get("default")
-                    origin = fl["airport"]["origin"]["code"]["iata"]
-                    if fn == dep_fn and origin == cfg.airport_iata:
-                        est = (fl.get("time") or {}).get("estimated", {}).get("departure")
-                        if isinstance(est, (int, float)):
-                            estimated_dep_ts = int(est)
-                except (KeyError, TypeError):
-                    continue
-            cfg.store.record_departure_pattern(
-                arrival_fn, dep_fn, cfg.airport_iata, now_ts,
-                scheduled_dep_ts=sched_dep_ts, estimated_dep_ts=estimated_dep_ts,
-                scheduled_arr_ts=sched_arr_ts,
-                airline_name=al_name, airline_iata=al_iata, airline_icao=al_icao,
-                dest_name=dest_name, dest_iata=dest_iata, dest_icao=dest_icao,
-            )
-
     arr_ts = int(
         _safe_get(flight, "time", "estimated", "arrival", default=None)
         or _safe_get(flight, "time", "scheduled", "arrival", default=None)
@@ -985,12 +909,14 @@ async def run_check(context: ContextTypes.DEFAULT_TYPE) -> None:
         import asyncio
 
         # Positive pages — current live board
+        _fr24_ok = False
         for page in cfg.fetch_pages:
             try:
                 data = cfg.fr_api.get_airport_details(code=cfg.airport_code, page=page)
                 schedule   = data["airport"]["pluginData"]["schedule"]
                 arrivals   = schedule["arrivals"]["data"]
                 departures = schedule.get("departures", {}).get("data") or []
+                _fr24_ok = True
             except Exception as exc:
                 log.warning("Failed to fetch arrivals (page %d): %s", page, exc)
                 continue
@@ -1006,6 +932,9 @@ async def run_check(context: ContextTypes.DEFAULT_TYPE) -> None:
                 if parsed:
                     reg, _, flight = parsed
                     all_departures.setdefault(reg, []).append(flight)
+
+        import system_status as _ss
+        _ss.record_api('fr24_airport', _fr24_ok)
 
         # Negative pages — recently rotated off, real timestamps only
         for hist_page in [-p for p in cfg.fetch_pages]:
@@ -1104,6 +1033,36 @@ async def run_check(context: ContextTypes.DEFAULT_TYPE) -> None:
             cfg.store.bulk_update_route_types(route_type_records)
         for dep_fn, dep_ts_val in actual_departures:
             cfg.store.record_actual_departure(dep_fn, cfg.airport_iata, dep_ts_val)
+
+        # ── Departure pattern bulk update ─────────────────────────────────────────────────
+        # Only confirmed actual arrivals + actual departures count as an observation.
+        # hist_arrivals / hist_departures are built from negative pages (real timestamps only),
+        # so both sides are confirmed happened. The scheduled times are stored for prediction.
+        for _reg, _arr_fl in hist_arrivals.items():
+            _dep_fl = hist_departures.get(_reg)
+            if not _dep_fl:
+                continue
+            _arr_fn = str(_safe_get(_arr_fl, "identification", "number", "default", default="") or "")
+            _dep_fn = str(_safe_get(_dep_fl, "identification", "number", "default", default="") or "")
+            if not _arr_fn or _arr_fn in ("N/A", "N\\A"):
+                continue
+            if not _dep_fn or _dep_fn in ("N/A", "N\\A"):
+                continue
+            _sched_arr = _safe_get(_arr_fl, "time", "scheduled", "arrival",   default=None)
+            _sched_dep = _safe_get(_dep_fl, "time", "scheduled", "departure", default=None)
+            _est_dep   = _safe_get(_dep_fl, "time", "estimated", "departure", default=None)
+            cfg.store.record_departure_pattern(
+                _arr_fn, _dep_fn, cfg.airport_iata, now_ts,
+                scheduled_dep_ts = int(_sched_dep) if isinstance(_sched_dep, (int, float)) else None,
+                estimated_dep_ts = int(_est_dep)   if isinstance(_est_dep,   (int, float)) else None,
+                scheduled_arr_ts = int(_sched_arr) if isinstance(_sched_arr, (int, float)) else None,
+                airline_name = _safe_get(_dep_fl, "airline", "name") or None,
+                airline_iata = _safe_get(_dep_fl, "airline", "code", "iata") or None,
+                airline_icao = _safe_get(_dep_fl, "airline", "code", "icao") or None,
+                dest_name    = _safe_get(_dep_fl, "airport", "destination", "name") or None,
+                dest_iata    = _safe_get(_dep_fl, "airport", "destination", "code", "iata") or None,
+                dest_icao    = _safe_get(_dep_fl, "airport", "destination", "code", "icao") or None,
+            )
 
         # ── Step 3: Filter matching → matched_regos ───────────────────────────────────────
         # Run filters on each flight per rego; union notif_types across all flights.
@@ -1415,6 +1374,7 @@ async def run_check(context: ContextTypes.DEFAULT_TYPE) -> None:
                         f"&timezone={_tz_enc}")
                 with _ur.urlopen(_url, timeout=10) as _resp:
                     _om = _jc.loads(_resp.read())
+                import system_status as _sys_s; _sys_s.record_api('open_meteo', True)
                 _daily = _om.get("daily", {})
                 _SEVERE = {75, 82, 86, 95, 96, 99}
                 for _wi, _wd in enumerate(_daily.get("time", [])):
@@ -1435,6 +1395,7 @@ async def run_check(context: ContextTypes.DEFAULT_TYPE) -> None:
                     except Exception:
                         pass
             except Exception as _we:
+                import system_status as _sys_s; _sys_s.record_api('open_meteo', False, str(_we))
                 log.warning("Timeline cache: Open-Meteo fetch failed: %s", _we)
 
         # Catalog snapshot — one call per rego, not per flight per day
@@ -1650,31 +1611,6 @@ async def _send_notification(
         _, dep_fn, al_name, al_iata, al_icao, dest_name, dest_iata, dest_icao, _ = get_next_departure(
             rego_details, cfg.airport_iata, cfg.airport_tz
         )
-        if dep_fn:
-            sched_dep_ts = _get_scheduled_dep_ts(rego_details, cfg.airport_iata, dep_fn)
-            # Scheduled arrival time — used with scheduled_dep_ts to compute turnaround_secs
-            sched_arr_ts_raw = _safe_get(flight, "time", "scheduled", "arrival", default=None)
-            sched_arr_ts = int(sched_arr_ts_raw) if isinstance(sched_arr_ts_raw, (int, float)) else None
-            # Estimated departure time
-            estimated_dep_ts = None
-            for fl in (rego_details or {}).get("data") or []:
-                try:
-                    fn = ((fl.get("identification") or {}).get("number") or {}).get("default")
-                    origin = fl["airport"]["origin"]["code"]["iata"]
-                    if fn == dep_fn and origin == cfg.airport_iata:
-                        est = (fl.get("time") or {}).get("estimated", {}).get("departure")
-                        if isinstance(est, (int, float)):
-                            estimated_dep_ts = int(est)
-                except (KeyError, TypeError):
-                    continue
-            cfg.store.record_departure_pattern(
-                arrival_fn, dep_fn, cfg.airport_iata, now_ts,
-                scheduled_dep_ts=sched_dep_ts,
-                estimated_dep_ts=estimated_dep_ts,
-                scheduled_arr_ts=sched_arr_ts,
-                airline_name=al_name, airline_iata=al_iata, airline_icao=al_icao,
-                dest_name=dest_name, dest_iata=dest_iata, dest_icao=dest_icao,
-            )
     try:
         message = format_notification(
             flight, registration, notification_type, rego_details,

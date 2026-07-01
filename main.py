@@ -74,23 +74,15 @@ class AppConfig:
     military_max_alt_ft: int
     military_renotify_hours: int
 
-    # Spot recommendation
-    spot_rec_enabled: bool = False
-    spot_rec_day_type: str = "Any"       # "Any" or "WeekendPublicHoliday"
-    spot_rec_travel_mins: int = 30
-    spot_rec_notify_window_hours: int = 4   # outer bound: notify if cluster starts within N hours
-    spot_rec_threshold: int = 3
-    spot_rec_eod_hour: int = 20
-    spot_rec_weather_gate: bool = True
+    # Spot recommendation (active settings — Telegram-only fields removed)
     spot_rec_lighting_gate: bool = True
-    spot_rec_max_spotted_times: int = 0   # 0 = disabled
-    spot_rec_max_gap_hours: int = 3       # gap between events that splits into separate clusters
-    spot_rec_notable_lull_mins: int = 60  # gap within a cluster worth flagging as a lull
-    spot_rec_max_lulls: int = 2           # max lull notices shown per cluster
-    spot_rec_max_windows: int = 3         # max clusters offered in EOD keyboard / manual display
-    spot_rec_light_buffer_mins: int = 30    # 🌙 minutes around sunrise/sunset still considered poor light
-    spot_rec_bad_light_start: str = ""      # HH:MM local — midday bad light window start (☀️); empty = disabled
-    spot_rec_bad_light_end: str = ""        # HH:MM local — midday bad light window end
+    spot_rec_max_spotted_times: int = 0
+    spot_rec_max_gap_hours: int = 3
+    spot_rec_notable_lull_mins: int = 60
+    spot_rec_max_lulls: int = 2
+    spot_rec_light_buffer_mins: int = 30
+    spot_rec_bad_light_start: str = ""
+    spot_rec_bad_light_end: str = ""
     departure_pattern_threshold: int = 80  # min % confidence to show a predicted departure
     route_type_min_days: int = 7           # min days of history before filter fires
     route_type_dominance_x: int = 3        # dominant type must be >= N× next type count
@@ -110,6 +102,10 @@ class AppConfig:
     fr_api: object = field(repr=False, default=None)
     store: object = field(repr=False, default=None)
     catalog: object = field(repr=False, default=None)
+
+    # Set once in main() — lets /api/force-check wake the monitor loop immediately
+    # and reset its periodic timer, instead of running as a disconnected one-off task.
+    check_now_event: object = field(repr=False, default=None)
 
     @property
     def all_chat_ids(self) -> List[str]:
@@ -207,19 +203,12 @@ def build_config(fr_api: FlightRadar24API, store: SqliteStore, catalog=None) -> 
         military_radius_nm=_si(store, "MILITARY_RADIUS_NM", default="50"),
         military_max_alt_ft=_si(store, "MILITARY_MAX_ALT_FT", default="5000"),
         military_renotify_hours=_si(store, "MILITARY_RENOTIFY_HOURS", default="4"),
-        spot_rec_enabled=_s(store, "SPOT_REC_ENABLED", default="false").lower() == "true",
-        spot_rec_day_type=_s(store, "SPOT_REC_DAY_TYPE", default="Any"),
-        spot_rec_travel_mins=_si(store, "SPOT_REC_TRAVEL_MINS", default="30"),
-        spot_rec_notify_window_hours=_si(store, "SPOT_REC_NOTIFY_WINDOW_HOURS", default="4"),
-        spot_rec_threshold=_si(store, "SPOT_REC_THRESHOLD", default="3"),
-        spot_rec_eod_hour=_si(store, "SPOT_REC_EOD_HOUR", default="20"),
-        spot_rec_weather_gate=_s(store, "SPOT_REC_WEATHER_GATE", default="true").lower() == "true",
         spot_rec_lighting_gate=_s(store, "SPOT_LIGHTING_GATE", default="true").lower() == "true",
         spot_rec_max_spotted_times=_si(store, "SPOT_MAX_SPOTTED", default="0"),
         spot_rec_max_gap_hours=_si(store, "SPOT_MAX_GAP_HOURS", default="3"),
         spot_rec_notable_lull_mins=_si(store, "SPOT_LULL_MINS", default="60"),
         spot_rec_max_lulls=_si(store, "SPOT_MAX_LULLS", default="2"),
-        spot_rec_max_windows=_si(store, "SPOT_REC_MAX_WINDOWS", default="3"),
+
         spot_rec_light_buffer_mins=_si(store, "SPOT_LIGHT_BUFFER_MINS", default="30"),
         spot_rec_bad_light_start=_s(store, "SPOT_BAD_LIGHT_START", default=""),
         spot_rec_bad_light_end=_s(store, "SPOT_BAD_LIGHT_END", default=""),
@@ -269,35 +258,49 @@ class _FakeContext:
 
 
 async def _run_monitor(cfg: AppConfig) -> None:
+    import system_status as _ss
     ctx = _FakeContext(cfg)
-    # Wait for first interval before checking — prevents burst on every restart
-    await asyncio.sleep(cfg.check_interval)
+    event = cfg.check_now_event
     while True:
+        # Wait for the interval to elapse, or for /api/force-check to wake us early.
+        # Either way the timer resets from here — a manual check counts as "just ran".
+        try:
+            await asyncio.wait_for(event.wait(), timeout=cfg.check_interval)
+        except asyncio.TimeoutError:
+            pass
+        event.clear()
         try:
             await run_check(ctx)
-        except Exception:
+            _ss.record_task('arrivals_check', True)
+        except Exception as _e:
             log.exception("Arrivals check failed")
-        await asyncio.sleep(cfg.check_interval)
+            _ss.record_task('arrivals_check', False, str(_e))
 
 
 async def _run_military(cfg: AppConfig) -> None:
+    import system_status as _ss
     ctx = _FakeContext(cfg)
     while True:
         try:
             await check_military(ctx)
-        except Exception:
+            _ss.record_task('military_check', True)
+        except Exception as _e:
             log.exception("Military check failed")
+            _ss.record_task('military_check', False, str(_e))
         await asyncio.sleep(cfg.military_check_interval)
 
 
 async def _run_backup(store) -> None:
+    import system_status as _ss
     while True:
         await asyncio.sleep(86400)
         try:
             path = store.backup()
             log.info("DB backup saved: %s", path)
-        except Exception:
+            _ss.record_task('db_backup', True)
+        except Exception as _e:
             log.exception("DB backup failed")
+            _ss.record_task('db_backup', False, str(_e))
 
 
 def main() -> None:
@@ -331,8 +334,12 @@ def main() -> None:
     store = SqliteStore(os.path.join(data_dir, "spotalert.db"))
     store.migrate_from_csv_folder(data_dir)
 
+    import system_status as _ss
+    _ss.init(store)
+
     catalog = find_catalog()
     cfg = build_config(fr_api, store, catalog)
+    cfg.check_now_event = asyncio.Event()
 
     _backfilled = store.backfill_arrival_dates(cfg.airport_tz)
     if _backfilled:

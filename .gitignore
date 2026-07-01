@@ -1,9 +1,7 @@
 # Claude Code internal files
 .claude/
 
-# Secrets and personal config — never commit these
-config/config.env
-config/filters/
+# Runtime secrets
 data/.fr24_cookies.pkl
 
 # Runtime downloaded assets — fetched on demand, not committed

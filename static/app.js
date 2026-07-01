@@ -35,9 +35,10 @@ function mfrBadge(mfr) {
 
 function $(id) { return document.getElementById(id); }
 
-function toast(msg, ms = 2000) {
+function toast(msg, ms = 2000, wrap = false) {
   const el = $('toast');
   el.textContent = msg;
+  el.classList.toggle('wrap', wrap);
   el.classList.add('show');
   clearTimeout(el._t);
   el._t = setTimeout(() => el.classList.remove('show'), ms);
@@ -370,7 +371,7 @@ function regoCard(group) {
       </div>
       ${airline ? `<div class="sq-airline">${esc(airline)}</div>` : ''}
     </div>
-    ${airlineLogo ? `<div style="position:absolute;bottom:4px;right:8px;z-index:3">${airlineLogo}</div>` : ''}
+    ${airlineLogo ? `<div class="sq-tail-logo" style="position:absolute;bottom:4px;right:8px;z-index:3">${airlineLogo}</div>` : ''}
   </div>`;
 }
 
@@ -459,6 +460,7 @@ function _detailInner(r, closeCmd, showPhoto = true) {
         next_dep_flight:     f.dep_flight || null,
         next_dep_dest_iata:  f.dep_dest_iata || null,
         next_dep_dest_name:  f.dep_dest_name || null,
+        next_dep_dest_city:  f.dep_dest_city || null,
         next_dep_ts:         f.dep_ts || null,
         next_dep_label:      depLabel,
         next_dep_confidence: f.dep_confidence || null,
@@ -473,6 +475,7 @@ function _detailInner(r, closeCmd, showPhoto = true) {
         live_status:        routeLiveStatus,
         origin_iata:        f.origin_iata,
         origin_name:        f.origin_name,
+        origin_city:        f.origin_city,
         airport_iata:       airportIata,
         airport_name:       airportName,
       };
@@ -546,7 +549,7 @@ async function openDetail(el) {
 
   if (window.innerWidth < 768) {
     // Mobile: bottom sheet modal
-    $('detail-modal').querySelector('.detail-sheet').innerHTML = _detailInner(r, 'closeDetail()');
+    $('detail-modal').querySelector('.detail-sheet-scroll').innerHTML = _detailInner(r, 'closeDetail()');
     $('detail-modal').classList.remove('hidden');
   } else {
     // Desktop: expand in grid — toggle off if same card clicked again
@@ -598,6 +601,7 @@ function collapseGridDetail() {
 
 function closeDetail() {
   $('detail-modal').classList.add('hidden');
+  _openRecCard = null;
 }
 
 let _openRecCard  = null;
@@ -605,6 +609,24 @@ let _openRecPanel = null;
 let _openRecScrollEl = null;
 
 function openRecDetail(el) {
+  if (window.innerWidth < 768) {
+    // Mobile: reuse the feed's bottom-sheet modal
+    if (_openRecCard === el) { closeDetail(); _openRecCard = null; return; }
+    _openRecCard = el;
+    const sheet = $('detail-modal').querySelector('.detail-sheet-scroll');
+    const _rf = JSON.parse(el.dataset.f);
+    const liveryRow = _rf.extra_info
+      ? `<div class="rfc-panel-body">
+           <div class="rfc-remarks-label">LIVERY</div>
+           <div style="font-size:12px;color:var(--text);margin-top:4px">${esc(_rf.extra_info)}</div>
+         </div>` : '';
+    sheet.innerHTML = `
+      <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:10px">${esc(_rf.registration || '')}</div>
+      ${_buildRecDetail(el)}${liveryRow}`;
+    $('detail-modal').classList.remove('hidden');
+    return;
+  }
+
   if (_openRecCard === el) { _closeRecPanel(); return; }
   _closeRecPanel();
 
@@ -819,10 +841,15 @@ function _cityName(airportName) {
 function _renderRouteBar(data, r) {
   const originIata = r.origin_iata  || data.origin_iata  || '';
   const originName = r.origin_name  || data.origin_name  || '';
+  const originCity = r.origin_city  || data.origin_city  || '';
   const centerIata = data.airport_iata || r.airport_iata || '';
   const centerName = data.airport_name || r.airport_name || '';
   const nextDest   = data.next_dep_dest_iata || '';
   const nextName   = data.next_dep_dest_name || '';
+  const nextCity   = data.next_dep_dest_city || '';
+  const isMobile   = window.innerWidth < 768;
+  const originDisp = isMobile ? (originCity || _cityName(originName)) : _cityName(originName);
+  const nextDisp   = isMobile ? (nextCity   || _cityName(nextName))   : _cityName(nextName);
   const nextFlight = data.next_dep_flight || '';
   const nextConf   = data.next_dep_confidence || 0;
   const nextLabel  = data.next_dep_label || '';
@@ -876,7 +903,7 @@ function _renderRouteBar(data, r) {
     <div class="rb-node">
       <span class="rb-lbl">Next Dep.</span>
       <a class="rb-iata rb-link" href="${fr24Airport(nextDest)}" target="_blank">${esc(nextDest)}</a>
-      ${nextName   ? `<span class="rb-sub">${esc(_cityName(nextName))}</span>` : ''}
+      ${nextDisp   ? `<span class="rb-sub">${esc(nextDisp)}</span>` : ''}
       ${nextFlight ? `<a class="rb-sub rb-link" href="${fr24Flight(nextFlight)}" target="_blank">${esc(nextFlight)}</a>` : ''}
     </div>` : '';
 
@@ -884,7 +911,7 @@ function _renderRouteBar(data, r) {
     <div class="rb-node">
       <span class="rb-lbl">Arr. From</span>
       <a class="rb-iata rb-link" href="${fr24Airport(originIata)}" target="_blank">${esc(originIata)}</a>
-      ${originName      ? `<span class="rb-sub">${esc(_cityName(originName))}</span>` : ''}
+      ${originDisp      ? `<span class="rb-sub">${esc(originDisp)}</span>` : ''}
       ${r.flight_number ? `<a class="rb-sub rb-link" href="${fr24Flight(r.flight_number)}" target="_blank">${esc(r.flight_number)}</a>` : ''}
     </div>
     <div class="rb-arrow">✈</div>
@@ -920,21 +947,30 @@ function switchTab(name) {
   document.querySelectorAll('.nav-tab').forEach(b => {
     b.classList.toggle('active', b.dataset.tab === name);
   });
-  // Swap header button between Manual Check and Refresh Collection
+  // Swap header button between Manual Check, Refresh Collection, and Restart Server
   const btn = $('btn-refresh'), lbl = $('btn-refresh-label');
   if (btn && lbl) {
+    if (typeof _resetRestartArm === 'function') _resetRestartArm();
+    btn.classList.remove('btn-danger', 'btn-danger-armed');
     if (name === 'collection') {
       btn.onclick = () => loadCollection(true);
       lbl.textContent = 'Refresh Collection';
     } else if (name === 'recommendation') {
       btn.onclick = () => { _recLoaded = false; toast('Plotting the windows…'); loadRecommendation(true); };
       lbl.textContent = 'Refresh Spotting';
+    } else if (name === 'settings') {
+      btn.onclick = () => armRestartBackend();
+      btn.classList.add('btn-danger');
+      lbl.textContent = 'Restart Server';
     } else {
       btn.onclick = () => forceCheck();
       lbl.textContent = 'Refresh Feed';
     }
   }
   loadTab(name);
+  if ((name === 'recommendation' || name === 'collection') && typeof _syncRecScrollHeight === 'function') {
+    requestAnimationFrame(_syncRecScrollHeight);
+  }
 }
 
 $('nav-tabs').addEventListener('click', e => {
@@ -1001,7 +1037,7 @@ function renderFilters() {
   if (!_filtersCache) return;
   const f = _filtersCache;
 
-  $('fl-exclusion').innerHTML = (f.exclusion_list || []).map(r => `
+  $('fl-exclusion').innerHTML = (f.filter_exclusions || f.exclusion_list || []).map(r => `
     <div class="filter-row">
       <div class="main">
         <div class="filter-primary">${esc(r.registration)}</div>
@@ -1010,7 +1046,7 @@ function renderFilters() {
       <button class="del-btn" title="Remove" onclick="delExclusion('${esc(r.registration)}')">✕</button>
     </div>`).join('') || '<div class="detail" style="padding:4px 2px">Empty</div>';
 
-  $('fl-rego').innerHTML = (f.rego_watchlist || []).map(r => `
+  $('fl-rego').innerHTML = (f.filter_regos || f.rego_watchlist || []).map(r => `
     <div class="filter-row">
       <div class="main">
         <div class="filter-primary">${esc(r.registration)}</div>
@@ -1019,7 +1055,7 @@ function renderFilters() {
       <button class="del-btn" onclick="delRego('${esc(r.registration)}')">✕</button>
     </div>`).join('') || '<div class="detail" style="padding:4px 2px">Empty</div>';
 
-  $('fl-type').innerHTML = (f.type_watchlist || []).map(r => `
+  $('fl-type').innerHTML = (f.filter_types || f.type_watchlist || []).map(r => `
     <div class="filter-row">
       <div class="main">
         <div class="filter-primary">${esc(r.aircraft_type)}</div>
@@ -1028,7 +1064,7 @@ function renderFilters() {
       <button class="del-btn" onclick="delType('${esc(r.airline)}','${esc(r.aircraft_type)}')">✕</button>
     </div>`).join('') || '<div class="detail" style="padding:4px 2px">Empty</div>';
 
-  $('fl-airline').innerHTML = (f.airline_watchlist || []).map(r => `
+  $('fl-airline').innerHTML = (f.filter_airlines || f.airline_watchlist || []).map(r => `
     <div class="filter-row">
       <div class="main">
         <div class="filter-primary">${esc(r.icao_code)} <span style="color:var(--dim);font-size:11px">${esc(r.entry_type)}</span></div>
@@ -1090,12 +1126,12 @@ async function delType(airline, ac) {
 
 async function addAirline() {
   const icao = $('al-icao').value.trim().toUpperCase();
-  const type = $('al-type').value.trim() || 'airline';
+  const type = $('al-type').value || 'airline';
   const name = $('al-name').value.trim();
   if (!icao) { toast('Enter ICAO code'); return; }
   try {
     await api('/filters/airline', { method: 'POST', body: JSON.stringify({ icao_code: icao, entry_type: type, name }) });
-    $('al-icao').value = ''; $('al-type').value = ''; $('al-name').value = '';
+    $('al-icao').value = ''; $('al-type').value = 'airline'; $('al-name').value = '';
     toast('Added'); await loadFilters();
   } catch (e) { toast('Error: ' + e.message); }
 }
@@ -1111,65 +1147,45 @@ async function delAirline(icao, type) {
 
 const SETTINGS_SCHEMA = [
   // Monitoring — Polling
-  { group: 'mon-polling',   key: 'CHECK_INTERVAL_MINUTES',      label: 'Check Interval',       desc: 'How often to poll FR24 for new arrivals. Lower = more responsive, higher = less API load.',                      type: 'number', min: 1,  max: 120,  unit: 'min' },
-  { group: 'mon-polling',   key: 'FETCH_PAGES',                 label: 'Fetch Pages',          desc: 'Each page covers ~100 recent arrivals. Increase if busy airports miss flights at the end of the list.',           type: 'number', min: 1,  max: 10,   unit: 'pages' },
+  { group: 'mon-polling',   key: 'CHECK_INTERVAL_MINUTES',      label: 'Check Frequency',          desc: 'How often to poll FR24 for new arrivals. Lower = more responsive, higher = more API load.',                      type: 'number', min: 1,  max: 120,  unit: 'minutes', restart: true },
+  { group: 'mon-polling',   key: 'FETCH_PAGES',                 label: 'Pages to Fetch',           desc: 'Each page covers around 100 recent arrivals. Increase if busy airports miss flights at the end of the list.',  type: 'number', min: 1,  max: 10,   unit: 'pages', restart: true },
   // Monitoring — Departure
-  { group: 'mon-departure', key: 'DEPARTURE_PATTERN_THRESHOLD', label: 'Dep Confidence',       desc: 'Minimum historical confidence required before showing a predicted departure time. 80% means the pattern must hold 4 out of 5 times.', type: 'number', min: 0, max: 100, step: 5, unit: '%' },
-  // Monitoring — Rapid Mode (unused)
-  { group: 'mon-rapidmode', key: 'RAPID_MODE_INTERVAL_MINS',    label: 'Rapid Mode Interval',  desc: 'How often to re-check when rapid mode is active. Should be much shorter than the normal check interval.',         type: 'number', min: 1,  max: 30,   unit: 'min',    unused: true },
-  { group: 'mon-rapidmode', key: 'APPROACH_ALERT_MINS',         label: 'Approach Alert',       desc: 'Rapid mode only — fire an alert when the tracked flight is this many minutes from touchdown. Set 0 to disable.',  type: 'number', min: 0,  max: 120,  unit: 'min',    unused: true },
-  { group: 'mon-rapidmode', key: 'REMINDER_HOURS',              label: 'Reminder Hours',       desc: 'Send a follow-up reminder this many hours before the expected arrival. Set 0 to disable.',                        type: 'number', min: 0,  max: 48,   unit: 'hrs',    unused: true },
+  { group: 'mon-departure', key: 'DEPARTURE_PATTERN_THRESHOLD', label: 'Departure Confidence',     desc: 'Minimum historical confidence required before showing a predicted departure time. 80% means the pattern must hold 4 out of 5 times.', type: 'number', min: 0, max: 100, step: 5, unit: '%', restart: true },
   // Special Livery
-  { group: 'livery', key: 'SPECIAL_LIVERY_RENOTIFY_HOURS',     label: 'Re-notify Cooldown',   desc: 'If the same registration triggers the livery filter again, suppress the alert for this many hours to avoid duplicates.', type: 'number', min: 0, max: 168, unit: 'hrs' },
-  { group: 'livery', key: 'SPECIAL_LIVERY_ARRIVAL_WINDOW',     label: 'Arrival Window',       desc: 'Always = alert any time. Daylight = only between sunrise and sunset. Off = filter disabled.',                    type: 'window' },
-  { group: 'livery', key: 'SPECIAL_LIVERY_ACTIVE_DAYS',        label: 'Active Days',          desc: 'Only send alerts on selected days. All off = disabled.',                          type: 'days' },
-  { group: 'livery', key: 'SPECIAL_LIVERY_KEYWORDS',           label: 'Keywords',             desc: 'A flight matches if its airline name contains any of these words (case-insensitive). e.g. "retro", "special".',  type: 'tags' },
-  { group: 'livery', key: 'SPECIAL_LIVERY_EXCLUDE_KEYWORDS',   label: 'Exclude Keywords',     desc: 'If the airline name contains any of these words the match is suppressed — use to block standard liveries.',      type: 'tags' },
+  { group: 'livery', key: 'SPECIAL_LIVERY_KEYWORDS',           label: 'Keywords',             desc: 'A flight matches if its airline name contains any of these words (case-insensitive). e.g. "retro", "special".',  type: 'tags', restart: true },
+  { group: 'livery', key: 'SPECIAL_LIVERY_EXCLUDE_KEYWORDS',   label: 'Exclude Keywords',     desc: 'If the airline name contains any of these words the match is suppressed — use to block standard liveries.',      type: 'tags', restart: true },
   // Rare Plane
-  { group: 'rare', key: 'RARE_PLANE_MIN_ABSENCE_DAYS',         label: 'Min Absence',          desc: 'An aircraft type is only considered "rare" if it hasn\'t been seen at this airport for at least this many days.', type: 'number', min: 1, max: 365, unit: 'days' },
-  { group: 'rare', key: 'RARE_PLANE_ARRIVAL_WINDOW',           label: 'Arrival Window',       desc: 'Always = alert any time. Daylight = only between sunrise and sunset. Off = filter disabled.',                    type: 'window' },
-  { group: 'rare', key: 'RARE_PLANE_ACTIVE_DAYS',              label: 'Active Days',          desc: 'Only send alerts on selected days. All off = disabled.',                      type: 'days' },
-  // Rego Watchlist
-  { group: 'rego', key: 'REGO_WATCHLIST_RENOTIFY_HOURS',       label: 'Re-notify Cooldown',   desc: 'Suppress repeat alerts for the same registration for this many hours after the first notification.',             type: 'number', min: 0, max: 168, unit: 'hrs' },
-  { group: 'rego', key: 'REGO_WATCHLIST_ARRIVAL_WINDOW',       label: 'Arrival Window',       desc: 'Always = alert any time. Daylight = only between sunrise and sunset. Off = filter disabled.',                    type: 'window' },
-  { group: 'rego', key: 'REGO_WATCHLIST_ACTIVE_DAYS',          label: 'Active Days',          desc: 'Only alert on selected days. All off = disabled.',                                                                          type: 'days' },
-  // Type Watchlist
-  { group: 'type', key: 'TYPE_WATCHLIST_RENOTIFY_HOURS',       label: 'Re-notify Cooldown',   desc: 'After alerting for a (airline, aircraft type) pair, wait this many hours before alerting again for the same pair.', type: 'number', min: 0, max: 168, unit: 'hrs' },
-  { group: 'type', key: 'TYPE_WATCHLIST_ARRIVAL_WINDOW',       label: 'Arrival Window',       desc: 'Always = alert any time. Daylight = only between sunrise and sunset. Off = filter disabled.',                    type: 'window' },
-  { group: 'type', key: 'TYPE_WATCHLIST_ACTIVE_DAYS',          label: 'Active Days',          desc: 'Only alert on selected days. All off = disabled.',                                                                          type: 'days' },
-  // Airline Watchlist
-  { group: 'airline', key: 'AIRLINE_WATCHLIST_RENOTIFY_HOURS', label: 'Re-notify Cooldown',   desc: 'After alerting for a watched airline or operator, wait this many hours before alerting again for the same ICAO.', type: 'number', min: 0, max: 168, unit: 'hrs' },
-  { group: 'airline', key: 'AIRLINE_WATCHLIST_ARRIVAL_WINDOW', label: 'Arrival Window',       desc: 'Always = alert any time. Daylight = only between sunrise and sunset. Off = filter disabled.',                    type: 'window' },
-  { group: 'airline', key: 'AIRLINE_WATCHLIST_ACTIVE_DAYS',    label: 'Active Days',          desc: 'Only alert on selected days. All off = disabled.',                                                                          type: 'days' },
+  { group: 'rare', key: 'RARE_PLANE_MIN_ABSENCE_DAYS',         label: 'Minimum Days Absent',  desc: 'An aircraft type is only considered "rare" if it hasn\'t been seen at this airport for at least this many days.', type: 'number', min: 1, max: 365, unit: 'days', restart: true },
   // Military — Scanning
-  { group: 'mil-scan',  key: 'MILITARY_CHECK_INTERVAL_MINUTES', label: 'Check Interval',      desc: 'How often to query adsb.fi for military traffic near the airport.',                                              type: 'number', min: 1,  max: 60,   unit: 'min' },
-  { group: 'mil-scan',  key: 'MILITARY_RADIUS_NM',              label: 'Radius',              desc: 'Only consider military aircraft within this radius of the airport. Smaller = fewer false positives.',             type: 'number', min: 10, max: 500,  unit: 'nm' },
-  { group: 'mil-scan',  key: 'MILITARY_MAX_ALT_FT',             label: 'Max Altitude',        desc: 'Ignore high-altitude transits — only alert on low-level traffic that\'s likely photo-worthy.',                   type: 'number', min: 0,  max: 50000, step: 500, unit: 'ft' },
-  { group: 'mil-scan',  key: 'MILITARY_RENOTIFY_HOURS',          label: 'Re-notify Cooldown',  desc: 'Once a military registration has been alerted, suppress further alerts for this many hours.',                    type: 'number', min: 0,  max: 168,  unit: 'hrs' },
+  { group: 'mil-scan',  key: 'MILITARY_CHECK_INTERVAL_MINUTES', label: 'Check Frequency',        desc: 'How often to query adsb.fi for military traffic near the airport.',                                              type: 'number', min: 1,  max: 60,   unit: 'minutes', restart: true },
+  { group: 'mil-scan',  key: 'MILITARY_RADIUS_NM',              label: 'Detection Radius',       desc: 'Only consider military aircraft within this radius of the airport. Smaller = fewer false positives.',             type: 'number', min: 10, max: 500,  unit: 'nm', restart: true },
+  { group: 'mil-scan',  key: 'MILITARY_MAX_ALT_FT',             label: 'Maximum Altitude',       desc: 'Ignore high-altitude transits — only alert on low-level traffic that\'s likely photo-worthy.',                   type: 'number', min: 0,  max: 50000, step: 500, unit: 'feet', restart: true },
+  { group: 'mil-scan',  key: 'MILITARY_RENOTIFY_HOURS',          label: 'Repeat Alert Cooldown', desc: 'Once a military registration has been alerted, suppress further alerts for this many hours.',                    type: 'number', min: 0,  max: 168,  unit: 'hours', restart: true },
   // Spotting settings
-  { group: 'spotrec', key: 'SPOT_MAX_GAP_HOURS',     label: 'Max Gap',          desc: 'A gap longer than this between flights splits them into separate spotting windows rather than one long cluster.', type: 'number', min: 1,  max: 12,  unit: 'hrs' },
-  { group: 'spotrec', key: 'SPOT_LULL_MINS',          label: 'Notable Lull',     desc: 'A quiet stretch within a cluster longer than this is called out so you know when to take a break.',             type: 'number', min: 15, max: 240, unit: 'min' },
-  { group: 'spotrec', key: 'SPOT_MAX_LULLS',          label: 'Max Lulls Shown',  desc: 'Cap on how many lull periods are listed per cluster to keep recommendations concise.',                           type: 'number', min: 0,  max: 10 },
-  { group: 'spotrec', key: 'SPOT_LIGHTING_GATE',      label: 'Lighting Gate',    desc: 'When on, skip clusters where poor light (sunrise/sunset buffer or midday window) overlaps the peak traffic.',    type: 'toggle' },
-  { group: 'spotrec', key: 'SPOT_MAX_SPOTTED',        label: 'Max Spotted Times',desc: 'Skip aircraft you\'ve already photographed this many times at this airport. 0 = always include.',               type: 'number', min: 0,  max: 50,  unit: '×' },
-  { group: 'spotrec', key: 'SPOT_LIGHT_BUFFER_MINS',  label: 'Light Buffer',     desc: 'Minutes before and after sunrise/sunset treated as poor light — front-lit aircraft but harsh angles.',           type: 'number', min: 0,  max: 120, unit: 'min' },
-  { group: 'spotrec', key: 'SPOT_BAD_LIGHT_START',    label: 'Bad Light Start',  desc: 'Start of the harsh midday light window (HH:MM local). Aircraft look flat and overlit between these times.',     type: 'time' },
-  { group: 'spotrec', key: 'SPOT_BAD_LIGHT_END',      label: 'Bad Light End',    desc: 'End of the harsh midday light window. Leave blank to disable the midday gate entirely.',                        type: 'time' },
+  { group: 'spotrec', key: 'SPOT_MAX_GAP_HOURS',     label: 'Spotting Window Gap',     desc: 'A gap longer than this between flights starts a new spotting window instead of joining the current one.', type: 'number', min: 1,  max: 12,  unit: 'hours' },
+  { group: 'spotrec', key: 'SPOT_LULL_MINS',          label: 'Quiet Period Length',     desc: 'A quiet stretch within a spotting window longer than this is called out so you know when to take a break.', type: 'number', min: 15, max: 240, unit: 'minutes' },
+  { group: 'spotrec', key: 'SPOT_MAX_LULLS',          label: 'Quiet Periods to Show',   desc: 'Maximum number of quiet periods listed per spotting window, to keep recommendations easy to read.',          type: 'number', min: 0,  max: 10 },
+  { group: 'spotrec', key: 'SPOT_LIGHTING_GATE',      label: 'Avoid Poor Lighting',     desc: 'When on, spotting windows that overlap sunrise, sunset, or the midday glare window are skipped.',          type: 'toggle' },
+  { group: 'spotrec', key: 'SPOT_MAX_SPOTTED',        label: 'Already-Photographed Limit', desc: 'Stop recommending an aircraft once you have photographed it this many times at this airport. 0 = always include.', type: 'number', min: 0,  max: 50,  unit: 'times' },
+  { group: 'spotrec', key: 'SPOT_LIGHT_BUFFER_MINS',  label: 'Sunrise/Sunset Buffer',   desc: 'Minutes before and after sunrise/sunset that are treated as poor light — aircraft are front-lit but at a harsh angle.', type: 'number', min: 0,  max: 120, unit: 'minutes' },
+  { group: 'spotrec', key: 'SPOT_BAD_LIGHT_START',    label: 'Midday Glare Window Start', desc: 'Start of the harsh midday light window. Aircraft look flat and washed out between these times.',        type: 'time' },
+  { group: 'spotrec', key: 'SPOT_BAD_LIGHT_END',      label: 'Midday Glare Window End',   desc: 'End of the harsh midday light window. Leave blank to turn off the midday glare check entirely.',          type: 'time' },
   // Route Type filter
-  { group: 'routetype', key: 'ROUTE_TYPE_MIN_DAYS',            label: 'Min History',          desc: 'Require at least this many days of recorded operations before declaring an "established" type. Prevents false positives on new routes.', type: 'number', min: 1, max: 90,  unit: 'days' },
-  { group: 'routetype', key: 'ROUTE_TYPE_DOMINANCE_X',         label: 'Dominance',            desc: 'The most common aircraft type must appear at least N× more often than the second-most common to be considered established.', type: 'number', min: 1, max: 10, unit: '×' },
-  { group: 'routetype', key: 'ROUTE_TYPE_LOOKBACK_DAYS',       label: 'Lookback',             desc: 'How far back to look when calculating which aircraft type dominates a route. Longer = more stable, shorter = more reactive.', type: 'number', min: 7, max: 365, unit: 'days' },
-  { group: 'routetype', key: 'ROUTE_TYPE_RENOTIFY_DAYS',       label: 'Re-notify Cooldown',   desc: 'Once a new aircraft type is spotted on a route, wait this many days before alerting again for the same (flight, type) pair.', type: 'number', min: 1, max: 365, unit: 'days' },
-  { group: 'routetype', key: 'ROUTE_TYPE_ARRIVAL_WINDOW',      label: 'Arrival Window',       desc: 'Always = alert any time. Daylight = only between sunrise and sunset. Off = filter disabled.',                    type: 'window' },
-  { group: 'routetype', key: 'ROUTE_TYPE_ACTIVE_DAYS',         label: 'Active Days',          desc: 'Only alert on selected days. All off = disabled.',                                                                          type: 'days' },
+  { group: 'routetype', key: 'ROUTE_TYPE_MIN_DAYS',            label: 'Minimum History Required', desc: 'Require at least this many days of recorded operations before declaring an "established" type. Prevents false positives on new routes.', type: 'number', min: 1, max: 90,  unit: 'days', restart: true },
+  { group: 'routetype', key: 'ROUTE_TYPE_DOMINANCE_X',         label: 'Dominance Ratio',          desc: 'The most common aircraft type must appear at least this many times more often than the second-most common to be considered established.', type: 'number', min: 1, max: 10, unit: '×', restart: true },
+  { group: 'routetype', key: 'ROUTE_TYPE_LOOKBACK_DAYS',       label: 'Lookback Period',          desc: 'How far back to look when calculating which aircraft type dominates a route. Longer = more stable, shorter = more reactive.', type: 'number', min: 7, max: 365, unit: 'days', restart: true },
 ];
 
 // ── Settings helpers ──────────────────────────────────────────────────────────
 
+const _RESTART_REQUIRED_KEYS = new Set(SETTINGS_SCHEMA.filter(x => x.restart).map(x => x.key));
+
 async function _saveSetting(key, value) {
   try {
     await api('/settings', { method: 'PUT', body: JSON.stringify({ [key]: value }) });
-    toast('Saved');
+    const needsRestart = _RESTART_REQUIRED_KEYS.has(key);
+    toast(needsRestart ? 'Saved — restart the server for this to take effect' : 'Saved',
+          needsRestart ? 5000 : 2000, needsRestart);
   } catch (e) { toast('Error: ' + e.message); }
 }
 
@@ -1244,7 +1260,7 @@ function _settingRow(item, value) {
       <div class="setting-key">${item.label}${uTag}</div>
       ${item.desc ? `<div class="setting-desc">${esc(item.desc)}</div>` : ''}
     </div>
-    ${_settingControl(item, value)}
+    <div class="setting-control">${_settingControl(item, value)}</div>
   </div>`;
 }
 
@@ -1330,6 +1346,9 @@ async function loadSettings() {
       el.innerHTML = SETTINGS_SCHEMA.filter(x => x.group === g)
         .map(item => _settingRow(item, s[item.key] ?? '')).join('');
     });
+    // Static inputs not in SETTINGS_SCHEMA — populate manually
+    const lsEl = $('info-logostream-key');
+    if (lsEl && !lsEl.dataset.userEdited) lsEl.value = s.LOGOSTREAM_API_KEY || '';
     _wireSettings();
   } catch (e) {
     toast('Failed to load settings: ' + e.message);
@@ -1338,8 +1357,32 @@ async function loadSettings() {
 
 // ── Force check ───────────────────────────────────────────────────────────────
 
+let _restartArmed = false;
+let _restartArmTimer = null;
+
+function _resetRestartArm() {
+  clearTimeout(_restartArmTimer);
+  _restartArmed = false;
+  const btn = $('btn-refresh'), lbl = $('btn-refresh-label');
+  if (btn) btn.classList.remove('btn-danger-armed');
+  if (lbl && activeTab === 'settings') lbl.textContent = 'Restart Server';
+}
+
+function armRestartBackend() {
+  const btn = $('btn-refresh'), lbl = $('btn-refresh-label');
+  if (!btn || !lbl) return;
+  if (_restartArmed) {
+    _resetRestartArm();
+    restartBackend();
+    return;
+  }
+  _restartArmed = true;
+  btn.classList.add('btn-danger-armed');
+  lbl.textContent = 'Confirm Restart?';
+  _restartArmTimer = setTimeout(_resetRestartArm, 4000);
+}
+
 async function restartBackend() {
-  if (!confirm('Restart the backend process?')) return;
   try {
     await api('/restart', { method: 'POST' });
     toast('Backend restarting…', 4000);
@@ -1489,6 +1532,7 @@ function _colSubtab(name) {
     p.classList.toggle('hidden', p.id !== 'col-subtab-' + name);
   });
   if (name === 'fleet') _fleetInit();
+  if (typeof _syncRecScrollHeight === 'function') requestAnimationFrame(_syncRecScrollHeight);
 }
 
 function _fleetToggleType(key) {
@@ -1550,7 +1594,7 @@ async function _fleetInit() {
     api('/filters').catch(() => ({})),
   ]);
   _fleetCards = cards;
-  _fleetWatched = new Set((filters.rego_watchlist || []).map(r => r.registration));
+  _fleetWatched = new Set((filters.filter_regos || filters.rego_watchlist || []).map(r => r.registration));
   const allAircraft = _fleetCards.flatMap(c => c.aircraft);
   if (allAircraft.length) await _fleetPrefetchPrefixes(allAircraft);
   _fleetRender();
@@ -1603,6 +1647,7 @@ function _fleetRender() {
 
   html += `<div class="flt-add-col">
     <button class="flt-add-col-btn" onclick="_fleetAddCard()" title="Add airline">+</button>
+    <div class="flt-add-col-label">Add Airline</div>
   </div>`;
 
   wrap.innerHTML = html;
@@ -1708,6 +1753,8 @@ async function _fleetConfirm() {
   try {
     const d = await api(`/fleet-coverage?code=${encodeURIComponent(code)}`);
     if (d.error) throw new Error(d.error);
+    const dup = _fleetCards.some(c => (d.icao && c.icao === d.icao) || (d.iata && c.iata === d.iata));
+    if (dup) throw new Error(`${d.airline || code} is already added.`);
     await api('/fleet-cards', { method: 'POST', body: JSON.stringify({ icao: d.icao, iata: d.iata, airline: d.airline, aircraft: d.aircraft }) });
     _fleetCards.push({ airline: d.airline, iata: d.iata, icao: d.icao, aircraft: d.aircraft });
     await _fleetPrefetchPrefixes(d.aircraft);
@@ -1869,7 +1916,7 @@ function _colRenderSessionRows(sessions) {
       <div class="col-stats-row-bar" style="width:${Math.round(s.aircraft/max*100)}%"></div>
       <div class="col-stats-row-content">
         <span style="width:24px;flex-shrink:0;display:flex;align-items:center;justify-content:center;margin-left:-4px;font-size:16px">${s.flag||''}</span>
-        <span class="col-stats-row-name">${esc(_shortAirportName(s.airport_name || s.airport || ''))}</span>
+        <span class="col-stats-row-name">${esc(window.innerWidth < 768 ? (s.airport || _shortAirportName(s.airport_name || '')) : _shortAirportName(s.airport_name || s.airport || ''))}</span>
         <span class="col-stats-row-sub">${esc(s.date_label||'')}</span>
         <span class="col-stats-row-count" style="align-self:center">${s.aircraft} aircraft · ${s.photos.toLocaleString()} photos</span>
       </div>
@@ -1931,7 +1978,7 @@ function _colRenderHopperRows(items) {
         <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">${esc(h.reg) ? `<span class="col-hopper-reg">${esc(h.reg)}</span>` : ''}${chips}</div>
         <div style="display:flex;align-items:center;gap:5px;margin-top:4px">${badge}${sub}</div>
       </div>
-      <span class="col-stats-row-count" style="align-self:center">${h.airport_count} airports · ${h.photos} photos</span>
+      <span class="col-stats-row-count" style="align-self:center">${h.airport_count} airports${window.innerWidth < 768 ? '' : ` · ${h.photos} photos`}</span>
     </div>`;
   }).join('');
 }
@@ -1946,20 +1993,30 @@ function _colRenderStats(d) {
   const ls = d.last_session;
   if (ls) {
     const daysText = ls.days_ago === 0 ? 'Today' : ls.days_ago === 1 ? 'Yesterday' : `${ls.days_ago} days ago`;
-    $('col-last-session-bar').innerHTML = `
-      <span class="lsb-label">Last session</span>
-      <span style="display:inline-flex;align-items:baseline;gap:0">
-        <span class="lsb-airport-name">${ls.flag?ls.flag+' ':''}${esc(_shortAirportName(ls.airport_name))}</span>
-        <span class="lsb-airport-code">${esc(ls.airport)}</span>
-      </span>
-      <span class="lsb-divider"></span>
-      <span class="lsb-date">${esc(ls.date_label)}</span>
-      <span class="lsb-spacer"></span>
-      <span class="lsb-days-ago" style="${
-        ls.days_ago < 7  ? 'background:var(--surface2);border:1px solid var(--border);color:var(--dim)' :
-        ls.days_ago < 30 ? 'background:rgba(234,179,8,0.15);border:1px solid rgba(234,179,8,0.4);color:#eab308' :
-                           'background:rgba(239,68,68,0.15);border:1px solid rgba(239,68,68,0.4);color:#ef4444'
-      };border-radius:10px;padding:2px 10px;font-size:11px;font-weight:600">${daysText}</span>`;
+    const pillStyle =
+      ls.days_ago < 7  ? 'background:var(--surface2);border:1px solid var(--border);color:var(--dim)' :
+      ls.days_ago < 30 ? 'background:rgba(234,179,8,0.15);border:1px solid rgba(234,179,8,0.4);color:#eab308' :
+                         'background:rgba(239,68,68,0.15);border:1px solid rgba(239,68,68,0.4);color:#ef4444';
+    if (window.innerWidth < 768) {
+      $('col-last-session-bar').innerHTML = `
+        <div class="lsb-m-row1">Last Session</div>
+        <div class="lsb-m-row2">${ls.flag?ls.flag+' ':''}${esc(_shortAirportName(ls.airport_name))} <span class="lsb-airport-code">${esc(ls.airport)}</span></div>
+        <div class="lsb-m-row3">
+          <span class="lsb-date">${esc(ls.date_label)}</span>
+          <span class="lsb-days-ago" style="${pillStyle};border-radius:10px;padding:2px 10px;font-size:11px;font-weight:600">${daysText}</span>
+        </div>`;
+    } else {
+      $('col-last-session-bar').innerHTML = `
+        <span class="lsb-label">Last session</span>
+        <span style="display:inline-flex;align-items:baseline;gap:0">
+          <span class="lsb-airport-name">${ls.flag?ls.flag+' ':''}${esc(_shortAirportName(ls.airport_name))}</span>
+          <span class="lsb-airport-code">${esc(ls.airport)}</span>
+        </span>
+        <span class="lsb-divider"></span>
+        <span class="lsb-date">${esc(ls.date_label)}</span>
+        <span class="lsb-spacer"></span>
+        <span class="lsb-days-ago" style="${pillStyle};border-radius:10px;padding:2px 10px;font-size:11px;font-weight:600">${daysText}</span>`;
+    }
   }
 
   // Keyword stat boxes
@@ -2132,6 +2189,13 @@ function _colShowSessionPopover(row, pin) {
       const rows = aircraft.map(a => {
         const badge = a.manufacturer ? `<span class="mfr mfr-${a.manufacturer.toLowerCase().replace(/\s+/g,'-')}">${a.manufacturer}</span>` : '';
         const tagHtml = a.tags.map(t => `<span class="col-sp-tag ${_colTagClass(t)}">${t}</span>`).join('');
+        if (window.innerWidth < 768) {
+          return `<div class="col-sp-row col-sp-row-m">
+            <div class="col-sp-m-row1"><span class="col-sp-reg">${esc(a.reg)}</span>${badge}</div>
+            <div class="col-sp-m-row2">${[a.aircraft_type, a.airline].filter(Boolean).join(' · ')}</div>
+            <div class="col-sp-tags">${tagHtml}</div>
+          </div>`;
+        }
         return `<div class="col-sp-row">
           <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
             <span class="col-sp-reg">${esc(a.reg)}</span>
@@ -2182,6 +2246,13 @@ function _colInitSessionPopover() {
             const notesHtml = (a.notes && a.tags.includes('Special Livery'))
               ? `<span style="font-size:11px;color:var(--dim);margin-right:2px">${esc(a.notes)}</span>` : '';
             const parts = [a.aircraft_type, airline].filter(Boolean).map(esc).join('<span class="col-sp-dot">·</span>');
+            if (window.innerWidth < 768) {
+              return `<div class="col-sp-row col-sp-row-m">
+                <div class="col-sp-m-row1"><span class="col-sp-reg">${esc(a.reg)}</span>${badge}</div>
+                <div class="col-sp-m-row2">${parts}</div>
+                <div class="col-sp-tag-group">${tagHtml}${notesHtml}</div>
+              </div>`;
+            }
             return `<div class="col-sp-row">
               <div class="col-sp-main"><span class="col-sp-reg">${esc(a.reg)}</span>${badge}<span class="col-sp-meta">${parts}</span></div>
               <div class="col-sp-tag-group">${notesHtml}${tagHtml}</div>
@@ -2539,27 +2610,36 @@ async function loadRecommendation(force) {
         scroll.scrollTo({ left: scroll.scrollLeft + offset - (scroll.clientWidth - closest.offsetWidth) / 2, behavior: 'smooth' });
       }
     });
-    el.querySelectorAll('.rec-day').forEach(d => _initDragScrollY(d));
+    el.querySelectorAll('.rec-day').forEach(d => {
+      _initDragScrollY(d);
+      d.style.overflowY = d.scrollHeight > d.clientHeight ? 'auto' : 'hidden';
+    });
 
     // Initial position: today's card centered, scrolled to current time
     if (scroll) requestAnimationFrame(() => {
       const today = scroll.querySelector('.rec-today');
       if (!today) return;
 
-      const halfView = scroll.clientWidth / 2;
-      const halfCard = 350;
-      const origLeft = today.offsetLeft;
+      const isMobile = window.matchMedia('(max-width: 767px)').matches;
+      if (isMobile) {
+        // One full-width card per page (scroll-snap) — just jump straight to it.
+        scroll.scrollLeft = today.offsetLeft;
+      } else {
+        const halfView = scroll.clientWidth / 2;
+        const halfCard = 350;
+        const origLeft = today.offsetLeft;
 
-      // Left spacer so today (and earlier cards) can be centered
-      const needed = Math.max(0, halfView - halfCard - origLeft);
-      if (needed > 0) {
-        const spacer = document.createElement('div');
-        spacer.style.cssText = `flex:0 0 ${needed}px;pointer-events:none`;
-        scroll.insertBefore(spacer, scroll.firstChild);
+        // Left spacer so today (and earlier cards) can be centered
+        const needed = Math.max(0, halfView - halfCard - origLeft);
+        if (needed > 0) {
+          const spacer = document.createElement('div');
+          spacer.style.cssText = `flex:0 0 ${needed}px;pointer-events:none`;
+          scroll.insertBefore(spacer, scroll.firstChild);
+        }
+
+        // Center today horizontally (instant, no animation on load)
+        scroll.scrollLeft = Math.max(0, origLeft + needed - halfView + halfCard);
       }
-
-      // Center today horizontally (instant, no animation on load)
-      scroll.scrollLeft = Math.max(0, origLeft + needed - halfView + halfCard);
 
       // Scroll today vertically to current time
       const HEADER_H = 94;
@@ -2626,10 +2706,10 @@ function _recFlightCard(f, nowTs, adjPy, sr, ss) {
     ? `/api/airline-logo/${encodeURIComponent(logoIcao)}?v=${_LOGO_V}`
     : airline ? `/api/airline-logo-name/${encodeURIComponent(airline.replace(/\s*\(.*?\)/g,'').trim())}?v=${_LOGO_V}` : '';
   const logoImg = logoSrc
-    ? `<img src="${logoSrc}" onerror="this.parentElement.style.display='none';this.parentElement.previousElementSibling&&(this.parentElement.previousElementSibling.style.display='none')" alt="" style="height:100%;max-height:18px;width:auto;object-fit:contain">`
+    ? `<img src="${logoSrc}" onerror="this.style.display='none'" alt="" style="height:100%;max-height:18px;width:auto;object-fit:contain">`
     : '';
-  const logoSlot = logoImg ? `<div class="rfc-logo-div"></div><div class="rfc-logo-slot">${logoImg}</div>` : '';
-  const logoSlotLeft = logoImg ? `<div class="rfc-logo-slot">${logoImg}</div><div class="rfc-logo-div"></div>` : '';
+  const logoSlot     = `<div class="rfc-logo-div"></div><div class="rfc-logo-slot">${logoImg}</div>`;
+  const logoSlotLeft = `<div class="rfc-logo-slot">${logoImg}</div><div class="rfc-logo-div"></div>`;
 
   const content = `<div class="rfc-content">
     <div class="rfc-top">${isArr
@@ -2642,16 +2722,31 @@ function _recFlightCard(f, nowTs, adjPy, sr, ss) {
     }</div>
   </div>`;
 
-  return `<div class="rec-flight-card ${sideClass} ${tierClass}" style="top:${py.toFixed(1)}px" title="${esc(f.registration)} ${isArr ? 'arr' : 'dep'} ${time}" onclick="openRecDetail(this)" data-side="${isArr ? 'arr' : 'dep'}" data-f="${fJson}"${srAttr}${ssAttr}>${isArr
-    ? `${logoSlotLeft}${content}`
-    : `${content}${logoSlot}`
-  }</div>`;
+  // Desktop: logo spans the full card height, beside a 2-row content block (unchanged).
+  const desktopBlock = `<div class="rfc-desktop">${isArr ? `${logoSlotLeft}${content}` : `${content}${logoSlot}`}</div>`;
+
+  // Mobile: 3 stacked rows — rego+flag / chips+type / status+time. Logo spans
+  // only the first two rows. No livery name shown.
+  const mobileBlock = `<div class="rfc-mobile">
+    <div class="rfc-m-upper">
+      <div class="rfc-m-logo">${logoImg}</div>
+      <div class="rfc-m-text">
+        <div class="rfc-m-row1"><span class="rfc-rego">${esc(f.registration)}${flag}</span></div>
+        <div class="rfc-m-row2">${isArr ? `${acType ? `<span class="fc-actype" style="font-size:9px;height:16px;padding:0 4px">${esc(acType)}</span>` : ''}${chips}` : `${chips}${acType ? `<span class="fc-actype" style="font-size:9px;height:16px;padding:0 4px">${esc(acType)}</span>` : ''}`}</div>
+      </div>
+    </div>
+    <div class="rfc-m-row3">${isArr ? `<span style="font-size:10px;color:var(--dim)">${time}</span>${stPill}` : `${stPill}<span style="font-size:10px;color:var(--dim)">${time}</span>`}</div>
+  </div>`;
+
+  return `<div class="rec-flight-card ${sideClass} ${tierClass}" style="top:${py.toFixed(1)}px" title="${esc(f.registration)} ${isArr ? 'arr' : 'dep'} ${time}" onclick="openRecDetail(this)" data-side="${isArr ? 'arr' : 'dep'}" data-f="${fJson}"${srAttr}${ssAttr}>${desktopBlock}${mobileBlock}</div>`;
 }
 
 const COMPRESS_GAP_MINS = 60;  // gaps longer than this are compressed (1h)
 const COMPRESS_GAP_PX   = 44;  // visual height of a skip segment
 const TIMELINE_SCALE_PX = 4;   // px per minute in active segments
-const CARD_H_PX         = 56;  // card height for overlap avoidance (px)
+// Mobile's 3-row mini card (rego / chips+type / status+time) is taller than
+// desktop's 2-row card, so overlap-avoidance needs more vertical room per card.
+const CARD_H_PX = window.matchMedia('(max-width: 767px)').matches ? 76 : 56;
 
 function _buildLayout(eventMins) {
   const PAD = 15;
@@ -2706,7 +2801,7 @@ function _renderDayCard(day) {
   const severe = day.weather_severe;
   const wxStyle= severe ? 'color:var(--danger);font-weight:600' : 'color:var(--dim)';
   const tempRange = day.temp_min != null && day.temp_max != null
-    ? `<span class="rdc-weather" style="color:var(--dim)">${day.temp_min}° – ${day.temp_max}°</span>` : '';
+    ? `<span class="rdc-weather rdc-temp" style="color:var(--dim)">${day.temp_min}° – ${day.temp_max}°</span>` : '';
   const wxHtml = wxDesc ? `<span class="rdc-weather" style="${wxStyle}">${wxIcon} ${esc(wxDesc)}</span>${tempRange}` : '';
 
   // Window times with am/pm
@@ -2857,156 +2952,111 @@ function _renderDayCard(day) {
       continue;
     }
 
-    // Top: first qualifying card's position, clamped to window start
-    let boxTop = Infinity;
+    // Global box extent: top = first qualifying card on either side, bot = last.
+    let globalTop = Infinity, globalBot = -Infinity;
     for (const f of (cluster.flights || [])) {
       if (!f.qualifying || f.local_min == null) continue;
       if (f.local_min < ws || f.local_min > we) continue;
-      const key = f.registration + '_' + (f.side === 'arrival' ? 'arr' : 'dep') + '_' + (f.ts || 0);
-      const py = _pyMap[key];
-      if (py != null) boxTop = Math.min(boxTop, py - CARD_H_PX / 2);
-    }
-    if (boxTop === Infinity) boxTop = layout.toY(ws);
-    // Bottom: use adjusted card positions (same as top) so border lands at actual card edges
-    let boxBot = -Infinity;
-    for (const f of (cluster.flights || [])) {
-      if (!f.qualifying || f.local_min == null) continue;
-      if (f.local_min < ws || f.local_min > we) continue;
-      const key = f.registration + '_' + (f.side === 'arrival' ? 'arr' : 'dep') + '_' + (f.ts || 0);
-      const py = _pyMap[key];
-      if (py != null) boxBot = Math.max(boxBot, py + CARD_H_PX / 2);
-    }
-    if (boxBot === -Infinity) boxBot = layout.toY(we) + CARD_H_PX / 2;
-    const boxH   = boxBot - boxTop;
-
-    // Determine which border halves are obscured by cards
-    const MARGIN = CARD_H_PX / 2;  // only hide border when card exactly overlaps it
-    let hideArrTop = false, hideDepTop = false, hideArrBot = false, hideDepBot = false;
-    for (const f of (cluster.flights || [])) {
-      if (f.local_min == null) continue;
       const key = f.registration + '_' + (f.side === 'arrival' ? 'arr' : 'dep') + '_' + (f.ts || 0);
       const py = _pyMap[key];
       if (py == null) continue;
-      const isArr = f.side === 'arrival';
-      // Only top borders can be hidden (by cards that arrive before the window start)
-      if (py < boxTop + MARGIN && py > boxTop - MARGIN) { if (isArr) hideArrTop = true; else hideDepTop = true; }
+      globalTop = Math.min(globalTop, py - CARD_H_PX / 2);
+      globalBot = Math.max(globalBot, py + CARD_H_PX / 2);
+    }
+    if (globalTop === Infinity) {
+      globalTop = layout.toY(ws) - CARD_H_PX / 2;
+      globalBot = layout.toY(we) + CARD_H_PX / 2;
     }
 
-    // Render as SVG with a fixed-unit viewBox so coordinates are predictable.
-    // --warn = #f59e0b hardcoded because CSS vars don't resolve in SVG attributes.
-    const H   = boxH.toFixed(1);
-    const VW  = 1000;  // viewBox width units; 500 = centre axis (50%)
-    const CLR = '#f59e0b';
-    const sw  = '2';
-    const sda = '6 4';
-    const lineAttr = `stroke="${CLR}" stroke-width="${sw}" stroke-dasharray="${sda}" fill="none" vector-effect="non-scaling-stroke"`;
-
-    // Corner radius in viewBox units — RX accounts for non-uniform scaling (VW=1000 over ~500px → scale 0.5, so RX=14 ≈ 7px)
-    const RX = 14, RY = 7;  // rx/ry in viewBox coords giving ~7px circular corners
-    const x0 = 1, x1 = VW - 1, xMid = 500;
-    const y0 = 1, y1 = parseFloat(H);
-
-    // When a card hides a border half, the fill and vertical border on that side
-    // should also skip the card area (card height = CARD_H_PX SVG units since y scale = 1px/unit)
-    const CH = CARD_H_PX;  // card height in SVG y-units (1:1 with pixels)
-
-    // Background fill — two half-rects so each side avoids its top/bottom card
-    const fillLY0 = hideArrTop ? CH : 0;
-    const fillLY1 = hideArrBot ? parseFloat(H) - CH : parseFloat(H);
-    const fillRY0 = hideDepTop ? CH : 0;
-    const fillRY1 = hideDepBot ? parseFloat(H) - CH : parseFloat(H);
-    // Fill as plain rects (corners handled by the dashed border visually)
-    let svgLines = '';
-    if (fillLY1 > fillLY0) svgLines += `<rect x="0" y="${fillLY0}" width="${xMid}" height="${fillLY1-fillLY0}" fill="rgba(245,158,11,0.04)" stroke="none" rx="${RX}" ry="${RY}"/>`;
-    if (fillRY1 > fillRY0) svgLines += `<rect x="${xMid}" y="${fillRY0}" width="${VW-xMid}" height="${fillRY1-fillRY0}" fill="rgba(245,158,11,0.04)" stroke="none" rx="${RX}" ry="${RY}"/>`;
-
-    // Helper: inner corner coordinates when a card hides a border half
-    // The vertical border starts/ends with a rounded inner corner instead of an abrupt cut
-    const lTop  = hideArrTop ? CH + RY : y0 + RY;   // left vertical start (below inner-top corner if hidden)
-    const lBot  = hideArrBot ? parseFloat(H) - CH - RY : y1 - RY;  // left vertical end
-    const rTop  = hideDepTop ? CH + RY : y0 + RY;
-    const rBot  = hideDepBot ? parseFloat(H) - CH - RY : y1 - RY;
-
-    // Left vertical
-    if (lBot > lTop) svgLines += `<line ${lineAttr} x1="${x0}" y1="${lTop}" x2="${x0}" y2="${lBot}"/>`;
-    // Right vertical
-    if (rBot > rTop) svgLines += `<line ${lineAttr} x1="${x1}" y1="${rTop}" x2="${x1}" y2="${rBot}"/>`;
-
-    // y-coordinates for each side's top/bottom border positions
-    const lTopY = hideArrTop ? CH : y0;
-    const lBotY = hideArrBot ? parseFloat(H) - CH : y1;
-    const rTopY = hideDepTop ? CH : y0;
-    const rBotY = hideDepBot ? parseFloat(H) - CH : y1;
-
-    // Whether centre needs a connecting vertical (fills at different heights)
-    const needCTop = lTopY !== rTopY;
-    const needCBot = lBotY !== rBotY;
-
-    // Horizontal segments stop at xMid±RX when centre connection is present (to leave room for corner arc)
-    const lTopEnd = needCTop ? xMid - RX : xMid;
-    const rTopStart = needCTop ? xMid + RX : xMid;
-    const lBotEnd = needCBot ? xMid - RX : xMid;
-    const rBotStart = needCBot ? xMid + RX : xMid;
-
-    // ── Left side ──────────────────────────────────────────────────────────
-    if (!hideArrTop) {
-      svgLines += `<path ${lineAttr} d="M ${x0+RX} ${y0} H ${lTopEnd}"/>`;
-      svgLines += `<path ${lineAttr} d="M ${x0} ${y0+RY} A ${RX} ${RY} 0 0 1 ${x0+RX} ${y0}"/>`;
-    } else {
-      svgLines += `<path ${lineAttr} d="M ${x0+RX} ${CH} H ${lTopEnd}"/>`;
-      svgLines += `<path ${lineAttr} d="M ${x0} ${CH+RY} A ${RX} ${RY} 0 0 0 ${x0+RX} ${CH}"/>`;
-    }
-    if (!hideArrBot) {
-      svgLines += `<path ${lineAttr} d="M ${x0} ${y1-RY} A ${RX} ${RY} 0 0 0 ${x0+RX} ${y1}"/>`;
-      svgLines += `<path ${lineAttr} d="M ${x0+RX} ${y1} H ${lBotEnd}"/>`;
-    } else {
-      const iy = parseFloat(H) - CH;
-      svgLines += `<path ${lineAttr} d="M ${x0} ${iy-RY} A ${RX} ${RY} 0 0 1 ${x0+RX} ${iy}"/>`;
-      svgLines += `<path ${lineAttr} d="M ${x0+RX} ${iy} H ${lBotEnd}"/>`;
-    }
-
-    // ── Right side ─────────────────────────────────────────────────────────
-    if (!hideDepTop) {
-      svgLines += `<path ${lineAttr} d="M ${rTopStart} ${y0} H ${x1-RX}"/>`;
-      svgLines += `<path ${lineAttr} d="M ${x1-RX} ${y0} A ${RX} ${RY} 0 0 1 ${x1} ${y0+RY}"/>`;
-    } else {
-      svgLines += `<path ${lineAttr} d="M ${rTopStart} ${CH} H ${x1-RX}"/>`;
-      svgLines += `<path ${lineAttr} d="M ${x1-RX} ${CH} A ${RX} ${RY} 0 0 0 ${x1} ${CH+RY}"/>`;
-    }
-    if (!hideDepBot) {
-      svgLines += `<path ${lineAttr} d="M ${rBotStart} ${y1} H ${x1-RX}"/>`;
-      svgLines += `<path ${lineAttr} d="M ${x1-RX} ${y1} A ${RX} ${RY} 0 0 0 ${x1} ${y1-RY}"/>`;
-    } else {
-      const iy = parseFloat(H) - CH;
-      svgLines += `<path ${lineAttr} d="M ${rBotStart} ${iy} H ${x1-RX}"/>`;
-      svgLines += `<path ${lineAttr} d="M ${x1-RX} ${iy} A ${RX} ${RY} 0 0 0 ${x1} ${iy+RY}"/>`;
-    }
-
-    // ── Centre connections ─────────────────────────────────────────────────
-    // Dashed vertical line at xMid connecting fill levels, with rounded corners
-    const addCentre = (highY, lowY, rightIsHigher) => {
-      if (rightIsHigher) {
-        // Right top is higher → corner curves: right-horiz → down → left-horiz
-        svgLines += `<path ${lineAttr} d="M ${xMid+RX} ${highY} A ${RX} ${RY} 0 0 1 ${xMid} ${highY+RY}"/>`;  // top corner
-        if (lowY - highY > 2*RY) svgLines += `<line ${lineAttr} x1="${xMid}" y1="${highY+RY}" x2="${xMid}" y2="${lowY-RY}"/>`;
-        svgLines += `<path ${lineAttr} d="M ${xMid} ${lowY-RY} A ${RX} ${RY} 0 0 1 ${xMid-RX} ${lowY}"/>`;   // bottom corner
-      } else {
-        // Left top is higher → mirror
-        svgLines += `<path ${lineAttr} d="M ${xMid-RX} ${highY} A ${RX} ${RY} 0 0 0 ${xMid} ${highY+RY}"/>`;
-        if (lowY - highY > 2*RY) svgLines += `<line ${lineAttr} x1="${xMid}" y1="${highY+RY}" x2="${xMid}" y2="${lowY-RY}"/>`;
-        svgLines += `<path ${lineAttr} d="M ${xMid} ${lowY-RY} A ${RX} ${RY} 0 0 0 ${xMid+RX} ${lowY}"/>`;
+    // Per-side adjustment: if an out-of-window card straddles the global top/bottom border on one
+    // side, push that side's border past the card so the line avoids it. Other side stays clean.
+    // "Out of window" = local_min outside [ws, we], regardless of f.qualifying.
+    let adjLTop = globalTop, adjRTop = globalTop;
+    let adjLBot = globalBot, adjRBot = globalBot;
+    for (const f of (cluster.flights || [])) {
+      if (f.local_min == null) continue;
+      const outsideWindow = f.local_min < ws || f.local_min > we;
+      if (!outsideWindow) continue;
+      const key = f.registration + '_' + (f.side === 'arrival' ? 'arr' : 'dep') + '_' + (f.ts || 0);
+      const py = _pyMap[key];
+      if (py == null) continue;
+      const isLeft = f.side === 'arrival';
+      // Top: card straddles globalTop on this side
+      if (py < globalTop + CARD_H_PX / 2 && py + CARD_H_PX / 2 > globalTop) {
+        if (isLeft) adjLTop = Math.max(adjLTop, py + CARD_H_PX / 2);
+        else adjRTop = Math.max(adjRTop, py + CARD_H_PX / 2);
       }
+      // Bottom: card straddles globalBot on this side
+      if (py - CARD_H_PX / 2 < globalBot && py > globalBot - CARD_H_PX / 2) {
+        if (isLeft) adjLBot = Math.min(adjLBot, py - CARD_H_PX / 2);
+        else adjRBot = Math.min(adjRBot, py - CARD_H_PX / 2);
+      }
+    }
+
+    // SVG spans globalTop→globalBot; per-side adjustments (adjLTop/adjRTop etc.) drive the step.
+    const boxTop = globalTop;
+    const boxBot = globalBot;
+    const boxH   = boxBot - boxTop;
+    const H   = boxH.toFixed(1);
+    const VW  = 1000;
+    const CLR = '#f59e0b', sw = '2', sda = '6 4';
+    const lineAttr = `stroke="${CLR}" stroke-width="${sw}" stroke-dasharray="${sda}" fill="none" vector-effect="non-scaling-stroke"`;
+    const RX = 14, RY = 7;
+    const x0 = 1, x1 = VW - 1, xMid = 500;
+
+    // Per-side local Y coords relative to combined boxTop
+    const lY0 = adjLTop - boxTop, lY1 = adjLBot - boxTop;
+    const rY0 = adjRTop - boxTop, rY1 = adjRBot - boxTop;
+
+    let svgLines = '';
+    // Background fill
+    if (lY1 > lY0) svgLines += `<rect x="0" y="${lY0}" width="${xMid}" height="${lY1-lY0}" fill="rgba(245,158,11,0.04)" stroke="none" rx="${RX}" ry="${RY}"/>`;
+    if (rY1 > rY0) svgLines += `<rect x="${xMid}" y="${rY0}" width="${VW-xMid}" height="${rY1-rY0}" fill="rgba(245,158,11,0.04)" stroke="none" rx="${RX}" ry="${RY}"/>`;
+
+    const needTopStep = Math.abs(lY0 - rY0) > 1;
+    const needBotStep = Math.abs(lY1 - rY1) > 1;
+
+    // Left side: outer corners + verticals + horizontals (shortened when step corner follows)
+    if (lY1-RY > lY0+RY) svgLines += `<line ${lineAttr} x1="${x0}" y1="${lY0+RY}" x2="${x0}" y2="${lY1-RY}"/>`;
+    svgLines += `<path ${lineAttr} d="M ${x0} ${lY0+RY} A ${RX} ${RY} 0 0 1 ${x0+RX} ${lY0}"/>`;
+    svgLines += `<path ${lineAttr} d="M ${x0+RX} ${lY0} H ${needTopStep ? xMid-RX : xMid}"/>`;
+    svgLines += `<path ${lineAttr} d="M ${x0} ${lY1-RY} A ${RX} ${RY} 0 0 0 ${x0+RX} ${lY1}"/>`;
+    svgLines += `<path ${lineAttr} d="M ${x0+RX} ${lY1} H ${needBotStep ? xMid-RX : xMid}"/>`;
+
+    // Right side: outer corners + verticals + horizontals (shortened when step corner follows)
+    if (rY1-RY > rY0+RY) svgLines += `<line ${lineAttr} x1="${x1}" y1="${rY0+RY}" x2="${x1}" y2="${rY1-RY}"/>`;
+    svgLines += `<path ${lineAttr} d="M ${x1-RX} ${rY0} A ${RX} ${RY} 0 0 1 ${x1} ${rY0+RY}"/>`;
+    svgLines += `<path ${lineAttr} d="M ${needTopStep ? xMid+RX : xMid} ${rY0} H ${x1-RX}"/>`;
+    svgLines += `<path ${lineAttr} d="M ${x1-RX} ${rY1} A ${RX} ${RY} 0 0 0 ${x1} ${rY1-RY}"/>`;
+    svgLines += `<path ${lineAttr} d="M ${needBotStep ? xMid+RX : xMid} ${rY1} H ${x1-RX}"/>`;
+
+    // Center step: top corner is convex (outward), bottom corner is concave (inward).
+    // Sweep directions are computed from which side is higher to avoid hardcoding per-case.
+    const _drawStep = (lY, rY) => {
+      const highY = Math.min(lY, rY), lowY = Math.max(lY, rY);
+      const rightIsHigher = rY < lY;
+      // topSweep: convex = arc curves away from the notch
+      const topSweep = rightIsHigher ? 0 : 1;
+      // botSweep: concave = arc curves into the notch (opposite of top)
+      const botSweep = 1 - topSweep;
+      const topX = rightIsHigher ? xMid + RX : xMid - RX;
+      const botX = rightIsHigher ? xMid - RX : xMid + RX;
+      svgLines += `<path ${lineAttr} d="M ${topX} ${highY} A ${RX} ${RY} 0 0 ${topSweep} ${xMid} ${highY+RY}"/>`;
+      if (lowY - highY > 2*RY) svgLines += `<line ${lineAttr} x1="${xMid}" y1="${highY+RY}" x2="${xMid}" y2="${lowY-RY}"/>`;
+      svgLines += `<path ${lineAttr} d="M ${xMid} ${lowY-RY} A ${RX} ${RY} 0 0 ${botSweep} ${botX} ${lowY}"/>`;
     };
-    if (needCTop) addCentre(Math.min(lTopY, rTopY), Math.max(lTopY, rTopY), rTopY < lTopY);
-    if (needCBot) addCentre(Math.min(lBotY, rBotY), Math.max(lBotY, rBotY), rBotY < lBotY);
+    if (needTopStep) _drawStep(lY0, rY0);
+    if (needBotStep) _drawStep(lY1, rY1);
 
     boxesHtml += `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${VW} ${H}" preserveAspectRatio="none" overflow="visible" style="position:absolute;top:${boxTop.toFixed(1)}px;left:2px;right:2px;height:${H}px;width:calc(100% - 4px);display:block;pointer-events:none;z-index:2">${svgLines}</svg>`;
 
     for (const lull of (cluster.lulls || [])) {
       const midMin = (lull.start_local_min + lull.end_local_min) / 2;
       const midPx  = layout.toY(midMin);
+      // Use the fixed (non-mobile-inflated) card height here — this is just a
+      // "don't draw the label on top of a card" buffer, not the spacing pass.
       const overlaps = [...arrEvts, ...depEvts].some(
-        ev => midPx > ev.py - 16 && midPx < ev.py + CARD_H_PX + 16
+        ev => midPx > ev.py - 16 && midPx < ev.py + 56 + 16
       );
       if (overlaps) continue;
       const dur    = Math.round(lull.end_local_min - lull.start_local_min);
@@ -3056,7 +3106,87 @@ function _tsToLocalMin(ts, day) {
   return d.getHours() * 60 + d.getMinutes();
 }
 
+async function loadSystemTasks() {
+  const tasksEl = $('sys-tasks-body');
+  const apisEl  = $('sys-apis-body');
+  if (!tasksEl && !apisEl) return;
+  try {
+    const d = await api('/system-tasks');
+    const now = d.now;
+
+    function _dot(ok) {
+      if (ok === null || ok === undefined) return '<span class="sys-dot pending"></span>';
+      return `<span class="sys-dot ${ok ? 'ok' : 'err'}"></span>`;
+    }
+    function _rel(ts, now) {
+      if (!ts) return '—';
+      const diff = ts - now;
+      const abs  = Math.abs(diff);
+      const str  = abs < 60 ? `${abs}s` : abs < 3600 ? `${Math.round(abs/60)}m` : abs < 86400 ? `${Math.round(abs/3600)}h` : `${Math.round(abs/86400)}d`;
+      return diff < 0 ? `${str} ago` : `in ${str}`;
+    }
+    function _row(item, subs) {
+      const lastStr = item.last_ts ? _rel(item.last_ts, now) : 'Never';
+      const nextStr = item.next_ts
+        ? (item.next_ts <= now ? 'Now' : _rel(item.next_ts, now))
+        : (item.interval ? '—' : 'On demand');
+      const tip = item.error ? ` title="${esc(item.error)}"` : '';
+      const subHtml = (subs && subs.length)
+        ? `<span class="sys-subdep">${subs.map(s => `${_dot(s.ok)} ${esc(s.label)}`).join('&nbsp;&nbsp;&nbsp;')}</span><span></span><span></span><span></span>`
+        : '';
+      return `<span${tip}>${_dot(item.ok)}</span>
+              <span class="sys-name"${tip}>${esc(item.name)}</span>
+              <span class="sys-time">${lastStr}</span>
+              <span class="sys-time">${nextStr}</span>
+              <span></span>
+              <span class="sys-desc">${esc(item.desc)}</span>
+              <span></span><span></span>
+              ${subHtml}`;
+    }
+
+    if (tasksEl) {
+      const header = `<span></span><span style="font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:.06em">Task</span>
+                      <span style="font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:.06em;text-align:right">Last Run</span>
+                      <span style="font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:.06em;text-align:right">Next Run</span>
+                      <hr class="sys-sep">`;
+      const apiByName = name => (d.apis || []).find(a => a.name === name);
+      const fr24      = apiByName('FR24 Airport Feed');
+      const openMeteo = apiByName('Open-Meteo');
+      const logostream= apiByName('Logostream');
+      const adsbFi    = apiByName('adsb.fi Military');
+      const icaoList  = apiByName('ICAOList (GitHub)');
+      const rows = d.tasks.map(item => {
+        let subs = [];
+        if (item.name === 'Airport Scan') {
+          subs = [
+            fr24       && { ok: fr24.ok,       label: 'Flightradar 24' },
+            openMeteo  && { ok: openMeteo.ok,  label: 'Open-Meteo' },
+            logostream && { ok: logostream.ok, label: 'Logostream' },
+          ].filter(Boolean);
+        } else if (item.name === 'Military Scan') {
+          subs = [adsbFi && { ok: adsbFi.ok, label: 'adsb.fi' }].filter(Boolean);
+        } else if (item.name === 'ICAO List Update') {
+          subs = [icaoList && { ok: icaoList.ok, label: 'ICAOList (GitHub)' }].filter(Boolean);
+        }
+        return _row(item, subs);
+      });
+      tasksEl.innerHTML = `<div class="sys-grid">${header}${rows.join('<hr class="sys-sep">')}</div>`;
+    }
+    if (apisEl) {
+      const header = `<span></span><span style="font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:.06em">API</span>
+                      <span style="font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:.06em;text-align:right">Last Call</span>
+                      <span style="font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:.06em;text-align:right">Next</span>
+                      <hr class="sys-sep">`;
+      apisEl.innerHTML = `<div class="sys-grid">${header}${d.apis.map(item => _row(item)).join('<hr class="sys-sep">')}</div>`;
+    }
+  } catch(e) {
+    if (tasksEl) tasksEl.innerHTML = '<span style="color:var(--danger);font-size:12px">Failed to load</span>';
+    if (apisEl)  apisEl.innerHTML  = '<span style="color:var(--danger);font-size:12px">Failed to load</span>';
+  }
+}
+
 async function loadInfo() {
+  loadSystemTasks();
   try {
     const s = await api('/status');
     const vEl = $('info-version');
@@ -3065,8 +3195,6 @@ async function loadInfo() {
     const grid = $('info-status-grid');
     if (!grid) return;
 
-    const interval = s.check_interval ? Math.round(s.check_interval / 60) : null;
-    const milInterval = s.military_check_interval ? Math.round(s.military_check_interval / 60) : null;
     const airport = s.airport_name
       ? `${s.airport_name} (${s.airport_iata})`
       : (s.airport_iata || s.airport_code || '—');
@@ -3077,23 +3205,33 @@ async function loadInfo() {
     const tzInEl = $('info-timezone-input');
     if (tzInEl && !tzInEl.dataset.userEdited) tzInEl.value = s.effective_tz || s.airport_tz || '';
 
-    const rows = [
-      ['Status',            `<span class="info-status-dot"></span>Running`],
-      ['Current Time',      s.current_time ? `${esc(s.current_time)} <span style="color:var(--dim);font-size:11px">${esc(s.effective_tz || '')}</span>` : '—'],
-      ['Check Interval',    interval    ? `${interval} min`    : '—'],
-      ['Military Interval', milInterval ? `${milInterval} min` : '—'],
-      ['Rapid Mode',        s.rapid_mode ? '<span style="color:var(--accent);font-weight:600">ON</span>' : 'Off'],
-      ['Operating System',  s.os   ? esc(s.os)         : '—'],
-      ['Architecture',      s.arch ? esc(s.arch)        : '—'],
-      ['Connection',        s.connection ? esc(s.connection) : '—'],
-    ];
+    function _fmtRuntime(secs) {
+      if (!secs && secs !== 0) return '—';
+      const d = Math.floor(secs / 86400), h = Math.floor((secs % 86400) / 3600), m = Math.floor((secs % 3600) / 60);
+      const parts = [];
+      if (d) parts.push(`${d}d`);
+      if (h || d) parts.push(`${h}h`);
+      parts.push(`${m}m`);
+      return parts.join(' ');
+    }
 
-    grid.innerHTML = rows.map(([label, value]) =>
-      `<span class="info-status-label">${label}</span><span class="info-status-value">${value}</span>`
-    ).join('');
+    const statusRows = [
+      { dot: true,  name: 'Status',           value: 'Running' },
+      { dot: false, name: 'Current Time',     value: s.current_time ? `${esc(s.current_time)} <span style="color:var(--dim);font-size:11px">${esc(s.effective_tz || '')}</span>` : '—' },
+      { dot: false, name: 'Server Name',      value: s.hostname ? esc(s.hostname) : '—' },
+      { dot: false, name: 'Operating System', value: s.os   ? esc(s.os)   : '—' },
+      { dot: false, name: 'Architecture',     value: s.arch ? esc(s.arch) : '—' },
+      { dot: false, name: 'Connection',       value: s.connection ? esc(s.connection) : '—' },
+      { dot: false, name: 'Runtime',          value: _fmtRuntime(s.runtime_secs) },
+    ];
+    grid.innerHTML = `<div class="sys-status-grid">${statusRows.map(r =>
+      `<span class="sys-dot ${r.dot ? 'ok' : ''}" style="${r.dot ? '' : 'visibility:hidden'}"></span>
+       <span class="sys-name">${esc(r.name)}</span>
+       <span class="sys-time">${r.value}</span>`
+    ).join('<hr class="sys-sep">')}</div>`;
   } catch (e) {
     const grid = $('info-status-grid');
-    if (grid) grid.innerHTML = '<span class="info-status-label">Status</span><span class="info-status-value" style="color:var(--danger)">Unreachable</span>';
+    if (grid) grid.innerHTML = '<span style="color:var(--danger);font-size:12px">Unreachable</span>';
   }
 }
 
@@ -3101,6 +3239,20 @@ function switchSubtab(name) {
   document.querySelectorAll('#tab-settings .srch-subtab').forEach(b => b.classList.toggle('active', b.dataset.subtab === name));
   document.querySelectorAll('.set-subtab-page').forEach(p => p.classList.toggle('hidden', p.id !== 'subtab-' + name));
   if (name === 'airports') { apLoad(); atLoad(); stTagsLoad(); }
+  if (name === 'logs') logsLoad();
+}
+
+// ── Logs ──────────────────────────────────────────────────────────────────────
+async function logsLoad() {
+  const el = $('logs-output');
+  if (!el) return;
+  try {
+    const data = await api('/logs?lines=1000');
+    el.textContent = data.text || '(log file is empty)';
+    el.scrollTop = el.scrollHeight;
+  } catch (e) {
+    el.textContent = 'Failed to load log: ' + e.message;
+  }
 }
 
 // ── Airport overrides ────────────────────────────────────────────────────────
@@ -3109,15 +3261,16 @@ async function apLoad() {
   if (!list) return;
   const data = await api('/airports');
   if (!data.length) {
-    list.innerHTML = '<div style="font-size:12px;color:var(--dim);padding:8px 0">No custom airports yet.</div>';
+    list.innerHTML = '<div class="detail" style="padding:4px 2px">No custom airports yet.</div>';
     return;
   }
   list.innerHTML = data.map(a => `
-    <div style="display:flex;align-items:center;gap:8px;padding:6px 10px;background:var(--surface2);border-radius:4px">
-      <span style="font-size:12px;font-weight:700;min-width:50px">${esc(a.iata)}</span>
-      <span style="font-size:12px;flex:1">${esc(a.name)}</span>
-      <span style="font-size:11px;color:var(--dim);min-width:28px">${esc(a.country_code)}</span>
-      <button onclick="apDelete('${esc(a.iata)}')" style="background:none;border:none;color:var(--dim);cursor:pointer;font-size:14px;padding:0 4px">✕</button>
+    <div class="filter-row">
+      <div class="main">
+        <div class="filter-primary">${esc(a.iata)}</div>
+        <div class="filter-secondary">${esc(a.name)}${a.country_code ? ' · ' + esc(a.country_code) : ''}</div>
+      </div>
+      <button class="del-btn" onclick="apDelete('${esc(a.iata)}')">✕</button>
     </div>`).join('');
 }
 
@@ -3139,10 +3292,12 @@ async function apDelete(iata) {
 
 // ── Aircraft type overrides ──────────────────────────────────────────────────
 function _atRow(a) {
-  return `<div style="display:flex;align-items:center;gap:8px;padding:6px 10px;background:var(--surface2);border-radius:4px">
-    <span style="font-size:12px;font-weight:700;min-width:50px">${esc(a.icao)}</span>
-    <span style="font-size:12px;flex:1">${esc(a.name)}</span>
-    <button onclick="atDelete('${esc(a.icao)}')" style="background:none;border:none;color:var(--dim);cursor:pointer;font-size:14px;padding:0 4px">✕</button>
+  return `<div class="filter-row">
+    <div class="main">
+      <div class="filter-primary">${esc(a.icao)}</div>
+      <div class="filter-secondary">${esc(a.name)}</div>
+    </div>
+    <button class="del-btn" onclick="atDelete('${esc(a.icao)}')">✕</button>
   </div>`;
 }
 
@@ -3152,7 +3307,7 @@ async function atLoad() {
   const data = await api('/aircraft-types');
   list.innerHTML = data.length
     ? data.map(_atRow).join('')
-    : '<div style="font-size:12px;color:var(--dim);padding:8px 0">No custom types yet.</div>';
+    : '<div class="detail" style="padding:4px 2px">No custom types yet.</div>';
 }
 
 async function atAdd() {
@@ -3328,9 +3483,11 @@ function _srchClear() {
   });
   $('srch-results').innerHTML = '';
   $('srch-status').textContent = 'Enter a registration or select a filter.';
+  _srchSyncClearVisibility();
 }
 
 function _srchRun(immediate) {
+  _srchSyncClearVisibility();
   clearTimeout(_srchTimer);
   _srchTimer = setTimeout(_srchExec, immediate ? 0 : 350);
 }
@@ -3435,6 +3592,7 @@ function _srchRtClear() {
   _srchRtMirror(null);
   $('srch-rt-results').innerHTML = '';
   $('srch-rt-status').textContent = 'Enter a flight number or select a filter.';
+  _srchSyncClearVisibility();
 }
 
 let _srchRtHomeLabel = '';
@@ -3483,6 +3641,7 @@ function _srchRtMirror(side) {
 }
 
 function _srchRtRun(immediate) {
+  _srchSyncClearVisibility();
   clearTimeout(_srchRtTimer);
   _srchRtTimer = setTimeout(_srchRtExec, immediate ? 0 : 400);
 }
@@ -3633,6 +3792,7 @@ function _srchFlClear() {
   _srchFlData = null;
   $('srch-fl-results').innerHTML = '';
   $('srch-fl-status').textContent = 'Enter a registration or select a filter.';
+  _srchSyncClearVisibility();
 }
 
 // ── Custom searchable dropdown ────────────────────────────────────────────────
@@ -3702,6 +3862,16 @@ function _srchDDUpdateLabel(id) {
     lbl.classList.toggle('has-value', n > 0);
   }
   if (trigger) trigger.style.color = n > 0 ? 'var(--accent)' : '';
+  _srchSyncClearVisibility();
+}
+
+function _srchSyncClearVisibility() {
+  document.querySelectorAll('.srch-bar').forEach(bar => {
+    const hasInput = [...bar.querySelectorAll('.srch-input')].some(inp => inp.value.trim().length > 0);
+    const hasDD    = bar.querySelector('.srch-dd-trigger-label.has-value') !== null;
+    const clearBtn = bar.querySelector('.srch-clear');
+    if (clearBtn) clearBtn.classList.toggle('srch-clear-hidden', !hasInput && !hasDD);
+  });
 }
 
 function _srchDDToggleOpt(id, val) {
@@ -3774,6 +3944,7 @@ function _srchFlFilter() {
 }
 
 function _srchFlRun(immediate) {
+  _srchSyncClearVisibility();
   _srchFlData = null;
   clearTimeout(_srchFlTimer);
   _srchFlTimer = setTimeout(_srchFlExec, immediate ? 0 : 400);
@@ -3884,6 +4055,42 @@ async function _srchFlExec() {
 }
 
 // ── Boot ─────────────────────────────────────────────────────────────────────
+
+function _syncRecScrollHeight() {
+  const el = document.getElementById('tab-recommendation');
+  if (el && !el.classList.contains('hidden')) {
+    document.documentElement.style.setProperty('--rec-avail-h', el.clientHeight + 'px');
+  }
+  const vvh = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+  document.documentElement.style.setProperty('--app-vvh', vvh + 'px');
+  ['col-subtab-summary', 'col-subtab-fleet'].forEach(id => {
+    const page = document.getElementById(id);
+    if (page && !page.classList.contains('hidden')) {
+      document.documentElement.style.setProperty('--col-avail-h', page.clientHeight + 'px');
+    }
+  });
+}
+_syncRecScrollHeight();
+window.addEventListener('resize', _syncRecScrollHeight);
+if (window.visualViewport) window.visualViewport.addEventListener('resize', _syncRecScrollHeight);
+_srchSyncClearVisibility();
+
+// Search tab: once results are shown, collapse the filter fields down to just the Clear button (mobile only)
+['srch-fl-results', 'srch-rt-results', 'srch-results'].forEach(id => {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const page = el.closest('.srch-page');
+  if (!page) return;
+  const sync = () => page.classList.toggle('srch-has-results', el.textContent.trim().length > 0);
+  new MutationObserver(sync).observe(el, { childList: true });
+  sync();
+});
+
+fetch('/static/sw.js').then(r => r.text()).then(t => {
+  const m = t.match(/spotalert-v(\d+)/);
+  const el = document.getElementById('dbg-ver');
+  if (m && el) el.textContent = 'v' + m[1];
+}).catch(() => {});
 
 setupPWA();
 loadTab('history');

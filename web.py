@@ -15,11 +15,13 @@ from typing import Any, List as _List
 import os as _os
 
 VERSION = "1.0.0"
+_PROCESS_START_TS = int(time.time())
 
 
 def _system_info() -> dict:
     """Return basic host system info using stdlib only."""
     info: dict[str, str] = {}
+    info["hostname"] = platform.node() or "unknown"
     info["os"] = f"{platform.system()} {platform.release()}".strip()
     info["arch"] = platform.machine() or "unknown"
 
@@ -265,6 +267,21 @@ def create_app(cfg=None) -> FastAPI:
     app.state.cfg = cfg
     app.state.store = cfg.store if cfg else None
 
+    def _fleet_bg_refresh_loop() -> None:
+        """Refresh all fleet cards every 7 days regardless of user activity."""
+        import time as _time, system_status as _ss
+        _FLEET_INTERVAL = 7 * 86400
+        while True:
+            try:
+                cards = app.state.store.get_fleet_cards()
+                stale = [c for c in cards if c.get('updated_at', 0) < _time.time() - _FLEET_INTERVAL]
+                for card in stale:
+                    _fleet_refresh_fr24_bg(card['icao'])
+                _ss.record_task('fleet_update', True)
+            except Exception as _e:
+                _ss.record_task('fleet_update', False, str(_e))
+            _time.sleep(_FLEET_INTERVAL)
+
     @app.on_event("startup")
     async def _startup():
         if app.state.store is None:
@@ -281,6 +298,8 @@ def create_app(cfg=None) -> FastAPI:
         # Pre-warm collection stats cache and start periodic refresh thread
         _thr.Thread(target=_col_compute_stats, daemon=True).start()
         _col_start_bg_refresh()
+        # Fleet cards: refresh any stale cards on startup, then every 7 days
+        _thr.Thread(target=_fleet_bg_refresh_loop, daemon=True).start()
 
     # ── API routes ──────────────────────────────────────────────────────────
 
@@ -306,21 +325,12 @@ def create_app(cfg=None) -> FastAPI:
         cfg = app.state.cfg
         if cfg is None:
             raise HTTPException(400, "Only available in integrated mode")
-        import asyncio
-        from datetime import datetime, timezone
-        from monitor import run_check
-
-        class _Bot:
-            async def send_message(self, *a, **kw): pass
-            async def send_photo(self, *a, **kw): pass
-
-        class _Ctx:
-            def __init__(self):
-                self.bot_data = {"cfg": cfg, "start_time": datetime.now(timezone.utc)}
-                self.bot = _Bot()
-                self.job = type("J", (), {"data": cfg.chat_id})()
-
-        asyncio.create_task(run_check(_Ctx()))
+        if cfg.check_now_event is None:
+            raise HTTPException(400, "Monitor loop not running")
+        # Wake the monitor loop immediately instead of spawning a disconnected
+        # one-off scan — this also resets its periodic timer, so the next
+        # automatic check is scheduled from this run, not the previous one.
+        cfg.check_now_event.set()
         return JSONResponse({"ok": True})
 
     @app.get("/api/live-status/{registration}")
@@ -530,11 +540,14 @@ def create_app(cfg=None) -> FastAPI:
                        fd.dep_flight, fd.dep_ts, fd.dep_dest_iata, fd.dep_dest_name,
                        fd.is_prediction, fd.dep_label, fd.dep_confidence,
                        a.photo_url, a.manufacturer,
-                       sh.last_seen_ts AS airport_last_seen_ts
+                       sh.last_seen_ts AS airport_last_seen_ts,
+                       ap_o.city AS origin_city, ap_d.city AS dep_dest_city
                 FROM flight_arrivals fe
                 LEFT JOIN flight_departures fd ON fd.arrival_id = fe.id
                 LEFT JOIN airframes a        ON a.registration  = fe.registration
                 LEFT JOIN rego_sightings sh  ON sh.registration = fe.registration
+                LEFT JOIN airports ap_o      ON ap_o.iata = fe.origin_iata
+                LEFT JOIN airports ap_d      ON ap_d.iata = fd.dep_dest_iata
                 WHERE fe.first_seen_ts >= ? AND fe.flight_number IS NOT NULL
                 ORDER BY fe.arrival_ts ASC
             """, (cutoff_ts,)).fetchall()
@@ -585,12 +598,14 @@ def create_app(cfg=None) -> FastAPI:
                     "arr_local_min":  arr_local_min,
                     "origin_iata":    row["origin_iata"],
                     "origin_name":    row["origin_name"],
+                    "origin_city":    row["origin_city"] or "",
                     "arr_label":      row["arr_label"] or None,
                     "dep_flight":     dep_flight,
                     "dep_local_min":  dep_local_min,
                     "dep_ts":         dep_ts_val,
                     "dep_dest_iata":   dep_dest_iata,
                     "dep_dest_name":   dep_dest_name,
+                    "dep_dest_city":   row["dep_dest_city"] or "",
                     "dep_confidence":  dep_confidence,
                     "dep_label":         row["dep_label"] or ("Predicted" if row["is_prediction"] else "Scheduled"),
                     "current_status":  row["current_status"],
@@ -976,13 +991,15 @@ def create_app(cfg=None) -> FastAPI:
 
     def _col_compute_stats():
         """Compute catalog stats and store in cache. Returns the data dict."""
-        import time as _time
+        import time as _time, system_status as _ss
         try:
             data = _col_stats_sync()
             _col_stats_cache['data'] = data
             _col_stats_cache['ts'] = _time.time()
+            _ss.record_task('collection_stats', True)
             return data
-        except Exception:
+        except Exception as _e:
+            _ss.record_task('collection_stats', False, str(_e))
             return _col_stats_cache.get('data')
 
     def _col_start_bg_refresh():
@@ -1834,12 +1851,11 @@ def create_app(cfg=None) -> FastAPI:
                         match_origin = (rth_origin and rth_origin in origins) or bool(fe_orig & set(origins))
                         if not match_origin:
                             continue
-                    # Dest: check route_type_tracker first, fall back to flight_arrivals
+                    # Dest: route_type_tracker only — fe_dests (paired departure) must not be used
+                    # because it conflates the arrival flight number with a different departure flight
                     if dests:
                         rth_dest = (r['dest_iata'] or '').upper()
-                        fe_dst   = fe_dests.get(fn_key, set())
-                        match_dest = (rth_dest and rth_dest in dests) or bool(fe_dst & set(dests))
-                        if not match_dest:
+                        if not (rth_dest and rth_dest in dests):
                             continue
                     # Airline: route_type_tracker.airline first, fall back to flight_arrivals
                     if airlines:
@@ -2573,6 +2589,7 @@ def create_app(cfg=None) -> FastAPI:
         media = "image/svg+xml" if is_svg else "image/png"
         cache_path = Path(__file__).parent / "static" / "airline_logos" / f"{icao}.{ext}"
         cache_path.write_bytes(r.content)
+        import system_status as _ss; _ss.record_api('logostream', True)
         return cache_path, media
 
     def _cached_logo_path(icao: str):
@@ -2600,6 +2617,7 @@ def create_app(cfg=None) -> FastAPI:
             except HTTPException:
                 raise
             except Exception as e:
+                import system_status as _ss; _ss.record_api('logostream', False, str(e))
                 raise HTTPException(502, f"Logostream fetch failed: {e}")
         from fastapi.responses import FileResponse
         return FileResponse(str(cache_path), media_type=media,
@@ -2691,7 +2709,8 @@ def create_app(cfg=None) -> FastAPI:
     async def get_status():
         cfg = app.state.cfg
         now = int(time.time())
-        result: dict[str, Any] = {"now_ts": now, "rapid_mode": False, "version": VERSION, **_system_info()}
+        result: dict[str, Any] = {"now_ts": now, "rapid_mode": False, "version": VERSION,
+                                   "runtime_secs": now - _PROCESS_START_TS, **_system_info()}
         if cfg is not None:
             result["rapid_mode"] = getattr(cfg, "rapid_mode", False)
             result["airport_name"] = cfg.airport_name
@@ -2715,6 +2734,77 @@ def create_app(cfg=None) -> FastAPI:
             result["airport_code"] = s.get("AIRPORT_CODE", "")
             result["check_interval"] = float(s.get("CHECK_INTERVAL_MINUTES", 30)) * 60
         return JSONResponse(result)
+
+    @app.get("/api/logs")
+    async def get_logs(lines: int = 500):
+        log_path = Path(__file__).parent / "logs" / "spotalert.log"
+        if not log_path.exists():
+            return JSONResponse({"text": "", "path": str(log_path)})
+        with open(log_path, "r", encoding="utf-8", errors="replace") as f:
+            all_lines = f.readlines()
+        tail = all_lines[-max(1, min(lines, 5000)):]
+        return JSONResponse({"text": "".join(tail), "path": str(log_path)})
+
+    @app.get("/api/logs/download")
+    async def download_logs():
+        log_path = Path(__file__).parent / "logs" / "spotalert.log"
+        if not log_path.exists():
+            raise HTTPException(404, "Log file not found")
+        return FileResponse(log_path, media_type="text/plain", filename="spotalert.log")
+
+    @app.get("/api/system-tasks")
+    async def get_system_tasks():
+        import system_status as _ss, time as _time
+        cfg_  = app.state.cfg
+        store_ = app.state.store
+        now   = int(_time.time())
+        check_int = getattr(cfg_, 'check_interval', 1800) if cfg_ else 1800
+        mil_int   = getattr(cfg_, 'military_check_interval', 900) if cfg_ else 900
+
+        def _t(key):
+            return _ss.get_task(key)
+        def _a(key):
+            return _ss.get_api(key)
+
+        def _entry(d, name, desc, interval=None):
+            last_ts = d.get('ts')
+            return {
+                'name': name, 'desc': desc, 'interval': interval,
+                'last_ts': last_ts,
+                'next_ts': last_ts + interval if (last_ts and interval) else None,
+                'ok': d.get('ok'), 'error': d.get('error'),
+            }
+
+        # ICAOList last update from DB (persisted separately)
+        icao_ts = None
+        if store_:
+            try:
+                v = store_.load_setting('icao_list_last_update')
+                if v: icao_ts = int(float(v))
+            except Exception:
+                pass
+
+        tasks = [
+            _entry(_t('arrivals_check'),    'Airport Scan',       'FR24 airport feed → filter matching → store flights + clusters', check_int),
+            _entry(_t('military_check'),    'Military Scan',      'adsb.fi query for military traffic near airport', mil_int),
+            _entry(_t('feed_cleanup'),      'Flight Cleanup',     'Prune flight records older than 30 days', check_int),
+            _entry(_t('collection_stats'),  'Collection Stats',   'Lightroom catalog stats cache refresh', check_int),
+            _entry(_t('db_backup'),         'DB Backup',          'SQLite database backup to disk', 86400),
+            _entry(_t('fleet_update'),      'Fleet Update',       'Refresh all fleet card data from FR24', 7 * 86400),
+            {**_entry(_t('icaolist_github'), 'ICAO List Update',  'Refresh aircraft type database', 90 * 86400),
+             'last_ts': icao_ts, 'next_ts': icao_ts + 90 * 86400 if icao_ts else None,
+             'ok': True if icao_ts else None},
+        ]
+        apis = [
+            _entry(_a('fr24_airport'),      'FR24 Airport Feed',  'Arrivals/departures board (positive + negative pages)', check_int),
+            _entry(_a('open_meteo'),        'Open-Meteo',         'Weather + sunrise/sunset for timeline clusters', check_int),
+            _entry(_a('adsb_fi'),           'adsb.fi Military',   'Military aircraft positions near airport', mil_int),
+            {**_entry(_a('icaolist_github'), 'ICAOList (GitHub)', 'Aircraft type database (90-day refresh)', 90 * 86400),
+             'last_ts': icao_ts, 'next_ts': icao_ts + 90 * 86400 if icao_ts else None,
+             'ok': True if icao_ts else None},
+            _entry(_a('logostream'),        'Logostream',         'Airline tail logos (on demand, disk-cached)', None),
+        ]
+        return JSONResponse({'tasks': tasks, 'apis': apis, 'now': now})
 
     @app.get("/api/settings")
     async def get_settings():
@@ -2876,7 +2966,7 @@ def create_app(cfg=None) -> FastAPI:
         f = STATIC_DIR / "sw.js"
         if f.exists():
             return FileResponse(str(f), media_type="application/javascript",
-                                headers={"Service-Worker-Allowed": "/"})
+                                headers={**_NO_CACHE, "Service-Worker-Allowed": "/"})
         raise HTTPException(404)
 
     @app.get("/icons/{name}")

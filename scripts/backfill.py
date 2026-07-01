@@ -1,11 +1,8 @@
 #!/usr/bin/env python3
 """One-time historical backfill script — run manually after first install or schema changes.
 
-Usage (on the Steam Deck or locally):
-    python backfill.py
-
-Reads config/config.env. Set FR24_USERNAME and FR24_PASSWORD for premium access
-(higher rate limits and deeper history).
+Usage:
+    python scripts/backfill.py
 
 Populates three tables:
   - rego_sightings          last time each registration was seen at the airport
@@ -27,7 +24,6 @@ from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from environs import Env
 
 from flightradar24api import FlightRadar24API
 from store import SqliteStore
@@ -252,30 +248,15 @@ def main() -> None:
         handlers=[logging.StreamHandler(sys.stdout)],
     )
 
-    config_file = "config/config.env"
-    if not os.path.isfile(config_file):
-        log.error("Config file not found: %s", config_file)
+    data_dir = "data/"
+    store = SqliteStore(os.path.join(data_dir, "spotalert.db"))
+
+    airport_code = store.load_setting("AIRPORT_CODE")
+    if not airport_code:
+        log.error("AIRPORT_CODE not set in DB — run the app first to configure it via Settings")
         sys.exit(1)
 
-    env = Env()
-    env.read_env(config_file)
-
-    airport_code = env.str("AIRPORT_CODE")
-    username = env.str("FR24_USERNAME", "")
-    password = env.str("FR24_PASSWORD", "")
-
-    data_dir = "data/"
-    store = SqliteStore(os.path.join(data_dir, "spotalert.db"), config_file=config_file)
-
     fr_api = FlightRadar24API()
-    if username and password:
-        try:
-            fr_api.login(username, password)
-            log.info("Logged in to FR24 as %s", username)
-        except Exception as exc:
-            log.warning("FR24 login failed: %s — continuing without auth", exc)
-    else:
-        log.warning("No FR24_USERNAME/FR24_PASSWORD in config — rate limits may apply")
 
     try:
         data = fr_api.get_airport_details(code=airport_code)

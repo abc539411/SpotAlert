@@ -143,7 +143,9 @@ async def check_military(context: ContextTypes.DEFAULT_TYPE) -> None:
 
     try:
         military = _fetch_military()
+        import system_status as _ss; _ss.record_api('adsb_fi', True)
     except Exception as exc:
+        import system_status as _ss; _ss.record_api('adsb_fi', False, str(exc))
         log.warning("adsb.fi military query failed: %s", exc)
         return
 

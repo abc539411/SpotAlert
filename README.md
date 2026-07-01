@@ -69,36 +69,26 @@ pip install -r requirements.txt
    cd spotalert
    ```
 
-2. **Create your config file**
-   ```bash
-   cp config/config.env.example config/config.env
-   ```
-   Edit `config/config.env` and set at minimum `AIRPORT_CODE` and `WEB_TIMEZONE`.
-
-3. **Install dependencies**
+2. **Install dependencies**
    ```bash
    pip install -r requirements.txt
    ```
 
-4. **Run**
+3. **Run**
    ```bash
    python main.py
    ```
    The web app is available at `http://localhost:8088` by default.
 
-5. **(Optional) Lightroom integration** — set `LR_CATALOG_PATH` in `config/config.env` to the path of your `.lrcat` file. SpotAlert opens it read-only.
+4. **Configure via the web UI** — open the Settings tab and set at minimum `AIRPORT_CODE` and `WEB_TIMEZONE`.
 
-### Docker
-
-```bash
-docker compose -f docker-compose.webapp.yml up -d
-```
+5. **(Optional) Lightroom integration** — set `LR_CATALOG_PATH` in the Settings tab to the path of your `.lrcat` file. SpotAlert opens it read-only.
 
 ---
 
 ## Configuration
 
-All settings can be changed via the **Settings** tab in the web UI. Core config lives in `config/config.env`:
+All settings are managed via the **Settings** tab in the web UI and stored in `data/spotalert.db`. Key settings:
 
 | Setting | Description | Default |
 |---|---|---|
@@ -115,13 +105,11 @@ All settings can be changed via the **Settings** tab in the web UI. Core config 
 | `LOGOSTREAM_API_KEY` | API key for airline tail logo fetching (Logostream) | — |
 | `LR_CATALOG_PATH` | Path to your Lightroom `.lrcat` file | — |
 
-Spot recommendation settings (`SPOT_REC_*`) are best managed via the web UI Settings → Recommendation tab.
-
 ---
 
 ## Data Persistence
 
-A SQLite database is created at `config/filters/spotalert.db` on first run. It stores:
+A SQLite database is created at `data/spotalert.db` on first run. It stores:
 
 - All filter-matched arrivals and their departure pairings
 - Rego, type, and airline/operator watchlists + exclusion list
@@ -132,7 +120,7 @@ A SQLite database is created at `config/filters/spotalert.db` on first run. It s
 - Fleet cards and Lightroom session cross-references
 - Pre-computed spotting window clusters (timeline cache)
 
-A daily backup is saved to `config/filters/backups/`, keeping the last 7 copies.
+A daily backup is saved to `data/backups/`, keeping the last 7 copies.
 
 ---
 

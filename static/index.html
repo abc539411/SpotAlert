@@ -8,6 +8,8 @@
   <meta name="theme-color" content="#111111">
   <title>SpotAlert</title>
   <link rel="manifest" href="/manifest.json">
+  <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png">
+  <link rel="icon" type="image/png" sizes="512x512" href="/icons/icon-512.png">
   <link rel="apple-touch-icon" href="/icons/icon-192.png">
   <style>
     :root {
@@ -25,10 +27,13 @@
       --r: 7px;
     }
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { background: var(--surface); }
     body {
       background: var(--bg); color: var(--text);
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-      font-size: 14px; height: 100dvh; display: flex; flex-direction: column; overflow: hidden;
+      font-size: 14px;
+      position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+      display: flex; flex-direction: column; overflow: hidden;
     }
 
     /* ── Header ─────────────────────────────────────────────────────────── */
@@ -55,6 +60,9 @@
     #btn-refresh-icon { font-size: 15px; }
     .btn-refresh.spinning #btn-refresh-icon { animation: spin .7s linear infinite; display: inline-block; }
     @keyframes spin { to { transform: rotate(360deg); } }
+    .btn-refresh.btn-danger { border-color: var(--danger); color: var(--danger); }
+    .btn-refresh.btn-danger:hover { border-color: var(--danger); color: var(--danger); }
+    .btn-refresh.btn-danger-armed { background: var(--danger); color: #fff; border-color: var(--danger); }
 
     /* ── Nav — desktop: top tabs ─────────────────────────────────────────── */
     .nav-tabs { display: flex; align-items: stretch; gap: 0; overflow-x: auto; }
@@ -72,10 +80,25 @@
 
     /* ── Nav — mobile: fixed bottom bar ──────────────────────────────────── */
     @media (max-width: 767px) {
-      header { border-bottom: none; }
+      header {
+        border-bottom: none;
+        position: relative;
+        min-height: calc(40px + env(safe-area-inset-top));
+      }
+      .header-logo {
+        border-right: none; padding-right: 0; margin-right: 0;
+        position: absolute; left: 50%; top: env(safe-area-inset-top);
+        transform: translateX(-50%);
+        height: 40px;
+      }
       .btn-refresh-label { display: none; }
+      body {
+        background: linear-gradient(to bottom, var(--bg) calc(100% - 34px), var(--surface) calc(100% - 34px));
+      }
       .nav-tabs {
-        position: fixed; bottom: 0; left: 0; right: 0;
+        position: fixed;
+        bottom: calc(-1 * env(safe-area-inset-bottom) - 7px);
+        left: 0; right: 0;
         background: var(--surface); border-top: 1px solid var(--border);
         padding-bottom: env(safe-area-inset-bottom);
         z-index: 100;
@@ -87,7 +110,15 @@
       }
       .nav-tab.active { color: var(--accent); border-bottom: none; }
       .tab-icon { display: block; font-size: 20px; line-height: 1; }
-      #app { padding-bottom: calc(56px + env(safe-area-inset-bottom)); }
+      .tab-icon svg { width: 21px; height: 21px; display: block; }
+      #app { padding-bottom: calc(56px + env(safe-area-inset-bottom) + 21px); }
+
+      /* Feed cards: shrink filter/type badges, rego badge, and tail logo */
+      .sq-rego { font-size: 11px !important; padding: 2px 5px; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+      .sq .chip { height: 14px; padding: 0 5px; font-size: 8px !important; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+      .sq .fc-actype { height: 14px; padding: 0 5px; font-size: 8px !important; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+      .sq .sq-count { font-size: 8px !important; padding: 2px 4px; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+      .sq-tail-logo img { height: 17px !important; max-width: 34px !important; }
     }
 
     /* ── Pages ───────────────────────────────────────────────────────────── */
@@ -213,20 +244,28 @@
 
     /* ── Detail modal (bottom sheet on mobile only) ───────────────────────── */
     .detail-modal {
-      position: fixed; inset: 0; z-index: 200;
-      display: flex; align-items: flex-end;
+      position: fixed; top: 0; left: 0; right: 0;
+      height: var(--app-vvh, 100vh);
+      z-index: 200;
       background: rgba(0,0,0,0.6);
     }
     .detail-modal.hidden { display: none; }
     .detail-sheet {
+      position: absolute; left: 0; right: 0; bottom: 0;
       background: var(--surface); border: 1px solid var(--border);
       border-radius: var(--r) var(--r) 0 0;
-      padding: 16px; padding-bottom: calc(16px + env(safe-area-inset-bottom));
-      width: 100%; max-height: 80vh; overflow-y: auto;
+      width: 100%;
+    }
+    .detail-sheet-scroll {
+      padding: 12px;
+      max-height: 60vh; overflow-y: auto;
     }
     @media (min-width: 768px) {
-      .detail-modal { align-items: center; }
-      .detail-sheet { border-radius: var(--r); max-width: 480px; margin: 0 auto; }
+      .detail-sheet {
+        position: absolute; left: 50%; right: auto; bottom: auto; top: 50%;
+        transform: translate(-50%, -50%);
+        border-radius: var(--r); max-width: 480px; width: 90%;
+      }
     }
     .detail-photo {
       width: 100%; border-radius: var(--r); margin-bottom: 12px;
@@ -256,6 +295,10 @@
     .rb-here .rb-iata { color: var(--accent); }
     .rb-sub { font-size: 10px; color: var(--dim); white-space: nowrap; max-width: 110px; overflow: hidden; text-overflow: ellipsis; }
     .rb-arrow { flex: 0 0 28px; text-align: center; color: var(--dim); font-size: 17px; padding-top: 16px; }
+    @media (max-width: 767px) {
+      .rb-node { min-width: 0; }
+      .rb-sub { white-space: normal; max-width: 100%; overflow-wrap: break-word; text-overflow: clip; overflow: visible; }
+    }
     .rb-link { text-decoration: none; }
     .rb-link:hover { text-decoration: underline; }
 
@@ -285,6 +328,23 @@
 
     /* ── Detail row ──────────────────────────────────────────────────────── */
     .detail { color: var(--dim); font-size: 12px; }
+    .card-desc { font-size: 12px; color: var(--dim); margin: 0 0 12px; line-height: 1.5; }
+    .card-desc a { color: var(--accent); }
+    .link-btn { background: none; border: none; color: var(--accent); cursor: pointer; font-size: 12px; padding: 0; text-decoration: underline; }
+    .pill-btn {
+      display: inline-flex; align-items: center; gap: 6px; padding: 5px 14px; border-radius: 20px;
+      font-size: 12px; font-weight: 600; border: 1px solid var(--border); background: var(--surface2);
+      color: var(--text); cursor: pointer; text-decoration: none; white-space: nowrap;
+    }
+    .pill-btn:hover { border-color: var(--accent); color: var(--accent); }
+    .pill-btn-accent { background: var(--accent); border-color: var(--accent); color: #fff; }
+    .pill-btn-accent:hover { opacity: .88; color: #fff; }
+    .logs-output {
+      flex: 1; min-height: 0; margin: 10px 0 0; overflow: auto;
+      background: #0a0c10; border: 1px solid var(--border); border-radius: var(--r);
+      padding: 10px 12px; font-family: 'SF Mono', Consolas, Menlo, monospace; font-size: 11px;
+      line-height: 1.5; color: #c9d1d9; white-space: pre-wrap; word-break: break-all;
+    }
     .detail strong { color: var(--text); }
 
     /* ── Time display ────────────────────────────────────────────────────── */
@@ -327,13 +387,18 @@
       cursor: pointer; opacity: .6; flex-shrink: 0; line-height: 1;
     }
     .del-btn:hover { opacity: 1; }
-    .add-row { display: flex; gap: 6px; margin-top: 4px; }
+    .add-row { display: flex; gap: 6px; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border); }
     .add-row input {
       flex: 1; background: var(--surface2); border: 1px solid var(--border);
       color: var(--text); padding: 6px 8px; border-radius: var(--r); font-size: 13px; min-width: 0;
     }
     .add-row input:focus { outline: none; border-color: var(--accent); }
     .add-row input::placeholder { color: var(--dim); }
+    .add-row select {
+      flex: 1; background: var(--surface2); border: 1px solid var(--border);
+      color: var(--text); padding: 6px 8px; border-radius: var(--r); font-size: 13px; min-width: 0; cursor: pointer;
+    }
+    .add-row select:focus { outline: none; border-color: var(--accent); }
     .add-btn {
       background: var(--accent); border: none; color: #fff;
       padding: 6px 12px; border-radius: var(--r); font-size: 13px; font-weight: 600; cursor: pointer; flex-shrink: 0;
@@ -389,8 +454,9 @@
       background: var(--surface); border: 1px solid var(--border); color: var(--text);
       padding: 5px 8px; border-radius: 5px; font-size: 12px; width: 80px; text-align: right; flex-shrink: 0;
     }
-    input[type="time"].setting-input { text-align: left; width: 100px; color-scheme: dark; }
+    input[type="time"].setting-input { text-align: left; width: 130px; color-scheme: dark; }
     .setting-input:focus { outline: none; border-color: var(--accent); }
+    .setting-control { display: flex; align-items: center; justify-content: flex-start; width: 160px; flex-shrink: 0; }
 
     /* Segmented control */
     .seg-ctrl { display: flex; background: var(--surface); border: 1px solid var(--border); border-radius: 5px; padding: 2px; gap: 2px; flex-shrink: 0; }
@@ -451,6 +517,18 @@
     .info-status-value { color: var(--text); font-weight: 500; }
     .info-status-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--success); margin-right: 6px; }
     .info-disclaimer { font-size: 11px; color: var(--dim); line-height: 1.6; }
+    .sys-grid { display: grid; grid-template-columns: 8px 1fr auto auto; gap: 6px 10px; align-items: center; }
+    .sys-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--dim); flex-shrink: 0; }
+    .sys-dot.ok  { background: var(--success); }
+    .sys-dot.err { background: var(--danger); }
+    .sys-dot.pending { background: var(--dim); }
+    .sys-name { font-size: 12px; font-weight: 600; color: var(--text); }
+    .sys-desc { font-size: 11px; color: var(--dim); grid-column: 2; margin-top: -4px; margin-bottom: 2px; }
+    .sys-subdep { font-size: 12px; color: var(--dim); grid-column: 2; display: flex; align-items: center; gap: 5px; margin-top: -2px; margin-bottom: 2px; }
+    .sys-subdep .sys-dot { width: 6px; height: 6px; }
+    .sys-time { font-size: 11px; color: var(--dim); white-space: nowrap; text-align: right; }
+    .sys-sep  { grid-column: 1 / -1; border: none; border-top: 1px solid var(--border); margin: 2px 0; }
+    .sys-status-grid { display: grid; grid-template-columns: 8px 1fr auto; gap: 6px 10px; align-items: center; }
     .info-disclaimer a { color: var(--accent); text-decoration: none; }
     .info-disclaimer + .info-disclaimer { margin-top: 8px; }
 
@@ -498,7 +576,7 @@
     }
 
     /* ── Recommendation timeline ─────────────────────────────────────────── */
-    #tab-recommendation { overflow: hidden; padding: 0; }
+    #tab-recommendation { overflow: hidden; padding: 0; min-height: 0; }
     .rec-scroll {
       display: flex; flex-direction: row; gap: 8px; align-items: flex-start;
       overflow-x: auto; overflow-y: hidden;
@@ -514,7 +592,7 @@
       height: calc(100dvh - 80px);
       background: var(--surface); border: 1px solid var(--border);
       border-radius: var(--r); overflow-y: auto; overflow-x: visible;
-      overscroll-behavior: contain; position: relative;
+      overscroll-behavior-y: none; position: relative;
       scrollbar-width: none;
     }
     .rec-day::-webkit-scrollbar { width: 0; }
@@ -538,6 +616,26 @@
       border-radius: 4px; background: rgba(255,255,255,0.3);
       pointer-events: none; z-index: 20; opacity: 0;
     }
+    /* Mobile: one day card at a time, swipe to page between days.
+       Card width uses 100vw (not %) so it's independent of the container's own
+       padding, and gap is double the padding — together every card ends up with
+       exactly the same 6px clear space on both its left and right when snapped. */
+    @media (max-width: 767px) {
+      .rec-scroll {
+        padding-inline: 6px; gap: 12px;
+        padding-block: 6px 0;
+        scroll-snap-type: x mandatory;
+        scroll-padding-inline: 6px;
+        height: var(--rec-avail-h, calc(100dvh - (40px + env(safe-area-inset-top)) - (56px + env(safe-area-inset-bottom))));
+        scrollbar-width: none;
+      }
+      .rec-scroll::-webkit-scrollbar { display: none; height: 0; }
+      .rec-day {
+        flex: 0 0 calc(100vw - 12px); width: calc(100vw - 12px);
+        scroll-snap-align: start; scroll-snap-stop: always;
+        height: 100%;
+      }
+    }
     .rec-gap-label {
       position: absolute; top: 50%; left: 50%;
       transform: translate(-50%, -50%);
@@ -551,8 +649,8 @@
     /* ── Header sub-elements ─── */
     .rec-day-hdr {
       display: flex; justify-content: space-between; align-items: flex-start;
-      flex-shrink: 0; padding: 8px 10px 6px;
-      height: 72px; /* fixed 3-line height */
+      flex-shrink: 0; padding: 4px 10px 3px;
+      height: 60px; /* fixed 3-line height */
     }
     .rec-d-label { font-size: 12px; font-weight: 700; color: var(--text); }
     .rec-d-count { font-size: 10px; color: var(--dim); }
@@ -600,7 +698,7 @@
 
     /* ── Column labels (sticky below header) ─── */
     .rec-col-labels {
-      position: sticky; top: 72px; z-index: 9;
+      position: sticky; top: 60px; z-index: 9;
       display: flex; align-items: center;
       background: var(--surface);
       padding: 3px 0; flex-shrink: 0;
@@ -651,7 +749,7 @@
     .rfc-arr { right: calc(50% + 26px); text-align: right; }
     .rfc-dep { left:  calc(50% + 26px); }
     .rfc-content { flex: 1; min-width: 0; padding: 4px 6px; }
-    .rfc-logo-slot { display: flex; align-items: center; justify-content: center; padding: 0 6px; flex-shrink: 0; }
+    .rfc-logo-slot { display: flex; align-items: center; justify-content: center; padding: 0 6px; flex-shrink: 0; min-width: 40px; }
     .rfc-logo-div { width: 1px; background: var(--border); align-self: stretch; flex-shrink: 0; }
     .rfc-top  { display: flex; align-items: center; justify-content: space-between; gap: 4px; margin-bottom: 2px; }
     .rfc-rego { font-size: 11px; font-weight: 700; color: var(--text); white-space: nowrap; }
@@ -661,6 +759,33 @@
     .rfc-livery-txt { font-size: 9px; color: var(--dim); font-style: italic; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .rfc-time { font-size: 10px; display: flex; align-items: center; gap: 4px; }
     .rfc-arr .rfc-time { justify-content: flex-end; }
+    .rfc-desktop { display: flex; align-items: stretch; flex: 1; min-width: 0; }
+    .rfc-mobile  { display: none; }
+    @media (max-width: 767px) {
+      /* Mini flight cards: 3 stacked rows instead of the desktop 2-row layout */
+      .rfc-desktop { display: none; }
+      .rfc-mobile  { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+      .rfc-m-upper { display: flex; align-items: stretch; min-height: 0; flex: 1; }
+      .rfc-m-logo  {
+        display: flex; align-items: center; justify-content: center;
+        padding: 0 6px; flex-shrink: 0; min-width: 36px;
+        border-right: 1px solid var(--border);
+      }
+      .rfc-m-logo img { height: 100%; max-height: 16px; width: auto; object-fit: contain; }
+      .rfc-m-text { flex: 1; min-width: 0; padding: 3px 6px; display: flex; flex-direction: column; justify-content: center; gap: 2px; }
+      .rfc-m-row1 { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .rfc-m-row2 { display: flex; align-items: center; gap: 3px; flex-wrap: wrap; }
+      .rfc-m-row3 {
+        display: flex; align-items: center; justify-content: space-between; gap: 6px;
+        padding: 3px 6px; border-top: 1px solid var(--border); flex-shrink: 0;
+      }
+      /* Mirror layout: arrivals right-align chips toward centre; departures put logo on right */
+      .rfc-arr .rfc-m-row2 { justify-content: flex-end; }
+      .rfc-dep .rfc-m-upper { flex-direction: row-reverse; }
+      .rfc-dep .rfc-m-logo { border-right: none; border-left: 1px solid var(--border); }
+      /* Day header: hide temperature, keep only 2 content rows */
+      .rdc-temp { display: none; }
+    }
     .rfc-panel {
       position: fixed; z-index: 1000;
       background: var(--surface);
@@ -675,7 +800,7 @@
     .rfc-panel.rfc-panel-above { margin-top: 0; margin-bottom: 6px; box-shadow: 0 -6px 20px rgba(0,0,0,0.35); }
     .rfc-panel.rfc-panel-open { max-height: 320px; }
     .rfc-panel-photo-wrap { position: relative; }
-    .rfc-panel-photo { display: block; width: 100%; height: auto; object-fit: contain; }
+    .rfc-panel-photo { display: block; width: 100%; aspect-ratio: 16/9; object-fit: cover; }
     .rfc-panel-photo-overlay {
       position: absolute; bottom: 0; left: 0; right: 0;
       background: linear-gradient(to top, rgba(0,0,0,0.82) 0%, transparent 100%);
@@ -690,7 +815,7 @@
     .rfc-remark-pill.rfc-remark-dq { background: rgba(239,68,68,0.18); color: #f87171; }
     .rec-day.rec-today { border-color: var(--accent); }
     .rec-day-hdr {
-      padding: 7px 10px 6px; border-bottom: 1px solid var(--border);
+      padding: 3px 10px 2px; border-bottom: 1px solid var(--border);
       display: flex; justify-content: space-between; align-items: center; flex-shrink: 0;
     }
     .rec-d-label { font-size: 12px; font-weight: 600; color: var(--text); }
@@ -733,8 +858,9 @@
       background: var(--surface); border: 1px solid var(--border);
       color: var(--text); padding: 9px 18px; border-radius: 20px;
       font-size: 13px; white-space: nowrap; transition: transform .2s;
-      z-index: 999; pointer-events: none;
+      z-index: 999; pointer-events: none; max-width: calc(100vw - 32px);
     }
+    #toast.wrap { white-space: normal; text-align: center; border-radius: var(--r); max-width: 320px; }
     #toast.show { transform: translateX(-50%) translateY(0); }
 
     /* ── Install banner ──────────────────────────────────────────────────── */
@@ -777,6 +903,37 @@
     .flt-empty-add-btn:hover { border-color: var(--accent); color: var(--accent); }
     /* Data cards */
     .flt-card { width: 435px; flex-shrink: 0; height: calc(100% - 24px); max-height: 100%; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); display: flex; flex-direction: column; overflow: hidden; }
+    @media (max-width: 767px) {
+      /* Fleet cards: one card fills the screen at a time, swipe to page between them */
+      .flt-wrap {
+        padding: 6px; gap: 12px; height: var(--col-avail-h, 100%);
+        scroll-snap-type: x mandatory; scroll-padding-inline: 6px;
+      }
+      .flt-card, .flt-card.flt-card--input {
+        width: calc(100vw - 12px); scroll-snap-align: start; scroll-snap-stop: always;
+        height: 100%;
+      }
+      /* Fleet card body text/flags 20% bigger (header excluded) */
+      .flt-type-arrow { font-size: 12px; }
+      .flt-type-hd-name { font-size: 14px; }
+      .flt-type-count { font-size: 13px; }
+      .flt-rego-pill { font-size: 14px; }
+      .flt-pill--have .flt-pill-ct { font-size: 12px; }
+      .flt-pill-flag { font-size: 17px; }
+      .flt-ap-flag { font-size: 12px; }
+      .flt-pill-ct { font-size: 13px; }
+      .flt-card .mfr { font-size: 11px; }
+      /* Add-airline: its own full-width swipeable page as the last card */
+      .flt-add-col {
+        width: calc(100vw - 12px); height: 100%; flex-shrink: 0;
+        flex-direction: column; gap: 10px;
+        scroll-snap-align: start; scroll-snap-stop: always;
+        background: var(--surface); border: 1px dashed var(--border); border-radius: var(--r);
+      }
+      .flt-add-col-btn { width: 56px; height: 56px; font-size: 28px; }
+      .flt-add-col-label { display: block; color: var(--dim); font-size: 12px; }
+    }
+    .flt-add-col-label { display: none; }
     .flt-card-hd { display: flex; align-items: center; gap: 10px; padding: 11px 12px; border-bottom: 1px solid var(--border); flex-shrink: 0; background: var(--surface2); }
     .flt-hd-logo { width: 26px; height: 26px; object-fit: contain; border-radius: 3px; flex-shrink: 0; }
     .flt-hd-info { flex: 1; min-width: 0; }
@@ -827,6 +984,7 @@
       grid-template-columns: 1fr 1fr 1fr 1fr;
       gap: 10px;
     }
+    .col-hero-page { display: contents; }
     .col-hero-row { grid-column: 1 / -1; grid-row: 1; display: flex; gap: 10px; align-items: stretch; }
     .col-last-session-bar {
       grid-column: 1 / 3; grid-row: 2;
@@ -860,6 +1018,67 @@
     #col-panel-most-sessions { grid-column: 3; grid-row: 4; }
     #col-panel-hoppers       { grid-column: 4; grid-row: 4; }
     .col-stats-panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); padding: 12px 14px; display: flex; flex-direction: column; gap: 0; overflow: hidden; }
+    @media (max-width: 767px) {
+      /* Summary subtab: hero stats page + one stat panel per swipeable page */
+      .col-dashboard {
+        display: flex; flex-direction: row; overflow-x: auto; overflow-y: hidden;
+        scroll-snap-type: x mandatory; scroll-padding-inline: 6px;
+        padding: 6px; gap: 12px;
+        scrollbar-width: none;
+        height: var(--col-avail-h, 100%);
+      }
+      .col-dashboard::-webkit-scrollbar { display: none; }
+      .col-hero-page {
+        display: flex; flex-direction: column; gap: 10px;
+        width: calc(100vw - 12px); flex-shrink: 0;
+        scroll-snap-align: start; scroll-snap-stop: always;
+        overflow-y: auto; overflow-x: hidden; overscroll-behavior-y: contain;
+        -webkit-overflow-scrolling: touch;
+      }
+      .col-hero-row { flex-direction: column; order: 2; border-top: 1px solid var(--border); padding-top: 12px; margin-top: 2px; }
+      .col-kw-stats { flex-direction: column; order: 3; border-top: 1px solid var(--border); padding-top: 12px; margin-top: 2px; }
+      .col-stats-panel {
+        width: calc(100vw - 12px); flex-shrink: 0; height: 100%;
+        scroll-snap-align: start; scroll-snap-stop: always;
+        padding-left: 8px; padding-right: 8px;
+      }
+      .col-stats-panel-body { scrollbar-width: none; }
+      .col-stats-panel-body::-webkit-scrollbar { display: none; }
+      /* Swipe order: Sessions, Top Airlines, Top Airports, Top Types, Most Photos, Most Sessions, Hoppers */
+      #col-panel-sessions      { order: 10; }
+      #col-panel-airlines      { order: 11; }
+      #col-panel-airports      { order: 12; }
+      #col-panel-types         { order: 13; }
+      #col-panel-most-photos   { order: 14; }
+      #col-panel-most-sessions { order: 15; }
+      #col-panel-hoppers       { order: 16; }
+      /* Last-session mini card: 3 stacked rows, shown first */
+      .col-last-session-bar { order: 1; flex-direction: column; align-items: center; text-align: center; gap: 5px; padding: 10px 14px; height: auto; }
+      .lsb-m-row2 { font-size: 14px; font-weight: 700; color: var(--text); }
+      .lsb-m-row3 { display: flex; align-items: center; justify-content: center; gap: 10px; }
+      /* Hero + keyword mini cards: label on top, number below, all centred */
+      .col-stat-hero, .col-kw-stat { flex-direction: column; align-items: center; text-align: center; gap: 3px; }
+      .col-sh-label, .col-kw-label { order: 1; }
+      .col-sh-num, .col-kw-num { order: 2; }
+      /* Unify all grey description text (labels) to one shared style */
+      .lsb-m-row1, .col-sh-label, .col-kw-label {
+        font-size: 11px; font-weight: 700; color: var(--dim);
+        text-transform: uppercase; letter-spacing: .07em;
+        overflow: visible; text-overflow: clip; white-space: normal;
+      }
+      /* Session popover: 3-row aircraft entries, all left-aligned */
+      .col-sp-row-m {
+        flex-direction: column !important; align-items: flex-start !important; gap: 3px;
+        text-align: left !important; width: 100%;
+      }
+      .col-sp-row-m > * { margin: 0 !important; align-self: flex-start !important; text-align: left !important; }
+      .col-sp-m-row1 { display: flex; align-items: center; gap: 6px; width: 100%; }
+      .col-sp-m-row2 { font-size: 11px; color: var(--dim); width: 100%; }
+      .col-sp-row-m .col-sp-tag-group {
+        margin-left: 0 !important; width: 100%;
+        justify-content: flex-start !important; text-align: left;
+      }
+    }
     .col-stats-panel-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; flex-shrink: 0; }
     .col-stats-panel-title { font-size: 11px; font-weight: 700; color: var(--dim); text-transform: uppercase; letter-spacing: .08em; }
     .col-stats-panel-body { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; scrollbar-width: thin; scrollbar-color: var(--border) transparent; padding-right: 7px; }
@@ -982,6 +1201,17 @@
     .srch-input:focus { border-color: var(--accent); }
     .srch-select { flex: 1; min-width: 120px; background: var(--surface2); border: 1px solid var(--border); border-radius: var(--r); padding: 7px 10px; color: var(--text); font-size: 13px; outline: none; cursor: pointer; appearance: none; }
     .srch-select:focus { border-color: var(--accent); }
+    @media (max-width: 767px) {
+      /* Once results are shown, collapse filter fields down to just the Clear button */
+      .srch-page.srch-has-results .srch-field-label { display: none; }
+      /* Each search input/dropdown gets its own full-width row */
+      .srch-bar { flex-direction: column; align-items: stretch; }
+      .srch-field-label { width: 100%; min-width: 0; }
+      .srch-clear { width: 100%; text-align: center; }
+      .srch-clear.srch-clear-hidden { display: none; }
+      /* Dropdown panel matches the width of its input bar */
+      .srch-dd-panel { width: 100%; min-width: 0; }
+    }
     .srch-clear { padding: 7px 14px; background: var(--surface2); border: 1px solid var(--border); border-radius: var(--r); color: var(--dim); font-size: 12px; cursor: pointer; white-space: nowrap; }
     .srch-clear:hover { color: var(--text); border-color: var(--accent); }
     .srch-status { padding: 8px 14px; font-size: 12px; color: var(--dim); min-height: 32px; border-bottom: 1px solid var(--border); }
@@ -1016,13 +1246,13 @@
 </div>
 
 <header>
-  <div class="header-logo"><span>✈</span>SpotAlert</div>
+  <div class="header-logo"><span>✈</span>SpotAlert<span id="dbg-ver" style="font-size:10px;color:var(--dim);font-weight:400;margin-left:6px"></span></div>
   <nav class="nav-tabs" id="nav-tabs">
-    <button class="nav-tab" data-tab="recommendation"><span class="tab-icon">📍</span>Spotting</button>
-    <button class="nav-tab active" data-tab="history"><span class="tab-icon">📡</span>Feed</button>
-    <button class="nav-tab" data-tab="collection"><span class="tab-icon">📷</span>Collection</button>
-    <button class="nav-tab" data-tab="search"><span class="tab-icon">🔍</span>Search</button>
-    <button class="nav-tab" data-tab="settings"><span class="tab-icon">⚙️</span>Settings</button>
+    <button class="nav-tab" data-tab="recommendation"><span class="tab-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 21s-7-6.6-7-12a7 7 0 0 1 14 0c0 5.4-7 12-7 12z"/><circle cx="12" cy="9" r="2.4"/></svg></span>Spotting</button>
+    <button class="nav-tab" data-tab="collection"><span class="tab-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 8.5a1.5 1.5 0 0 1 1.5-1.5h2l1-2h7l1 2h2A1.5 1.5 0 0 1 20 8.5v9A1.5 1.5 0 0 1 18.5 19h-13A1.5 1.5 0 0 1 4 17.5z"/><circle cx="12" cy="12.5" r="3.3"/></svg></span>Collection</button>
+    <button class="nav-tab active" data-tab="history"><span class="tab-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 11a8 8 0 0 1 16 0"/><path d="M7.5 11a4.5 4.5 0 0 1 9 0"/><circle cx="12" cy="11" r="1.6" fill="currentColor" stroke="none"/><path d="M12 12.6V21"/><path d="M8.5 21h7"/></svg></span>Feed</button>
+    <button class="nav-tab" data-tab="search"><span class="tab-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.3 15.3 20 20"/></svg></span>Search</button>
+    <button class="nav-tab" data-tab="settings"><span class="tab-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="2.8"/><path d="M12 3.5v2.4M12 18.1v2.4M20.5 12h-2.4M5.9 12H3.5M17.8 6.2l-1.7 1.7M7.9 16.1l-1.7 1.7M17.8 17.8l-1.7-1.7M7.9 7.9 6.2 6.2"/></svg></span>Settings</button>
   </nav>
   <div style="margin-left:auto;display:flex;align-items:center;gap:8px;flex-shrink:0">
     <div id="rapid-badge">RAPID</div>
@@ -1053,6 +1283,7 @@
     <!-- Summary subtab -->
     <div class="col-subtab-page" id="col-subtab-summary">
     <div class="col-dashboard">
+      <div class="col-hero-page">
       <div class="col-hero-row">
         <div class="col-stat-hero"><div class="col-sh-num" id="col-sh-photos">—</div><div class="col-sh-label">Photos</div></div>
         <div class="col-stat-hero"><div class="col-sh-num" id="col-sh-aircraft">—</div><div class="col-sh-label">Aircraft</div></div>
@@ -1066,6 +1297,7 @@
         <div class="col-kw-stat" id="col-kw-box-1" onclick="_colKwToggle(1)"><div class="col-kw-num" id="col-kw-num-1">—</div><div class="col-kw-label" id="col-kw-label-1">—</div></div>
         <div class="col-kw-stat" id="col-kw-box-2" onclick="_colKwToggle(2)"><div class="col-kw-num" id="col-kw-num-2">—</div><div class="col-kw-label" id="col-kw-label-2">—</div></div>
       </div>
+      </div><!-- /col-hero-page -->
       <div class="col-stats-panel" id="col-panel-sessions">
         <div class="col-stats-panel-header"><span class="col-stats-panel-title">Sessions</span></div>
         <div class="col-stats-panel-body" id="col-sessions"><div class="empty">Loading…</div></div>
@@ -1161,16 +1393,17 @@
   <div class="page hidden" id="tab-settings">
     <div class="srch-subtab-bar">
       <button class="srch-subtab active" data-subtab="info" onclick="switchSubtab('info')">General</button>
-      <button class="srch-subtab" data-subtab="config" onclick="switchSubtab('config')">Monitoring</button>
+      <button class="srch-subtab" data-subtab="recommendation" onclick="switchSubtab('recommendation')">Spotting</button>
+      <button class="srch-subtab" data-subtab="config" onclick="switchSubtab('config')">Feed</button>
       <button class="srch-subtab" data-subtab="filters" onclick="switchSubtab('filters')">Filters</button>
-      <button class="srch-subtab" data-subtab="recommendation" onclick="switchSubtab('recommendation')">Recommendation</button>
-      <button class="srch-subtab" data-subtab="airports" onclick="switchSubtab('airports')">Airports</button>
+      <button class="srch-subtab" data-subtab="airports" onclick="switchSubtab('airports')">Collection</button>
+      <button class="srch-subtab" data-subtab="notification" onclick="switchSubtab('notification')">Notification</button>
       <button class="srch-subtab" data-subtab="logs" onclick="switchSubtab('logs')">Logs</button>
     </div>
 
     <!-- Info subtab -->
     <div class="set-subtab-page" id="subtab-info">
-      <div class="page-cols" style="align-items:stretch">
+      <div class="page-cols">
 
         <!-- Left column: identity + airport -->
         <div class="page-col">
@@ -1189,47 +1422,61 @@
             </div>
           </div>
           <!-- Airport & timezone card -->
-          <div class="page-col-block" style="flex:1">
+          <div class="page-col-block">
             <div class="section-heading">General</div>
             <div class="settings-group">
               <div class="setting-row">
                 <span class="setting-label"><span class="setting-key">Monitored Airport</span><span class="setting-desc">Airport IATA code. To change this, create a new instance.</span></span>
-                <input id="info-airport-code" class="setting-input" disabled style="opacity:0.45;cursor:default;width:160px;text-align:left" placeholder="—">
+                <input id="info-airport-code" class="setting-input" disabled style="opacity:0.45;cursor:default;width:240px;text-align:left" placeholder="—">
               </div>
               <div class="setting-row">
                 <span class="setting-label"><span class="setting-key">Timezone</span><span class="setting-desc">Display timezone for all times in the app. Use IANA format, e.g. Australia/Sydney or America/New_York.</span></span>
-                <input class="setting-input" data-key="WEB_TIMEZONE" id="info-timezone-input" style="width:160px;text-align:left" placeholder="e.g. Australia/Sydney">
+                <input class="setting-input" data-key="WEB_TIMEZONE" id="info-timezone-input" style="width:240px;text-align:left" placeholder="e.g. Australia/Sydney">
               </div>
             </div>
           </div>
-        </div>
-
-        <!-- Server status card -->
-        <div class="page-col-block">
-          <div class="section-heading">Server Status</div>
-          <div class="info-status-grid" id="info-status-grid">
-            <span class="info-status-label">Status</span>
-            <span class="info-status-value"><span class="info-status-dot"></span>Loading…</span>
+          <!-- API keys card -->
+          <div class="page-col-block">
+            <div class="section-heading">API</div>
+            <div class="settings-group">
+              <div class="setting-row">
+                <span class="setting-label"><span class="setting-key">Logostream API Key</span><span class="setting-desc">API key for fetching airline tail logos. Without this, logo images won't load.</span></span>
+                <input class="setting-input" data-key="LOGOSTREAM_API_KEY" id="info-logostream-key" style="width:240px;text-align:left" placeholder="your-api-key">
+              </div>
+            </div>
+          </div>
+          <!-- Disclaimer card -->
+          <div class="page-col-block">
+            <div class="section-heading">Disclaimer</div>
+            <p class="info-disclaimer">
+              <strong>FlightRadar24 data</strong> — This project accesses FlightRadar24's unofficial API.
+              FlightRadar24's <a href="https://www.flightradar24.com/terms-and-conditions" target="_blank">Terms of Service</a>
+              restrict use of their data to <strong>personal, non-commercial purposes only</strong>.
+              Do not use this project in any commercial context without obtaining a proper data licence from FlightRadar24.
+            </p>
+            <p class="info-disclaimer">
+              <strong>adsb.fi open data</strong> — Military aircraft data is sourced from
+              <a href="https://opendata.adsb.fi" target="_blank">opendata.adsb.fi</a>.
+              This data is provided for <strong>personal, non-commercial use only</strong>.
+              See <a href="https://adsb.fi" target="_blank">adsb.fi</a> for their full terms of use.
+            </p>
           </div>
         </div>
 
-      </div>
+        <!-- Right column: server status + scheduled tasks -->
+        <div class="page-col">
+          <!-- Server status card -->
+          <div class="page-col-block">
+            <div class="section-heading">Server Status</div>
+            <div id="info-status-grid"><span style="color:var(--dim);font-size:12px">Loading…</span></div>
+          </div>
+          <!-- Scheduled tasks card -->
+          <div class="page-col-block">
+            <div class="section-heading">Scheduled Tasks</div>
+            <div id="sys-tasks-body"><span style="color:var(--dim);font-size:12px">Loading…</span></div>
+          </div>
+        </div>
 
-      <!-- Disclaimer card (full width) -->
-      <div class="page-col-block" style="margin-top:14px">
-        <div class="section-heading">Disclaimer</div>
-        <p class="info-disclaimer">
-          <strong>FlightRadar24 data</strong> — This project accesses FlightRadar24's unofficial API.
-          FlightRadar24's <a href="https://www.flightradar24.com/terms-and-conditions" target="_blank">Terms of Service</a>
-          restrict use of their data to <strong>personal, non-commercial purposes only</strong>.
-          Do not use this project in any commercial context without obtaining a proper data licence from FlightRadar24.
-        </p>
-        <p class="info-disclaimer">
-          <strong>adsb.fi open data</strong> — Military aircraft data is sourced from
-          <a href="https://opendata.adsb.fi" target="_blank">opendata.adsb.fi</a>.
-          This data is provided for <strong>personal, non-commercial use only</strong>.
-          See <a href="https://adsb.fi" target="_blank">adsb.fi</a> for their full terms of use.
-        </p>
       </div>
     </div>
 
@@ -1252,40 +1499,37 @@
         <!-- Col 2: Watchlists -->
         <div class="page-col">
           <div class="page-col-block">
-            <div class="section-heading">Rego Watchlist</div>
+            <div class="section-heading">Registration Watchlist</div>
             <div class="filter-section" id="fl-rego"></div>
             <div class="add-row">
               <input id="rego-rego" placeholder="Registration" style="max-width:110px">
               <input id="rego-desc" placeholder="Description">
               <button class="add-btn" onclick="addRego()">Add</button>
             </div>
-            <div class="filter-divider">behaviour</div>
-            <div class="settings-group" id="settings-rego"></div>
           </div>
 
           <div class="page-col-block">
-            <div class="section-heading">Type Watchlist</div>
+            <div class="section-heading">Aircraft Type Watchlist</div>
             <div class="filter-section" id="fl-type"></div>
             <div class="add-row">
-              <input id="type-airline" placeholder="Airline ICAO">
-              <input id="type-ac" placeholder="Aircraft Type">
+              <input id="type-airline" placeholder="Airline ICAO Code">
+              <input id="type-ac" placeholder="Aircraft Type Code">
               <button class="add-btn" onclick="addType()">Add</button>
             </div>
-            <div class="filter-divider">behaviour</div>
-            <div class="settings-group" id="settings-type"></div>
           </div>
 
           <div class="page-col-block">
             <div class="section-heading">Airline / Operator Watchlist</div>
             <div class="filter-section" id="fl-airline"></div>
             <div class="add-row">
-              <input id="al-icao" placeholder="ICAO Code" style="max-width:90px">
-              <input id="al-type" placeholder="Airline/Operator" style="max-width:110px">
-              <input id="al-name" placeholder="Name">
+              <input id="al-icao" placeholder="ICAO Code" style="max-width:120px">
+              <select id="al-type" style="max-width:130px">
+                <option value="airline">Airline</option>
+                <option value="operator">Operator</option>
+              </select>
+              <input id="al-name" placeholder="Description">
               <button class="add-btn" onclick="addAirline()">Add</button>
             </div>
-            <div class="filter-divider">behaviour</div>
-            <div class="settings-group" id="settings-airline"></div>
           </div>
         </div>
 
@@ -1323,14 +1567,6 @@
             <div class="section-heading">Departure Prediction</div>
             <div class="settings-group" id="settings-mon-departure"></div>
           </div>
-          <div class="page-col-block">
-            <div class="section-heading">Rapid Mode</div>
-            <div class="settings-group" id="settings-mon-rapidmode"></div>
-          </div>
-          <div class="page-col-block">
-            <div class="section-heading">Display</div>
-            <div class="settings-group" id="settings-mon-display"></div>
-          </div>
         </div>
 
         <!-- Military column -->
@@ -1342,62 +1578,84 @@
         </div>
 
       </div>
-      <div class="save-hint">Changes are saved immediately.</div>
     </div>
 
     <!-- Recommendation subtab -->
     <div class="set-subtab-page hidden" id="subtab-recommendation">
-      <div class="page-col-block">
-        <div class="section-heading">Spot Recommendation</div>
-        <div class="settings-group" id="settings-spotrec"></div>
+      <div class="page-cols">
+        <div class="page-col">
+          <div class="page-col-block">
+            <div class="section-heading">Spotting Recommendations</div>
+            <div class="settings-group" id="settings-spotrec"></div>
+          </div>
+        </div>
       </div>
-      <div class="save-hint">Changes are saved immediately.</div>
     </div>
 
     <!-- Airports subtab -->
     <div class="set-subtab-page hidden" id="subtab-airports">
-      <div class="page-cols" style="max-width:640px;gap:24px">
+      <div class="page-cols">
 
-        <div>
-          <h3 style="font-size:13px;font-weight:600;color:var(--dim);text-transform:uppercase;letter-spacing:.06em;margin:0 0 10px">Custom Airports</h3>
-          <p style="font-size:12px;color:var(--dim);margin:0 0 14px">Add airports not in the FR24 database. User entries always take priority.</p>
-          <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
-            <input id="ap-code"    class="setting-input" placeholder="Code (IATA or ICAO)" style="flex:1;min-width:120px">
-            <input id="ap-name"    class="setting-input" placeholder="Airport name"         style="flex:2;min-width:180px">
-            <input id="ap-country" class="setting-input" placeholder="Country (e.g. AU)"    style="flex:0 0 110px;max-width:110px">
-            <button class="btn-primary" onclick="apAdd()" style="flex-shrink:0">Add</button>
+        <!-- Col 1 -->
+        <div class="page-col">
+          <div class="page-col-block">
+            <div class="section-heading">Custom Airports</div>
+            <div class="card-desc">Add airports not in the FR24 database. User entries always take priority.</div>
+            <div class="filter-section" id="ap-list"></div>
+            <div class="add-row">
+              <input id="ap-code" placeholder="Airport Code" style="max-width:120px">
+              <input id="ap-name" placeholder="Airport Name">
+              <input id="ap-country" placeholder="Country Code" style="max-width:120px">
+              <button class="add-btn" onclick="apAdd()">Add</button>
+            </div>
           </div>
-          <div id="ap-list" style="display:flex;flex-direction:column;gap:4px"></div>
-        </div>
 
-        <div>
-          <h3 style="font-size:13px;font-weight:600;color:var(--dim);text-transform:uppercase;letter-spacing:.06em;margin:0 0 10px">Keyword Stat Boxes</h3>
-          <p style="font-size:12px;color:var(--dim);margin:0 0 14px">Choose 3 LR keywords to display unique rego counts in the collection dashboard.</p>
-          <div id="kw-stat-selects" style="display:flex;flex-direction:column;gap:8px"></div>
-        </div>
-
-        <div>
-          <h3 style="font-size:13px;font-weight:600;color:var(--dim);text-transform:uppercase;letter-spacing:.06em;margin:0 0 10px">Session Panel Tags</h3>
-          <p style="font-size:12px;color:var(--dim);margin:0 0 14px">Choose which LR keywords trigger display in the Sessions expanded panel. All tags selected (or none deselected) shows everything.</p>
-          <div id="st-tags-list" style="display:flex;flex-wrap:wrap;gap:6px;min-height:28px"><span style="color:var(--dim);font-size:12px">Open this tab to load…</span></div>
-        </div>
-
-        <div>
-          <h3 style="font-size:13px;font-weight:600;color:var(--dim);text-transform:uppercase;letter-spacing:.06em;margin:0 0 10px">Custom Aircraft Types</h3>
-          <p style="font-size:12px;color:var(--dim);margin:0 0 14px">Full names sourced from <a href="https://github.com/rikgale/ICAOList" target="_blank" style="color:var(--accent)">ICAOList</a>, auto-updated every 3 months. User entries always take priority. <button onclick="atRefresh()" style="background:none;border:none;color:var(--accent);cursor:pointer;font-size:12px;padding:0;text-decoration:underline">Refresh now</button></p>
-          <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
-            <input id="at-code" class="setting-input" placeholder="ICAO code (e.g. B738)" style="flex:0 0 140px;max-width:140px">
-            <input id="at-name" class="setting-input" placeholder="Full name (e.g. Boeing 737-800)" style="flex:2;min-width:200px">
-            <button class="btn-primary" onclick="atAdd()" style="flex-shrink:0">Add</button>
+          <div class="page-col-block">
+            <div class="section-heading">Custom Aircraft Types</div>
+            <div class="card-desc">Full names sourced from <a href="https://github.com/rikgale/ICAOList" target="_blank">ICAOList</a>, auto-updated every 3 months. User entries always take priority.</div>
+            <div class="filter-section" id="at-list"></div>
+            <div class="add-row">
+              <input id="at-code" placeholder="Aircraft Type Code" style="max-width:160px">
+              <input id="at-name" placeholder="Full Name">
+              <button class="add-btn" onclick="atAdd()">Add</button>
+            </div>
           </div>
-          <div id="at-list" style="display:flex;flex-direction:column;gap:4px"></div>
+        </div>
+
+        <!-- Col 2 -->
+        <div class="page-col">
+          <div class="page-col-block">
+            <div class="section-heading">Collection Stat Keywords</div>
+            <div class="card-desc">Choose 3 Lightroom keywords to display unique registration counts in the collection dashboard.</div>
+            <div id="kw-stat-selects" style="display:flex;flex-direction:column;gap:8px"></div>
+          </div>
+
+          <div class="page-col-block">
+            <div class="section-heading">Session Panel Tags</div>
+            <div class="card-desc">Choose which Lightroom keywords trigger display in the Sessions expanded panel. All tags selected (or none deselected) shows everything.</div>
+            <div id="st-tags-list" style="display:flex;flex-wrap:wrap;gap:6px;min-height:28px"><span class="detail">Open this tab to load…</span></div>
+          </div>
         </div>
 
       </div>
     </div>
 
+    <!-- Notification subtab -->
+    <div class="set-subtab-page hidden" id="subtab-notification">
+    </div>
+
     <!-- Logs subtab -->
     <div class="set-subtab-page hidden" id="subtab-logs">
+      <div class="page-col-block" style="display:flex;flex-direction:column;flex:1;min-height:0">
+        <div class="section-heading" style="display:flex;align-items:center;justify-content:space-between">
+          <span>Application Log</span>
+          <span style="display:flex;gap:8px">
+            <button class="pill-btn" onclick="logsLoad()">Refresh</button>
+            <a class="pill-btn pill-btn-accent" href="/api/logs/download" download="spotalert.log">Download</a>
+          </span>
+        </div>
+        <pre id="logs-output" class="logs-output">Loading…</pre>
+      </div>
     </div>
   </div>
 </div>
@@ -1405,7 +1663,7 @@
 <div id="toast"></div>
 
 <div id="detail-modal" class="detail-modal hidden">
-  <div class="detail-sheet"></div>
+  <div class="detail-sheet"><div class="detail-sheet-scroll"></div></div>
 </div>
 
 <script src="/static/app.js?v=252"></script>

@@ -8,3 +8,5 @@ python-telegram-bot[job-queue]==22.7
 fastapi>=0.115
 uvicorn[standard]>=0.30
 pywebpush>=2.0
+beautifulsoup4
+airportsdata
