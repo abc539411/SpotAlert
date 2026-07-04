@@ -102,6 +102,11 @@ class AppConfig:
     # {registration: {"stationary_since_ts": int|None, "last_in_radius_ts": int, "arrival_id": int}}
     military_rapid_tracking: dict = field(repr=False, default_factory=dict)
 
+    # Cancellation/diversion absence-streak tracking — in-memory only, never persisted.
+    # {(registration, flight_number, arrival_date): {"first_absent_ts": int, "streak": int,
+    #                                                 "last_known_status": str}}
+    cancel_absence_tracking: dict = field(repr=False, default_factory=dict)
+
     # Dependencies — excluded from repr/comparison
     fr_api: object = field(repr=False, default=None)
     store: object = field(repr=False, default=None)

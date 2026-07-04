@@ -310,6 +310,28 @@ def _derive_manufacturer(model_text: str):
     return None
 
 
+def _first_image_url(images: dict) -> str:
+    """Pick the best available photo src from an FR24 aircraftImages 'images' block."""
+    imgs = images or {}
+    large = imgs.get("large") or imgs.get("medium") or []
+    return large[0]["src"].replace("/640cb/", "/640/") if large else ""
+
+
+def _extract_board_photos(airport_details_response: dict) -> dict:
+    """get_airport_details() responses carry a top-level 'aircraftImages' array keyed by
+    registration — the same photo data as get_rego_details(), free on the call monitor.py
+    already makes every check. Returns {registration: photo_url}."""
+    out = {}
+    for item in (airport_details_response or {}).get("aircraftImages") or []:
+        reg = (item.get("registration") or "").strip()
+        if not reg:
+            continue
+        url = _first_image_url(item.get("images"))
+        if url:
+            out[reg] = url
+    return out
+
+
 def format_notification(
     flight: dict,
     registration: str,
@@ -820,16 +842,22 @@ async def _enrich_and_store(
             else:
                 _model_text = ((rego_details or {}).get("aircraftInfo") or {}).get("model", {}).get("text", "")
             _mfr = _derive_manufacturer(_model_text)
-            if not photo_url:
-                images = (rego_details or {}).get("aircraftImages") or []
-                if images:
-                    try:
-                        imgs = images[0]["images"]
-                        large = imgs.get("large") or imgs.get("medium") or []
-                        photo_url = large[0]["src"].replace("/640cb/", "/640/") if large else ""
-                    except (KeyError, IndexError):
-                        pass
-            cfg.store.upsert_airframe_from_fr24(registration, photo_url=photo_url or None, manufacturer=_mfr)
+            # Re-extract every time this call already happens (not gated on photo_url being
+            # empty) so a rego's cached photo keeps refreshing as FR24's own image changes,
+            # instead of freezing forever after the first hit. upsert_airframe_from_fr24's
+            # COALESCE keeps the old photo if this extraction comes up empty.
+            _fresh_photo = ""
+            images = (rego_details or {}).get("aircraftImages") or []
+            if images:
+                try:
+                    imgs = images[0]["images"]
+                    large = imgs.get("large") or imgs.get("medium") or []
+                    _fresh_photo = large[0]["src"].replace("/640cb/", "/640/") if large else ""
+                except (KeyError, IndexError):
+                    pass
+            if _fresh_photo:
+                photo_url = _fresh_photo
+            cfg.store.upsert_airframe_from_fr24(registration, photo_url=_fresh_photo or None, manufacturer=_mfr)
         except Exception as exc:
             log.warning("Could not fetch aircraft details for %s: %s", registration, exc)
 
@@ -862,6 +890,7 @@ async def _enrich_and_store(
         origin_iata=origin_iata, origin_name=origin_name,
         arrival_date=arrival_date,
         airline_icao=arr_airline_icao,
+        photo_url=photo_url or None,
     )
 
 
@@ -903,7 +932,9 @@ async def run_check(context: ContextTypes.DEFAULT_TYPE) -> None:
     all_arrivals:  dict = {}  # reg → list[flight]
     all_departures: dict = {}  # reg → list[flight]
     hist_arrivals:  dict = {}  # reg → flight  (real arrival only, negative pages)
-    hist_departures: dict = {}  # reg → flight  (real departure only, negative pages)
+    hist_departures: dict = {}  # reg → list[flight]  (real departure only, negative pages)
+    board_photos:  dict = {}  # reg → photo_url, from get_airport_details' own aircraftImages —
+                              # free on the call already made below, no extra API hit
 
     try:
         import asyncio
@@ -916,6 +947,7 @@ async def run_check(context: ContextTypes.DEFAULT_TYPE) -> None:
                 schedule   = data["airport"]["pluginData"]["schedule"]
                 arrivals   = schedule["arrivals"]["data"]
                 departures = schedule.get("departures", {}).get("data") or []
+                board_photos.update(_extract_board_photos(data))
                 _fr24_ok = True
             except Exception as exc:
                 log.warning("Failed to fetch arrivals (page %d): %s", page, exc)
@@ -941,6 +973,7 @@ async def run_check(context: ContextTypes.DEFAULT_TYPE) -> None:
             try:
                 hist_data     = cfg.fr_api.get_airport_details(code=cfg.airport_code, page=hist_page)
                 hist_schedule = hist_data["airport"]["pluginData"]["schedule"]
+                board_photos.update(_extract_board_photos(hist_data))
                 for entry in (hist_schedule.get("arrivals", {}).get("data") or []):
                     parsed = _parse_aircraft(entry)
                     if not parsed:
@@ -957,6 +990,12 @@ async def run_check(context: ContextTypes.DEFAULT_TYPE) -> None:
                         hist_departures.setdefault(reg, []).append(flight)
             except Exception as exc:
                 log.debug("Failed to fetch page %d for passive updates: %s", hist_page, exc)
+
+        # Refresh the airframes photo cache for every registration seen on the board this
+        # check — free (no extra API call), and keeps photos current for consumers other
+        # than Feed/Spotting (Collection, Search, etc.) that still read from airframes.
+        for _reg, _url in board_photos.items():
+            cfg.store.upsert_airframe_from_fr24(_reg, photo_url=_url)
 
         # ── Step 2: Passive DB updates (unchanged) ────────────────────────────────────────
         landed = {}   # reg → {"ts": int, "manufacturer": str, "airline": str}
@@ -1038,21 +1077,43 @@ async def run_check(context: ContextTypes.DEFAULT_TYPE) -> None:
         # Only confirmed actual arrivals + actual departures count as an observation.
         # hist_arrivals / hist_departures are built from negative pages (real timestamps only),
         # so both sides are confirmed happened. The scheduled times are stored for prediction.
+        _pattern_now_ts = int(datetime.now().timestamp())
         for _reg, _arr_fl in hist_arrivals.items():
-            _dep_fl = hist_departures.get(_reg)
-            if not _dep_fl:
+            # hist_departures[reg] is a LIST (a rego can have more than one real departure in a
+            # day) — pick the closest real departure strictly AFTER this arrival, same rule
+            # Step 7b's live/hist pairing already uses, so the learned pattern matches what
+            # pairing would actually produce for this exact visit.
+            _dep_fls = hist_departures.get(_reg) or []
+            if not _dep_fls:
                 continue
             _arr_fn = str(_safe_get(_arr_fl, "identification", "number", "default", default="") or "")
-            _dep_fn = str(_safe_get(_dep_fl, "identification", "number", "default", default="") or "")
             if not _arr_fn or _arr_fn in ("N/A", "N\\A"):
                 continue
+            _arr_real = _safe_get(_arr_fl, "time", "real", "arrival", default=None)
+            if not isinstance(_arr_real, (int, float)):
+                continue
+            _arr_real = int(_arr_real)
+
+            _dep_fl = None
+            _dep_real_ts = None
+            for _cand in _dep_fls:
+                _cand_ts = _safe_get(_cand, "time", "real", "departure", default=None)
+                if not isinstance(_cand_ts, (int, float)) or int(_cand_ts) <= _arr_real:
+                    continue
+                if _dep_real_ts is None or int(_cand_ts) < _dep_real_ts:
+                    _dep_real_ts = int(_cand_ts)
+                    _dep_fl = _cand
+            if _dep_fl is None:
+                continue
+
+            _dep_fn = str(_safe_get(_dep_fl, "identification", "number", "default", default="") or "")
             if not _dep_fn or _dep_fn in ("N/A", "N\\A"):
                 continue
             _sched_arr = _safe_get(_arr_fl, "time", "scheduled", "arrival",   default=None)
             _sched_dep = _safe_get(_dep_fl, "time", "scheduled", "departure", default=None)
             _est_dep   = _safe_get(_dep_fl, "time", "estimated", "departure", default=None)
             cfg.store.record_departure_pattern(
-                _arr_fn, _dep_fn, cfg.airport_iata, now_ts,
+                _arr_fn, _dep_fn, cfg.airport_iata, _pattern_now_ts,
                 scheduled_dep_ts = int(_sched_dep) if isinstance(_sched_dep, (int, float)) else None,
                 estimated_dep_ts = int(_est_dep)   if isinstance(_est_dep,   (int, float)) else None,
                 scheduled_arr_ts = int(_sched_arr) if isinstance(_sched_arr, (int, float)) else None,
@@ -1154,10 +1215,235 @@ async def run_check(context: ContextTypes.DEFAULT_TYPE) -> None:
                                                  int(real_arr), arrival_date=real_arr_date,
                                                  arr_label="Arrived")
 
-        # ── Step 7: Pair each arrival with its next departure ─────────────────────────────
+        # ── Step 7a: Resolve cancellation / diversion / aircraft-swap status ──────────────
+        # Runs BEFORE departure-claiming (Step 7b) and iterates unresolved DB rows directly,
+        # not this check's fresh fetch — a row that's gone quiet by definition won't be in
+        # the fetch. See docs/09-fr24-flight-lifecycle.md §11 for full design rationale.
+        try:
+            from datetime import timedelta as _td7
+            now_ts = int(datetime.now().timestamp())
+
+            def _cfg_int7(key: str, default: int) -> int:
+                v = cfg.store.load_setting(key)
+                if v:
+                    try:
+                        return int(v)
+                    except (TypeError, ValueError):
+                        pass
+                return default
+
+            _cancel_grace_secs   = _cfg_int7("MONITOR_CANCEL_GRACE_MINS", 90) * 60
+            _diverted_grace_secs = _cfg_int7("MONITOR_DIVERTED_GRACE_MINS", 35) * 60
+            _absence_checks      = _cfg_int7("MONITOR_ABSENCE_CHECKS", 3)
+            _confirm_call_cap    = _cfg_int7("MONITOR_CONFIRM_CALL_CAP", 5)
+
+            # Index this check's fresh fetch by (flight_number, arrival_date) → [(reg, flight_dict), ...]
+            # across arrivals (live + hist), so a flight number can be looked up regardless of
+            # which registration currently holds it.
+            _fresh_by_fn_date: dict = {}
+            for _reg7, _flights7 in all_arrivals.items():
+                for _fl7 in _flights7:
+                    _fn7 = str(_safe_get(_fl7, "identification", "number", "default", default=""))
+                    if not _fn7 or _fn7 in ("N/A", "N\\A"):
+                        continue
+                    _a_ts7 = int(
+                        _safe_get(_fl7, "time", "real",      "arrival", default=None)
+                        or _safe_get(_fl7, "time", "estimated", "arrival", default=None)
+                        or _safe_get(_fl7, "time", "scheduled", "arrival", default=None)
+                        or 0
+                    )
+                    if not _a_ts7:
+                        continue
+                    _a_date7 = datetime.fromtimestamp(_a_ts7, _tz_obj).strftime("%Y-%m-%d")
+                    _fresh_by_fn_date.setdefault((_fn7, _a_date7), []).append((_reg7, _fl7, _a_ts7))
+            for _reg7, _fl7 in hist_arrivals.items():
+                _fn7 = str(_safe_get(_fl7, "identification", "number", "default", default=""))
+                _real_arr7 = _safe_get(_fl7, "time", "real", "arrival", default=None)
+                if _fn7 and isinstance(_real_arr7, (int, float)):
+                    _a_date7 = datetime.fromtimestamp(int(_real_arr7), _tz_obj).strftime("%Y-%m-%d")
+                    _fresh_by_fn_date.setdefault((_fn7, _a_date7), []).append((_reg7, _fl7, int(_real_arr7)))
+
+            # Unresolved rows from the DB — bounded to the last 3 days (generous headroom above
+            # the longest grace period; keeps the query cheap, avoids reprocessing ancient rows).
+            _cutoff_date7 = (datetime.now(_tz_obj).date() - _td7(days=3)).strftime("%Y-%m-%d")
+            with cfg.store._connect() as conn:
+                _unresolved_rows = conn.execute(
+                    "SELECT id, registration, flight_number, arrival_date, arrival_ts, current_status "
+                    "FROM flight_arrivals "
+                    "WHERE current_status IN ('Scheduled', 'Arriving') AND arrival_date >= ?",
+                    (_cutoff_date7,),
+                ).fetchall()
+
+            _confirm_call_queue: list = []  # rows needing the paid confirmation-call fallback
+
+            for _row7 in _unresolved_rows:
+                _reg_r, _fn_r, _date_r = _row7["registration"], _row7["flight_number"], _row7["arrival_date"]
+                _key7 = (_reg_r, _fn_r, _date_r)
+                _matches7 = _fresh_by_fn_date.get((_fn_r, _date_r), [])
+                _own_match = next((m for m in _matches7 if m[0] == _reg_r), None)
+                _other_matches = [m for m in _matches7 if m[0] != _reg_r]
+
+                if _other_matches:
+                    # ── Aircraft swap: this flight number now belongs to another registration ──
+                    _other_reg = _other_matches[0][0]
+                    with cfg.store._connect() as conn:
+                        _siblings = conn.execute(
+                            "SELECT id, registration, first_seen_ts FROM flight_arrivals "
+                            "WHERE flight_number = ? AND arrival_date = ?",
+                            (_fn_r, _date_r),
+                        ).fetchall()
+                    _earliest = min(_siblings, key=lambda s: s["first_seen_ts"])
+                    if _earliest["id"] == _row7["id"]:
+                        cfg.store.update_flight_event_status(
+                            _reg_r, _fn_r, "Swapped", _row7["arrival_ts"],
+                            arrival_date=_date_r, arr_label=f"Reassigned to {_other_reg}",
+                        )
+                        log.info("Aircraft swap: %s %s reassigned to %s", _reg_r, _fn_r, _other_reg)
+                    else:
+                        with cfg.store._connect() as conn:
+                            conn.execute("DELETE FROM flight_departures WHERE arrival_id = ?", (_row7["id"],))
+                            conn.execute("DELETE FROM flight_arrivals WHERE id = ?", (_row7["id"],))
+                        log.info("Aircraft swap: %s %s successor row removed (now on %s)",
+                                 _reg_r, _fn_r, _other_reg)
+                    cfg.cancel_absence_tracking.pop(_key7, None)
+                    continue
+
+                if _own_match:
+                    # Still visible under its own registration — clear any absence tracking,
+                    # check explicit cancel/divert status, and reopen if previously Swapped.
+                    cfg.cancel_absence_tracking.pop(_key7, None)
+                    _fl_own, _arr_ts_own = _own_match[1], _own_match[2]
+                    _status_text, _diverted_apt = _get_fr24_status(_fl_own)
+                    if _status_text in ("canceled", "diverted"):
+                        _new_status = "Cancelled" if _status_text == "canceled" else "Diverted"
+                        cfg.store.update_flight_event_status(
+                            _reg_r, _fn_r, _new_status, _arr_ts_own,
+                            arrival_date=_date_r, arr_label=f"Confirmed {_new_status}",
+                            diverted_to_iata=(_diverted_apt or None),
+                        )
+                        with cfg.store._connect() as conn:
+                            conn.execute("DELETE FROM flight_departures WHERE arrival_id = ?", (_row7["id"],))
+                        log.info("%s %s: %s", _reg_r, _fn_r, _new_status)
+                    elif _row7["current_status"] == "Swapped":
+                        cfg.store.update_flight_event_status(
+                            _reg_r, _fn_r, get_flight_status(_fl_own), _arr_ts_own,
+                            arrival_date=_date_r,
+                        )
+                        log.info("Aircraft swap reverted: %s %s reopened", _reg_r, _fn_r)
+                    continue
+
+                # ── Genuinely absent from every page this check ─────────────────────────────
+                _entry7 = cfg.cancel_absence_tracking.get(_key7)
+                if _entry7 is None:
+                    cfg.cancel_absence_tracking[_key7] = {
+                        "first_absent_ts": now_ts, "streak": 1,
+                        "last_known_status": _row7["current_status"],
+                    }
+                    continue
+                _entry7["streak"] += 1
+                _grace_secs7 = (_cancel_grace_secs if _entry7["last_known_status"] == "Scheduled"
+                               else _diverted_grace_secs)
+                if (now_ts > _entry7["first_absent_ts"] + _grace_secs7
+                        and _entry7["streak"] >= _absence_checks):
+                    _confirm_call_queue.append((_entry7["first_absent_ts"], _key7, _row7, _entry7))
+
+            # Departure-side cancellation: a previously-paired REAL (not predicted) departure
+            # that itself gets cancelled needs its row cleared so Step 7b can find a genuine
+            # replacement — otherwise upsert_flight_departure()'s "real data always wins" rule
+            # would permanently block a fresh prediction from ever replacing it.
+            with cfg.store._connect() as conn:
+                _real_deps = conn.execute(
+                    "SELECT fd.id AS fd_id, fd.arrival_id, fd.dep_flight, fe.registration "
+                    "FROM flight_departures fd JOIN flight_arrivals fe ON fe.id = fd.arrival_id "
+                    "WHERE fd.is_prediction = 0 AND fd.dep_ts > ? AND fe.arrival_date >= ?",
+                    (now_ts, _cutoff_date7),
+                ).fetchall()
+            for _fd_row in _real_deps:
+                _dep_fn_check = _fd_row["dep_flight"]
+                if not _dep_fn_check:
+                    continue
+                for _dep_fl in all_departures.get(_fd_row["registration"], []):
+                    _dfn = str(_safe_get(_dep_fl, "identification", "number", "default", default=""))
+                    if _dfn != _dep_fn_check:
+                        continue
+                    _dstatus, _ = _get_fr24_status(_dep_fl)
+                    if _dstatus == "canceled":
+                        with cfg.store._connect() as conn:
+                            conn.execute("DELETE FROM flight_departures WHERE id = ?", (_fd_row["fd_id"],))
+                        log.info("Departure %s (arrival_id %s) cancelled — cleared for re-pairing",
+                                 _dep_fn_check, _fd_row["arrival_id"])
+                    break
+
+            # Confirmation-call fallback: capped, oldest-absence-first when oversubscribed.
+            _confirm_call_queue.sort(key=lambda x: x[0])
+            for _first_absent_ts, _key7, _row7, _entry7 in _confirm_call_queue[:_confirm_call_cap]:
+                _reg_r, _fn_r, _date_r = _key7
+                _presumed_status = "Cancelled" if _entry7["last_known_status"] == "Scheduled" else "Diverted"
+                _presumed_label  = f"Presumed {_presumed_status}"
+                _resolved7 = False
+                try:
+                    _lookup = cfg.fr_api.get_flight_by_number(_fn_r)
+                    for _cfl in (_lookup or {}).get("data") or []:
+                        _cfn = str(_safe_get(_cfl, "identification", "number", "default", default=""))
+                        if _cfn != _fn_r:
+                            continue
+                        _c_real_arr = _safe_get(_cfl, "time", "real", "arrival", default=None)
+                        if isinstance(_c_real_arr, (int, float)):
+                            cfg.store.update_flight_event_status(
+                                _reg_r, _fn_r, "Arrived", int(_c_real_arr),
+                                arrival_date=_date_r, arr_label="Arrived",
+                            )
+                            cfg.store.bulk_update_sightings({_reg_r: {"ts": int(_c_real_arr)}})
+                            _c_ac_type = _safe_get(_cfl, "aircraft", "model", "code", default="")
+                            if _c_ac_type and _c_ac_type not in ("N/A", "N\\A"):
+                                _c_origin = _iata(_cfl, "airport", "origin", "code", "iata")
+                                cfg.store.bulk_update_route_types([
+                                    (_fn_r, _c_ac_type, cfg.airport_iata, int(_c_real_arr),
+                                     _c_origin, None, _airline(_cfl)),
+                                ])
+                            log.info("Confirmation call: %s %s confirmed Arrived (board lagged)",
+                                     _reg_r, _fn_r)
+                            _resolved7 = True
+                            break
+                        _c_status, _c_diverted = _get_fr24_status(_cfl)
+                        if _c_status in ("canceled", "diverted"):
+                            _c_new_status = "Cancelled" if _c_status == "canceled" else "Diverted"
+                            cfg.store.update_flight_event_status(
+                                _reg_r, _fn_r, _c_new_status, _row7["arrival_ts"],
+                                arrival_date=_date_r, arr_label=f"Confirmed {_c_new_status}",
+                                diverted_to_iata=(_c_diverted or None),
+                            )
+                            with cfg.store._connect() as conn:
+                                conn.execute("DELETE FROM flight_departures WHERE arrival_id = ?", (_row7["id"],))
+                            log.info("Confirmation call: %s %s confirmed %s", _reg_r, _fn_r, _c_new_status)
+                            _resolved7 = True
+                            break
+                        # Still legitimately in progress per this independent lookup — false trigger.
+                        log.info("Confirmation call: %s %s still in progress, false trigger", _reg_r, _fn_r)
+                        _resolved7 = True
+                        break
+                    if not _resolved7:
+                        cfg.store.update_flight_event_status(
+                            _reg_r, _fn_r, _presumed_status, _row7["arrival_ts"],
+                            arrival_date=_date_r, arr_label=_presumed_label,
+                        )
+                        log.info("%s %s: %s (confirmation lookup empty)", _reg_r, _fn_r, _presumed_label)
+                except Exception as _exc7:
+                    log.warning("Confirmation-call lookup failed for %s %s: %s", _reg_r, _fn_r, _exc7)
+                    cfg.store.update_flight_event_status(
+                        _reg_r, _fn_r, _presumed_status, _row7["arrival_ts"],
+                        arrival_date=_date_r, arr_label=_presumed_label,
+                    )
+                cfg.cancel_absence_tracking.pop(_key7, None)
+
+        except Exception as _exc7b:
+            log.warning("Step 7a (cancellation/diversion/swap resolution) failed: %s", _exc7b, exc_info=True)
+
+        # ── Step 7b: Pair each arrival with its next departure ────────────────────────────
         # Iterate ALL arrivals visible to FR24 this check (positive + negative pages),
         # sorted by arr_ts ascending so earlier arrivals get first pick of departures.
-        # Flights not in flight_arrivals (non-matched regos) are skipped.
+        # Flights not in flight_arrivals (non-matched regos) are skipped. Arrivals resolved to
+        # Cancelled/Diverted/Swapped above are skipped entirely — they never claim a departure.
         # Each live departure flight number can only be claimed once per rego.
         try:
             def _dep_ts_for(flight_dict: dict) -> Optional[int]:
@@ -1198,11 +1484,14 @@ async def run_check(context: ContextTypes.DEFAULT_TYPE) -> None:
                 # Skip if this rego/flight isn't in flight_arrivals (not filter-matched)
                 with cfg.store._connect() as conn:
                     fe_row = conn.execute(
-                        "SELECT id FROM flight_arrivals "
+                        "SELECT id, current_status FROM flight_arrivals "
                         "WHERE registration = ? AND flight_number = ? AND arrival_date = ?",
                         (reg, fn, arr_date),
                     ).fetchone()
                 if not fe_row:
+                    continue
+                # Resolved by Step 7a above — never claims a departure.
+                if fe_row["current_status"] in ("Cancelled", "Diverted", "Swapped"):
                     continue
                 arrival_id = fe_row["id"]
                 rego_claimed = claimed.setdefault(reg, set())
@@ -1220,6 +1509,11 @@ async def run_check(context: ContextTypes.DEFAULT_TYPE) -> None:
                 for dep_flight in all_departures.get(reg, []):
                     d_fn = str(_safe_get(dep_flight, "identification", "number", "default", default=""))
                     if not d_fn or d_fn in ("N/A", "N\\A") or d_fn in rego_claimed:
+                        continue
+                    # A doomed-cancelled candidate must not be claimed as "real" — that would
+                    # permanently block a later prediction from replacing it (§11.4b).
+                    _d_status, _ = _get_fr24_status(dep_flight)
+                    if _d_status == "canceled":
                         continue
                     d_ts = _dep_ts_for(dep_flight)
                     if d_ts and d_ts > arr_ts:
@@ -1320,24 +1614,8 @@ async def run_check(context: ContextTypes.DEFAULT_TYPE) -> None:
                         dep_confidence=dep_confidence,
                     )
 
-                # Cancellation / diversion: remove from feed
-                live_arr_flights = all_arrivals.get(reg, [])
-                for _lf in live_arr_flights:
-                    _lf_fn = str(_safe_get(_lf, "identification", "number", "default", default=""))
-                    if _lf_fn == fn:
-                        _status_text, _ = _get_fr24_status(_lf)
-                        if _status_text in ("canceled", "diverted"):
-                            with cfg.store._connect() as conn:
-                                conn.execute(
-                                    "DELETE FROM flight_arrivals "
-                                    "WHERE registration = ? AND flight_number = ? AND arrival_date = ?",
-                                    (reg, fn, arr_date),
-                                )
-                            log.info("Removed %s %s from feed (%s)", reg, fn, _status_text)
-                        break
-
         except Exception as _exc:
-            log.warning("Step 7 (departure pairing) failed: %s", _exc, exc_info=True)
+            log.warning("Step 7b (departure pairing) failed: %s", _exc, exc_info=True)
 
     except Exception as exc:
         log.error("Unexpected error in run_check: %s", exc, exc_info=True)
@@ -1491,6 +1769,13 @@ async def run_check(context: ContextTypes.DEFAULT_TYPE) -> None:
             if "Military" in _nt:
                 # Military flights are Feed-only: excluded from clustering/Spotting tab
                 continue
+            if _fr["current_status"] in ("Cancelled", "Diverted", "Swapped"):
+                # Nothing to see — the tracked aircraft isn't coming, or isn't operating this
+                # flight anymore. Full exclusion, not just non-qualifying/dimmed (§11.5).
+                # A diverted *departure* is not filtered here — only the arrival event is built
+                # from this row's own current_status, so a diverted-after-leaving departure
+                # (arrival status unaffected) still participates normally.
+                continue
 
             _common = {
                 "registration":  _fr["registration"],
@@ -1596,16 +1881,22 @@ async def _send_notification(
             else:
                 _model_text = ((rego_details or {}).get("aircraftInfo") or {}).get("model", {}).get("text", "")
             _mfr = _derive_manufacturer(_model_text)
-            if not photo_url:
-                images = (rego_details or {}).get("aircraftImages") or []
-                if images:
-                    try:
-                        imgs = images[0]["images"]
-                        large = imgs.get("large") or imgs.get("medium") or []
-                        photo_url = large[0]["src"].replace("/640cb/", "/640/") if large else ""
-                    except (KeyError, IndexError):
-                        pass
-            cfg.store.upsert_airframe_from_fr24(registration, photo_url=photo_url or None, manufacturer=_mfr)
+            # Re-extract every time this call already happens (not gated on photo_url being
+            # empty) so a rego's cached photo keeps refreshing as FR24's own image changes,
+            # instead of freezing forever after the first hit. upsert_airframe_from_fr24's
+            # COALESCE keeps the old photo if this extraction comes up empty.
+            _fresh_photo = ""
+            images = (rego_details or {}).get("aircraftImages") or []
+            if images:
+                try:
+                    imgs = images[0]["images"]
+                    large = imgs.get("large") or imgs.get("medium") or []
+                    _fresh_photo = large[0]["src"].replace("/640cb/", "/640/") if large else ""
+                except (KeyError, IndexError):
+                    pass
+            if _fresh_photo:
+                photo_url = _fresh_photo
+            cfg.store.upsert_airframe_from_fr24(registration, photo_url=_fresh_photo or None, manufacturer=_mfr)
         except Exception as exc:
             log.warning("Could not fetch aircraft details for %s: %s", registration, exc)
 

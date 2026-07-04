@@ -201,6 +201,8 @@
     }
     @media (hover: hover) { .sq:hover { border-color: var(--accent); } }
     .sq:active { border-color: var(--accent); }
+    /* Every flight under this card is Cancelled/Diverted/Swapped — nothing live left to see */
+    .sq.sq-resolved-away { filter: grayscale(1) brightness(0.75); }
 
     /* Full-bleed photo — no opacity reduction */
     .sq-bg {
@@ -310,6 +312,9 @@
     }
     .rb-link { text-decoration: none; }
     .rb-link:hover { text-decoration: underline; }
+    /* Cancelled/Diverted/Swapped — resolved-away, crossed out rather than dropped from Feed */
+    .rb-resolved-away .rb-iata,
+    .rb-resolved-away .rb-sub { text-decoration: line-through; opacity: 0.7; }
 
     /* ── Registration badge ──────────────────────────────────────────────── */
     .rego {
@@ -508,7 +513,20 @@
       .setting-control, .setting-input, .setting-select {
         width: 100% !important; box-sizing: border-box; max-width: 100%;
       }
-      input[type="time"].setting-input { width: 100% !important; }
+      /* iOS Safari's native <input type="time"> chrome paints itself using its own
+         internal box model regardless of box-sizing:border-box on the element — it bleeds
+         a bit past the declared width even when layout says the box is 100% correctly
+         sized (confirmed: layout math checked out, min-width:0 changed nothing). Stripping
+         native appearance forces it to render as an ordinary text-like box that actually
+         respects our width/border — the tap-to-open wheel picker still works. */
+      input[type="time"].setting-input {
+        width: 100% !important; min-width: 0;
+        -webkit-appearance: none; appearance: none;
+      }
+      /* Number+unit inputs are wrapped in .num-with-unit, which doesn't stretch on its own —
+         without this, number inputs end up narrower than plain time/select inputs. */
+      .num-with-unit { width: 100%; box-sizing: border-box; }
+      .num-with-unit .setting-input { flex: 1; min-width: 0; width: auto !important; }
       /* Prevent long unbroken text (keys, descriptions, values) from forcing horizontal scroll */
       .set-subtab-page, .settings-group, .setting-row-full, .page-col-block, .page-col, .page-cols {
         max-width: 100%; overflow-x: hidden; box-sizing: border-box;
@@ -519,6 +537,90 @@
       .info-hero { max-width: 100%; }
       .info-hero > div { min-width: 0; flex: 1; }
       .info-title, .info-subtitle, .info-subtitle a { overflow-wrap: break-word; word-break: break-word; }
+
+      /* Rows went from a single line (desktop) to 3 stacked lines each here, but still only
+         had a 1px hairline between them (the desktop "tiled list" look) — gave a cramped,
+         run-together feel. Give each row real breathing room and let it be its own floating
+         card instead of a tile in a shared-border strip. */
+      .settings-group { gap: 8px; margin-bottom: 14px; }
+      .settings-group > * { border-radius: var(--r) !important; }
+      /* .page-cols is desktop's 2-column CSS Grid (left col / right col side by side). On
+         mobile, left-column and right-column cards were visually overlapping instead of
+         cleanly stacking end-to-end (e.g. "Disclaimer", last in the left column, bleeding in
+         behind "Scheduled Tasks" in the right column) — a Grid auto-placement/sizing
+         interaction, not just a spacing gap. Forcing display:flex here was tried and made it
+         worse (card *content* collapsed to near-zero height) — classic nested-flex-column
+         min-height:auto quirk once this sits inside the page's own overflow-y:auto scroll
+         container. Sidestep both: make .page-cols a plain block container on mobile instead —
+         the two .page-col divs (each already its own simple display:flex column, unchanged)
+         just stack as ordinary block elements, the most unambiguous layout mode available, no
+         grid-row placement and no flex min-height sizing involved at this level at all.
+         Desktop's real 2-column grid (≥600px, a separate rule) is untouched. */
+      .page-cols, .page-cols-3 { display: block; }
+      .page-col { gap: 10px; margin-bottom: 10px; }
+      /* General/Info subtab only: reorder cards to Title, General, Server Status,
+         Scheduled Tasks, API, Disclaimer on mobile, without touching the desktop 2-column
+         layout (Title/General/API/Disclaimer left, Server Status/Scheduled Tasks right) that
+         the underlying DOM order still reflects. #subtab-info scoping keeps this from
+         affecting the Config/Recommendation subtabs, which share the same .page-cols/.page-col
+         classes for their own different card sets and still need the plain block-stacking fix
+         above, untouched. display:contents "unwraps" the two .page-col divs (mobile only) so
+         their .page-col-block children become direct flex items of .page-cols and can be
+         reordered — desktop never sees display:contents, so its real grid layout is unaffected. */
+      /* align-items:stretch overrides the base .page-cols rule's align-items:start (still
+         in effect here since this rule doesn't touch that property on its own, and CSS only
+         overrides per-property, not per-rule) — align-items:start in a column-flex context
+         sizes each item to its own content width instead of stretching to fill, which is why
+         Server Status (a narrower grid) ended up narrower than the other cards. */
+      #subtab-info .page-cols { display: flex; flex-direction: column; gap: 10px; align-items: stretch; }
+      #subtab-info .page-col  { display: contents; }
+      /* Flex items default to flex-shrink:1, and a flex column nested inside the page's own
+         overflow-y:auto scroll area can miscalculate min-height:auto and shrink cards below
+         their actual content size instead of growing the container and letting the ancestor
+         scroll — content spills out past the card's rounded border instead of the card sizing
+         to fit it (the same nested-flex quirk noted above, a different symptom this time:
+         clipping instead of full collapse). flex:none stops these specific cards from
+         shrinking at all, forcing them to their natural content height. */
+      #subtab-info .page-col-block { flex: none; }
+      .page-card-title          { order: 1; }
+      .page-card-general        { order: 2; }
+      .page-card-serverstatus   { order: 3; }
+      .page-card-scheduledtasks { order: 4; }
+      .page-card-api            { order: 5; }
+      .page-card-disclaimer     { order: 6; }
+      .page-col-block { padding: 14px; }
+      /* Settings subtab nav (General/Spotting/Feed/Filters/...) had no mobile handling at all —
+         7 buttons with no wrap/scroll either overflowed or squeezed together. */
+      .srch-subtab-bar { overflow-x: auto; padding: 0 8px; scrollbar-width: none; }
+      .srch-subtab-bar::-webkit-scrollbar { display: none; }
+      .srch-subtab { padding: 10px 12px; white-space: nowrap; flex-shrink: 0; }
+
+      /* Server Status / Scheduled Tasks: the name+value grid had a fixed "auto" value column
+         with white-space:nowrap, so long values (hostname, OS string, connection info) just
+         overflowed/got clipped instead of wrapping — drop the trailing value column(s) from the
+         row track and let them wrap onto their own full-width line below the name instead.
+         !important is needed here: the unconditional base .sys-time rule sits LATER in this
+         file than this media query block, so on equal specificity it wins the cascade and
+         silently overrides text-align/white-space back without it (grid-column isn't set by
+         the base rule, so that part alone didn't need !important to take effect). */
+      .sys-grid, .sys-status-grid { grid-template-columns: 8px 1fr; row-gap: 8px; }
+      .sys-time {
+        grid-column: 2 / -1; text-align: left !important; white-space: normal !important;
+        overflow-wrap: break-word; word-break: break-word;
+      }
+      /* .sys-grid only (Scheduled Tasks / API — two short time values per row, e.g.
+         "18m ago" / "in 12m"): show them combined on one line instead of stacked full-width
+         lines. .sys-status-grid is untouched — its single, sometimes-long values (OS string,
+         connection info) still need the plain stacked wrap from the rule above. */
+      .sys-grid .sys-time-solo  { display: none; }
+      .sys-grid .sys-time-combo { display: inline !important; }
+      .sys-grid .sys-time + .sys-time { display: none; }
+      /* "Last Run"/"Next Run" (and "Last Call"/"Next") column headers implied 2 aligned
+         columns — but the values below them now stack as full-width lines (fix above), so the
+         header no longer aligns with anything. The "18m ago" vs "in 12m" wording already makes
+         which-is-which self-evident once stacked, so just drop the now-misleading header text
+         rather than trying to force column alignment that no longer exists structurally. */
+      .sys-col-header-right { display: none; }
     }
     /* Unused highlight */
     .setting-unused { background: rgba(239,68,68,0.06) !important; border-color: rgba(239,68,68,0.25) !important; }
@@ -557,6 +659,7 @@
     .sys-subdep { font-size: 12px; color: var(--dim); grid-column: 2; display: flex; align-items: center; gap: 5px; margin-top: -2px; margin-bottom: 2px; }
     .sys-subdep .sys-dot { width: 6px; height: 6px; }
     .sys-time { font-size: 11px; color: var(--dim); white-space: nowrap; text-align: right; }
+    .sys-time-combo { display: none; }
     .sys-sep  { grid-column: 1 / -1; border: none; border-top: 1px solid var(--border); margin: 2px 0; }
     .sys-status-grid { display: grid; grid-template-columns: 8px 1fr auto; gap: 6px 10px; align-items: center; }
     .info-disclaimer a { color: var(--accent); text-decoration: none; }
@@ -1307,7 +1410,7 @@
 </div>
 
 <header>
-  <div class="header-logo"><span>✈</span>SpotAlert<span id="dbg-ver" style="font-size:10px;color:var(--dim);font-weight:400;margin-left:6px"></span></div>
+  <div class="header-logo"><span>✈</span>SpotAlert</div>
   <nav class="nav-tabs" id="nav-tabs">
     <button class="nav-tab" data-tab="recommendation"><span class="tab-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 21s-7-6.6-7-12a7 7 0 0 1 14 0c0 5.4-7 12-7 12z"/><circle cx="12" cy="9" r="2.4"/></svg></span>Spotting</button>
     <button class="nav-tab" data-tab="collection"><span class="tab-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 8.5a1.5 1.5 0 0 1 1.5-1.5h2l1-2h7l1 2h2A1.5 1.5 0 0 1 20 8.5v9A1.5 1.5 0 0 1 18.5 19h-13A1.5 1.5 0 0 1 4 17.5z"/><circle cx="12" cy="12.5" r="3.3"/></svg></span>Collection</button>
@@ -1469,7 +1572,7 @@
         <!-- Left column: identity + airport -->
         <div class="page-col">
           <!-- Identity card -->
-          <div class="page-col-block">
+          <div class="page-col-block page-card-title">
             <div class="info-hero">
               <img src="/static/icons/icon-192.png" class="info-logo" alt="SpotAlert">
               <div>
@@ -1483,7 +1586,7 @@
             </div>
           </div>
           <!-- Airport & timezone card -->
-          <div class="page-col-block">
+          <div class="page-col-block page-card-general">
             <div class="section-heading">General</div>
             <div class="settings-group">
               <div class="setting-row">
@@ -1497,7 +1600,7 @@
             </div>
           </div>
           <!-- API keys card -->
-          <div class="page-col-block">
+          <div class="page-col-block page-card-api">
             <div class="section-heading">API</div>
             <div class="settings-group">
               <div class="setting-row">
@@ -1507,7 +1610,7 @@
             </div>
           </div>
           <!-- Disclaimer card -->
-          <div class="page-col-block">
+          <div class="page-col-block page-card-disclaimer">
             <div class="section-heading">Disclaimer</div>
             <p class="info-disclaimer">
               <strong>FlightRadar24 data</strong> — This project accesses FlightRadar24's unofficial API.
@@ -1527,12 +1630,12 @@
         <!-- Right column: server status + scheduled tasks -->
         <div class="page-col">
           <!-- Server status card -->
-          <div class="page-col-block">
+          <div class="page-col-block page-card-serverstatus">
             <div class="section-heading">Server Status</div>
             <div id="info-status-grid"><span style="color:var(--dim);font-size:12px">Loading…</span></div>
           </div>
           <!-- Scheduled tasks card -->
-          <div class="page-col-block">
+          <div class="page-col-block page-card-scheduledtasks">
             <div class="section-heading">Scheduled Tasks</div>
             <div id="sys-tasks-body"><span style="color:var(--dim);font-size:12px">Loading…</span></div>
           </div>
@@ -1627,6 +1730,10 @@
           <div class="page-col-block">
             <div class="section-heading">Departure Prediction</div>
             <div class="settings-group" id="settings-mon-departure"></div>
+          </div>
+          <div class="page-col-block">
+            <div class="section-heading">Cancellation / Diversion</div>
+            <div class="settings-group" id="settings-mon-cancel"></div>
           </div>
         </div>
 

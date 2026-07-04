@@ -536,10 +536,10 @@ def create_app(cfg=None) -> FastAPI:
                 SELECT fe.id AS fe_id,
                        fe.registration, fe.flight_number, fe.arrival_ts, fe.first_seen_ts,
                        fe.notif_types, fe.detail, fe.extra_info, fe.origin_iata, fe.origin_name,
-                       fe.current_status, fe.arr_label, fe.airline_icao,
+                       fe.current_status, fe.arr_label, fe.airline_icao, fe.photo_url AS fe_photo_url,
                        fd.dep_flight, fd.dep_ts, fd.dep_dest_iata, fd.dep_dest_name,
                        fd.is_prediction, fd.dep_label, fd.dep_confidence,
-                       a.photo_url, a.manufacturer,
+                       a.photo_url AS af_photo_url, a.manufacturer,
                        sh.last_seen_ts AS airport_last_seen_ts,
                        ap_o.city AS origin_city, ap_d.city AS dep_dest_city
                 FROM flight_arrivals fe
@@ -583,7 +583,10 @@ def create_app(cfg=None) -> FastAPI:
 
             events.append({
                 "registration":         row["registration"],
-                "photo_url":            row["photo_url"] or "",
+                # Prefer the snapshot frozen onto the flight row at enrichment time (avoids
+                # re-deriving it from airframes on every request); fall back to the airframes
+                # cache for older rows recorded before this column existed.
+                "photo_url":            row["fe_photo_url"] or row["af_photo_url"] or "",
                 "manufacturer":         row["manufacturer"] or "",
                 "detail":               row["detail"] or "",
                 "extra_info":           row["extra_info"] or "",

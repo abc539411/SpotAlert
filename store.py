@@ -277,6 +277,8 @@ class SqliteStore:
                 ("arrival_date",   "TEXT"),
                 ("arr_label",      "TEXT"),
                 ("airline_icao",   "TEXT"),
+                ("diverted_to_iata", "TEXT"),
+                ("photo_url",      "TEXT"),
             ]:
                 if _col not in fe_cols:
                     conn.execute(f"ALTER TABLE flight_arrivals ADD COLUMN {_col} {_typ} DEFAULT NULL")
@@ -1042,40 +1044,32 @@ class SqliteStore:
     def update_flight_event_status(self, registration: str, flight_number: str,
                                     current_status: str, arrival_ts: int,
                                     arrival_date: str = None,
-                                    arr_label: str = None) -> None:
+                                    arr_label: str = None,
+                                    diverted_to_iata: str = None) -> None:
         """Refresh live status and latest arrival estimate for a flight in flight_arrivals.
-        arr_label ('Arrived'|'Estimated'|'Scheduled') is only written when provided,
-        never cleared to NULL.
+        arr_label ('Arrived'|'Estimated'|'Scheduled'|...) and diverted_to_iata are only
+        written when provided, never cleared to NULL.
         """
+        set_cols = ["current_status = ?", "arrival_ts = ?"]
+        params = [current_status, arrival_ts]
+        if arr_label:
+            set_cols.append("arr_label = ?")
+            params.append(arr_label)
+        if diverted_to_iata:
+            set_cols.append("diverted_to_iata = ?")
+            params.append(diverted_to_iata)
+
+        where = "WHERE registration = ? AND flight_number = ?"
+        params += [registration.strip(), flight_number]
+        if arrival_date:
+            where += " AND arrival_date = ?"
+            params.append(arrival_date)
+
         with self._connect() as conn:
-            if arr_label:
-                if arrival_date:
-                    conn.execute(
-                        "UPDATE flight_arrivals SET current_status = ?, arrival_ts = ?, arr_label = ? "
-                        "WHERE registration = ? AND flight_number = ? AND arrival_date = ?",
-                        (current_status, arrival_ts, arr_label,
-                         registration.strip(), flight_number, arrival_date),
-                    )
-                else:
-                    conn.execute(
-                        "UPDATE flight_arrivals SET current_status = ?, arrival_ts = ?, arr_label = ? "
-                        "WHERE registration = ? AND flight_number = ?",
-                        (current_status, arrival_ts, arr_label,
-                         registration.strip(), flight_number),
-                    )
-            else:
-                if arrival_date:
-                    conn.execute(
-                        "UPDATE flight_arrivals SET current_status = ?, arrival_ts = ? "
-                        "WHERE registration = ? AND flight_number = ? AND arrival_date = ?",
-                        (current_status, arrival_ts, registration.strip(), flight_number, arrival_date),
-                    )
-                else:
-                    conn.execute(
-                        "UPDATE flight_arrivals SET current_status = ?, arrival_ts = ? "
-                        "WHERE registration = ? AND flight_number = ?",
-                        (current_status, arrival_ts, registration.strip(), flight_number),
-                    )
+            conn.execute(
+                f"UPDATE flight_arrivals SET {', '.join(set_cols)} {where}",
+                params,
+            )
 
     def flight_event_exists(self, registration: str, flight_number: str,
                              arrival_date: str = None) -> bool:
@@ -1178,6 +1172,7 @@ class SqliteStore:
         origin_name: str = None,
         arrival_date: str = None,
         airline_icao: str = None,
+        photo_url: str = None,
     ) -> Optional[int]:
         """Store a filter-matched flight in flight_arrivals. Merges notif_types if already present.
         Returns the affected row's id."""
@@ -1187,13 +1182,13 @@ class SqliteStore:
         with self._connect() as conn:
             if arrival_date:
                 existing = conn.execute(
-                    "SELECT id, notif_types FROM flight_arrivals "
+                    "SELECT id, notif_types, photo_url FROM flight_arrivals "
                     "WHERE registration = ? AND flight_number = ? AND arrival_date = ?",
                     (registration.strip(), flight_number, arrival_date),
                 ).fetchone()
             else:
                 existing = conn.execute(
-                    "SELECT id, notif_types FROM flight_arrivals WHERE registration = ? AND flight_number = ?",
+                    "SELECT id, notif_types, photo_url FROM flight_arrivals WHERE registration = ? AND flight_number = ?",
                     (registration.strip(), flight_number),
                 ).fetchone()
             if existing:
@@ -1202,22 +1197,30 @@ class SqliteStore:
                 except Exception:
                     current = []
                 merged = list(dict.fromkeys(current + [t for t in notif_types if t not in current]))
+                set_cols, params = [], []
                 if merged != current:
-                    conn.execute(
-                        "UPDATE flight_arrivals SET notif_types = ? WHERE id = ?",
-                        (json.dumps(merged), existing["id"]),
-                    )
+                    set_cols.append("notif_types = ?")
+                    params.append(json.dumps(merged))
+                # Backfill only — never overwrite an existing snapshot with a possibly
+                # different/newer one; this column is a frozen-at-creation display value,
+                # not a live cache (airframes.photo_url is the one that keeps refreshing).
+                if photo_url and not existing["photo_url"]:
+                    set_cols.append("photo_url = ?")
+                    params.append(photo_url)
+                if set_cols:
+                    params.append(existing["id"])
+                    conn.execute(f"UPDATE flight_arrivals SET {', '.join(set_cols)} WHERE id = ?", params)
                 return existing["id"]
             else:
                 cursor = conn.execute(
                     """INSERT OR IGNORE INTO flight_arrivals
                        (registration, flight_number, arrival_ts, first_seen_ts,
                         notif_types, detail, extra_info, origin_iata, origin_name,
-                        arrival_date, airline_icao)
-                       VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                        arrival_date, airline_icao, photo_url)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
                     (registration.strip(), flight_number, arrival_ts, first_seen_ts,
                      json.dumps(notif_types), detail, extra_info, origin_iata, origin_name,
-                     arrival_date, airline_icao or None),
+                     arrival_date, airline_icao or None, photo_url or None),
                 )
                 return cursor.lastrowid
 

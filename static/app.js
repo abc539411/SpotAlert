@@ -282,7 +282,7 @@ function _flightStatus(r) {
 
 // ── Feed: rego-grouped cards ──────────────────────────────────────────────────
 
-// Map status strings to our 5 canonical states (handles both FR24 raw and canonical values)
+// Map status strings to our canonical states (handles both FR24 raw and canonical values)
 function _normStatus(raw) {
   if (!raw) return null;
   const s = raw.toLowerCase();
@@ -290,6 +290,9 @@ function _normStatus(raw) {
   if (s === 'arrived' || s === 'on ground' || s === 'landed') return 'Arrived';
   if (s === 'scheduled')                        return 'Scheduled';
   if (s === 'departed')                         return 'Departed';
+  if (s === 'cancelled' || s === 'canceled')     return 'Cancelled';
+  if (s === 'diverted')                          return 'Diverted';
+  if (s === 'swapped')                           return 'Swapped';
   return null;
 }
 
@@ -297,6 +300,9 @@ function _normStatus(raw) {
 function _barStatus(f, nowTs) {
   if (f.current_status) {
     const norm = _normStatus(f.current_status);
+    // Terminal states — resolved by the backend, never re-inferred from timestamps below
+    // (in particular, must not fall into the "24h+ old with no dep_ts → Departed" heuristic).
+    if (norm === 'Cancelled' || norm === 'Diverted' || norm === 'Swapped') return norm;
     if (norm) {
       // Stale "Arriving": if estimated arrival has already passed, drop through to timestamp logic
       // so the live fallback can resolve the actual status
@@ -319,7 +325,7 @@ function _barStatus(f, nowTs) {
 }
 
 // Card-level status = highest-priority state across all bars
-const _STATUS_PRIORITY = ['Arriving', 'Arrived', 'Scheduled', 'Departed', 'N/A'];
+const _STATUS_PRIORITY = ['Arriving', 'Arrived', 'Cancelled', 'Diverted', 'Swapped', 'Scheduled', 'Departed', 'N/A'];
 function _cardStatus(card, nowTs) {
   const statuses = (card.flights || []).map(f => _barStatus(f, nowTs));
   for (const s of _STATUS_PRIORITY) {
@@ -334,6 +340,9 @@ const _STATUS_STYLE = {
   Arriving:  ['rgba(245,158,11,0.18)',  '#f59e0b'],
   Arrived:   ['rgba(34,197,94,0.18)',   '#22c55e'],
   Departed:  ['rgba(120,120,120,0.10)', 'var(--dim)'],
+  Cancelled: ['rgba(239,68,68,0.18)',   '#ef4444'],
+  Diverted:  ['rgba(168,85,247,0.18)',  '#a855f7'],
+  Swapped:   ['rgba(120,120,120,0.10)', 'var(--dim)'],
   'N/A':     ['rgba(120,120,120,0.08)', 'var(--dim)'],
 };
 
@@ -347,7 +356,6 @@ function _statusPillInline(status) {
 function regoCard(group) {
   const nowTs  = Math.floor(Date.now() / 1000);
   const photo  = group.photo_url || '';
-  const status = _cardStatus(group, nowTs);
   const { airline: _parsedAirline, acType } = _parseDetail(group.detail || '');
   const isMilitary = (group.notif_types || []).includes('Military');
   const airline = isMilitary
@@ -363,7 +371,12 @@ function regoCard(group) {
   const airlineLogo = isMilitary
     ? _airforceRoundelImg(airline, 23)
     : _airlineLogoByIcao(group.airline_icao || '', 23, _parsedAirline);
-  return `<div class="sq" onclick="openDetail(this)" data-r="${encoded}">
+  // Grey out the whole thumbnail only when EVERY flight under this card is resolved away
+  // (nothing live/actionable left) — a card with even one normal flight stays full-strength,
+  // no per-status pill on the thumbnail itself (that's detail-view-only now).
+  const allResolvedAway = (group.flights || []).length > 0 &&
+    (group.flights || []).every(f => ['Cancelled', 'Diverted', 'Swapped'].includes(_barStatus(f, nowTs)));
+  return `<div class="sq${allResolvedAway ? ' sq-resolved-away' : ''}" onclick="openDetail(this)" data-r="${encoded}">
     ${photo ? `<div class="sq-bg" style="background-image:url('${esc(photo)}')"></div>` : ''}
     <div class="sq-top">
       <span class="sq-rego">${esc(group.registration)}</span>
@@ -453,6 +466,7 @@ function _detailInner(r, closeCmd, showPhoto = true) {
 
       // Use the computed canonical status so the route bar label matches the status pill
       const computedStatus = _barStatus(f, nowTs);
+      const resolvedAway = computedStatus === 'Cancelled' || computedStatus === 'Diverted' || computedStatus === 'Swapped';
       const routeLiveStatus = computedStatus === 'Arriving'  ? 'In Flight'
                             : computedStatus === 'Arrived'   ? 'On Ground'
                             : computedStatus === 'Scheduled' ? 'Scheduled'
@@ -462,6 +476,7 @@ function _detailInner(r, closeCmd, showPhoto = true) {
       const fData = {
         airport_iata:        airportIata,
         airport_name:        airportName,
+        arr_label:           resolvedAway ? computedStatus : null,
         next_dep_flight:     f.dep_flight || null,
         next_dep_dest_iata:  f.dep_dest_iata || null,
         next_dep_dest_name:  f.dep_dest_name || null,
@@ -478,6 +493,7 @@ function _detailInner(r, closeCmd, showPhoto = true) {
         live_arrival_ts:    f.arrival_ts,
         live_flight_number: f.flight_number,
         live_status:        routeLiveStatus,
+        resolved_away:      resolvedAway,
         origin_iata:        f.origin_iata,
         origin_name:        f.origin_name,
         origin_city:        f.origin_city,
@@ -941,6 +957,9 @@ function _renderRouteBar(data, r) {
       'Estimated': ['rgba(59,130,246,0.18)',  '#93c5fd'],
       'Scheduled': ['rgba(120,120,120,0.15)', '#999'],
       'Departed':  ['rgba(245,158,11,0.18)',  '#f59e0b'],
+      'Cancelled': ['rgba(239,68,68,0.18)',   '#ef4444'],
+      'Diverted':  ['rgba(168,85,247,0.18)',  '#a855f7'],
+      'Swapped':   ['rgba(120,120,120,0.10)', 'var(--dim)'],
     };
     const base = 'font-size:9px;font-weight:700;padding:2px 0;border-radius:20px;text-transform:uppercase;letter-spacing:.05em;white-space:nowrap;flex-shrink:0;min-width:76px;text-align:center;box-sizing:border-box';
     if (label === 'Predicted') {
@@ -975,7 +994,7 @@ function _renderRouteBar(data, r) {
       ${nextFlight ? `<a class="rb-sub rb-link" href="${fr24Flight(nextFlight)}" target="_blank">${esc(nextFlight)}</a>` : ''}
     </div>` : '';
 
-  return `<div class="rb">
+  return `<div class="rb${r.resolved_away ? ' rb-resolved-away' : ''}">
     <div class="rb-node">
       <span class="rb-lbl">Arr. From</span>
       <a class="rb-iata rb-link" href="${fr24Airport(originIata)}" target="_blank">${esc(originIata)}</a>
@@ -1219,6 +1238,11 @@ const SETTINGS_SCHEMA = [
   { group: 'mon-polling',   key: 'FETCH_PAGES',                 label: 'Pages to Fetch',           desc: 'Each page covers around 100 recent arrivals. Increase if busy airports miss flights at the end of the list.',  type: 'number', min: 1,  max: 10,   unit: 'pages', restart: true },
   // Monitoring — Departure
   { group: 'mon-departure', key: 'DEPARTURE_PATTERN_THRESHOLD', label: 'Departure Confidence',     desc: 'Minimum historical confidence required before showing a predicted departure time. 80% means the pattern must hold 4 out of 5 times.', type: 'number', min: 0, max: 100, step: 5, unit: '%', restart: true },
+  // Monitoring — Cancellation / Diversion
+  { group: 'mon-cancel', key: 'MONITOR_CANCEL_GRACE_MINS',   label: 'Never-Departed Grace',  desc: 'How long past a scheduled-but-never-airborne flight\'s ETA to wait, before presuming it was cancelled.',        type: 'number', min: 15, max: 360, unit: 'minutes' },
+  { group: 'mon-cancel', key: 'MONITOR_DIVERTED_GRACE_MINS', label: 'Untracked Landing Grace', desc: 'How long past ETA to wait for a tracked-airborne flight that goes silent, before presuming it diverted elsewhere.', type: 'number', min: 10, max: 180, unit: 'minutes' },
+  { group: 'mon-cancel', key: 'MONITOR_ABSENCE_CHECKS',      label: 'Absence Streak',        desc: 'Consecutive checks a flight must be missing from every FR24 page before it\'s presumed cancelled/diverted.',   type: 'number', min: 1,  max: 10,  unit: 'checks' },
+  { group: 'mon-cancel', key: 'MONITOR_CONFIRM_CALL_CAP',    label: 'Confirmation Call Cap', desc: 'Maximum FR24 lookups per check spent confirming a presumed cancellation/diversion — a safety valve against rate-limiting.', type: 'number', min: 1, max: 20, unit: 'calls' },
   // Special Livery
   { group: 'livery', key: 'SPECIAL_LIVERY_KEYWORDS',           label: 'Keywords',             desc: 'A flight matches if its airline name contains any of these words (case-insensitive). e.g. "retro", "special".',  type: 'tags', restart: true },
   { group: 'livery', key: 'SPECIAL_LIVERY_EXCLUDE_KEYWORDS',   label: 'Exclude Keywords',     desc: 'If the airline name contains any of these words the match is suppressed — use to block standard liveries.',      type: 'tags', restart: true },
@@ -2817,9 +2841,12 @@ function _recFlightCard(f, nowTs, adjPy, sr, ss) {
 
 const COMPRESS_GAP_MINS = 60;  // gaps longer than this are compressed (1h)
 const COMPRESS_GAP_PX   = 44;  // visual height of a skip segment
-const TIMELINE_SCALE_PX = 4;   // px per minute in active segments
 // Mobile's 3-row mini card (rego / chips+type / status+time) is taller than
-// desktop's 2-row card, so overlap-avoidance needs more vertical room per card.
+// desktop's 2-row card, so overlap-avoidance needs more vertical room per card —
+// both the per-card height AND the underlying timeline scale need to grow together,
+// or the taller mobile card just gets more artificially nudged away from its true
+// chronological position instead of actually having room to breathe.
+const TIMELINE_SCALE_PX = window.matchMedia('(max-width: 767px)').matches ? 6 : 5;  // px per minute in active segments
 const CARD_H_PX = window.matchMedia('(max-width: 767px)').matches ? 76 : 56;
 
 function _buildLayout(eventMins) {
@@ -3208,9 +3235,13 @@ async function loadSystemTasks() {
       const subHtml = (subs && subs.length)
         ? `<span class="sys-subdep">${subs.map(s => `${_dot(s.ok)} ${esc(s.label)}`).join('&nbsp;&nbsp;&nbsp;')}</span><span></span><span></span><span></span>`
         : '';
+      // .sys-time-combo (hidden on desktop, shown on mobile in place of the two separate
+      // last/next cells — see the .sys-grid mobile CSS) keeps the two-column desktop
+      // layout completely unchanged while giving mobile one "18m ago / in 12m" line instead
+      // of two stacked full-width lines.
       return `<span${tip}>${_dot(item.ok)}</span>
               <span class="sys-name"${tip}>${esc(item.name)}</span>
-              <span class="sys-time">${lastStr}</span>
+              <span class="sys-time"><span class="sys-time-solo">${lastStr}</span><span class="sys-time-combo">${lastStr} / ${nextStr}</span></span>
               <span class="sys-time">${nextStr}</span>
               <span></span>
               <span class="sys-desc">${esc(item.desc)}</span>
@@ -3220,8 +3251,8 @@ async function loadSystemTasks() {
 
     if (tasksEl) {
       const header = `<span></span><span style="font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:.06em">Task</span>
-                      <span style="font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:.06em;text-align:right">Last Run</span>
-                      <span style="font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:.06em;text-align:right">Next Run</span>
+                      <span class="sys-col-header-right" style="font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:.06em;text-align:right">Last Run</span>
+                      <span class="sys-col-header-right" style="font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:.06em;text-align:right">Next Run</span>
                       <hr class="sys-sep">`;
       const apiByName = name => (d.apis || []).find(a => a.name === name);
       const fr24      = apiByName('FR24 Airport Feed');
@@ -3248,8 +3279,8 @@ async function loadSystemTasks() {
     }
     if (apisEl) {
       const header = `<span></span><span style="font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:.06em">API</span>
-                      <span style="font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:.06em;text-align:right">Last Call</span>
-                      <span style="font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:.06em;text-align:right">Next</span>
+                      <span class="sys-col-header-right" style="font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:.06em;text-align:right">Last Call</span>
+                      <span class="sys-col-header-right" style="font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:.06em;text-align:right">Next</span>
                       <hr class="sys-sep">`;
       apisEl.innerHTML = `<div class="sys-grid">${header}${d.apis.map(item => _row(item)).join('<hr class="sys-sep">')}</div>`;
     }
@@ -4185,12 +4216,6 @@ _srchSyncClearVisibility();
   new MutationObserver(sync).observe(el, { childList: true });
   sync();
 });
-
-fetch('/static/sw.js').then(r => r.text()).then(t => {
-  const m = t.match(/spotalert-v(\d+)/);
-  const el = document.getElementById('dbg-ver');
-  if (m && el) el.textContent = 'v' + m[1];
-}).catch(() => {});
 
 setupPWA();
 loadTab('history');
