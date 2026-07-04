@@ -8,8 +8,16 @@ from typing import List, Optional
 import requests
 from telegram.ext import ContextTypes
 
+import jetphotos
+
 
 log = logging.getLogger(__name__)
+
+# Auto rapid-tracking: once a military aircraft is detected, poll adsb.fi at this
+# cadence until it leaves the radius or goes stationary (landed + slow) for this long.
+MILITARY_RAPID_INTERVAL_SECS = 60
+MILITARY_STATIONARY_EXIT_SECS = 600   # 10 min
+MILITARY_MOVING_GS_THRESHOLD = 5      # knots; below this while on the ground counts as stopped
 
 # ICAO hex address ranges → country name
 # Sorted by lower bound; derived from ICAO Annex 10 allocations.
@@ -160,9 +168,6 @@ async def check_military(context: ContextTypes.DEFAULT_TYPE) -> None:
         if not registration:
             continue
 
-        if not cfg.store.should_notify_military(registration, now_ts, cfg.military_renotify_hours):
-            continue
-
         dist_nm = _haversine_nm(
             float(ac["lat"]), float(ac["lon"]),
             cfg.airport_lat, cfg.airport_lon,
@@ -177,16 +182,100 @@ async def check_military(context: ContextTypes.DEFAULT_TYPE) -> None:
         detail      = f"{desc} ({ac_type})" if desc else ac_type
         extra_info  = f"{country} · {alt}ft · {speed}kts · {dist_nm:.0f}nm from {cfg.airport_iata}"
 
+        # Fresh approach — start (or resume, if it dropped out and came back) a rapid-tracked visit.
+        # Recorded regardless of the Telegram renotify cooldown below, which only gates notifications.
+        if registration not in cfg.military_rapid_tracking:
+            # FR24 doesn't have photos for military tails — fall back to JetPhotos
+            existing_frame = cfg.store.get_airframe(registration)
+            if not existing_frame or not existing_frame.get("photo_url"):
+                try:
+                    photo_url = jetphotos.fetch_photo_url(registration)
+                    if photo_url:
+                        cfg.store.upsert_airframe_from_fr24(registration, photo_url=photo_url)
+                except Exception as exc:
+                    log.debug("JetPhotos photo fetch failed for %s: %s", registration, exc)
+
+            visit_flight_number = f"{callsign or registration}#{now_ts}"
+            arrival_id = cfg.store.record_filter_match(
+                registration, visit_flight_number, ["Military"], now_ts, now_ts,
+                detail=detail, extra_info=extra_info,
+            )
+            # First track point is written by the exit-check pass below (it runs over every
+            # currently-tracked aircraft, including this one, later in this same cycle) —
+            # adding it here too would double up the same timestamp.
+            cfg.military_rapid_tracking[registration] = {
+                "stationary_since_ts": None,  # airborne by definition — _is_on_approach() excludes "ground"
+                "last_in_radius_ts": now_ts,
+                "arrival_id": arrival_id,
+            }
+            log.info("Military visit started: %s", registration)
+
+        if not cfg.store.should_notify_military(registration, now_ts, cfg.military_renotify_hours):
+            continue
+
         try:
             message = _format_notification(ac, cfg.airport_iata, dist_nm)
             for dest_chat_id in cfg.all_chat_ids:
                 await context.bot.send_message(chat_id=dest_chat_id, text=message, parse_mode="HTML",
                                                disable_web_page_preview=True)
             cfg.store.mark_military_notified(registration, now_ts)
-            cfg.store.record_filter_match(
-                registration, callsign or registration, ["Military"], now_ts, now_ts,
-                detail=detail, extra_info=extra_info,
-            )
             log.info("Military notification sent: %s", registration)
         except Exception as exc:
             log.error("Failed to send military notification for %s: %s", registration, exc)
+
+    # Track points + exit check for everything currently being rapid-tracked. Runs over the
+    # full unfiltered `military` list, not the _is_on_approach()-gated loop above — a departing
+    # aircraft will by definition stop passing that filter.
+    if cfg.military_rapid_tracking:
+        by_reg = {}
+        for ac in military:
+            reg = (ac.get("r") or ac.get("hex") or "").strip().upper()
+            if reg and (ac.get("seen") or 999) <= 60:
+                by_reg[reg] = ac
+
+        for reg, entry in list(cfg.military_rapid_tracking.items()):
+            ac = by_reg.get(reg)
+
+            # A fast military jet doing circuits will routinely swing outside a tight radius
+            # (e.g. MILITARY_RADIUS_NM=10) mid-pattern and be back within a lap or two — that's
+            # NOT the aircraft leaving for good. So "outside radius this cycle" gets the exact
+            # same grace window as a reception gap, instead of ending the visit immediately.
+            # Only a real, sustained absence from the radius (10+ min) or confirmed-stationary
+            # (landed + slow, 10+ min) ends the visit — one unified rule for both.
+            if ac is not None:
+                lat, lon = ac.get("lat"), ac.get("lon")
+                if lat is not None and lon is not None:
+                    dist_nm = _haversine_nm(float(lat), float(lon), cfg.airport_lat, cfg.airport_lon)
+                    if dist_nm <= cfg.military_radius_nm:
+                        entry["last_in_radius_ts"] = now_ts
+                        cfg.store.add_military_track_point(entry["arrival_id"], now_ts, float(lat), float(lon))
+
+                        alt = ac.get("alt_baro")
+                        on_ground = (alt == "ground")
+                        if not on_ground:
+                            moving = True  # airborne at any altitude — including a hover — counts as active
+                        else:
+                            gs = ac.get("gs")
+                            try:
+                                moving = gs is not None and float(gs) > MILITARY_MOVING_GS_THRESHOLD
+                            except (TypeError, ValueError):
+                                moving = False
+                        if moving:
+                            entry["stationary_since_ts"] = None
+                        elif entry["stationary_since_ts"] is None:
+                            entry["stationary_since_ts"] = now_ts
+                    # else: outside radius this cycle — last_in_radius_ts/stationary_since_ts left
+                    # untouched, no track point added; handled by the grace-window checks below.
+
+            # ac is None (a brief reception gap — adsb.fi coverage regularly drops out for a
+            # minute or two) falls through the same way: state is left untouched this cycle.
+            exit_tracking = False
+            if entry["stationary_since_ts"] is not None and \
+               (now_ts - entry["stationary_since_ts"]) > MILITARY_STATIONARY_EXIT_SECS:
+                exit_tracking = True  # confirmed on the ground + slow, continuously, for 10 min
+            elif (now_ts - entry["last_in_radius_ts"]) > MILITARY_STATIONARY_EXIT_SECS:
+                exit_tracking = True  # not confirmed within radius for 10 min — presumed gone for good
+
+            if exit_tracking:
+                del cfg.military_rapid_tracking[reg]
+                log.info("Military visit ended: %s", reg)

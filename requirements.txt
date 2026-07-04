@@ -10,3 +10,4 @@ uvicorn[standard]>=0.30
 pywebpush>=2.0
 beautifulsoup4
 airportsdata
+curl_cffi

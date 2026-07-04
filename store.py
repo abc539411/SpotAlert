@@ -312,6 +312,19 @@ class SqliteStore:
             if "dep_confidence" not in fd_cols:
                 conn.execute("ALTER TABLE flight_departures ADD COLUMN dep_confidence INTEGER DEFAULT NULL")
 
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS military_track_points (
+                    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                    arrival_id INTEGER NOT NULL REFERENCES flight_arrivals(id) ON DELETE CASCADE,
+                    ts         INTEGER NOT NULL,
+                    lat        REAL NOT NULL,
+                    lon        REAL NOT NULL
+                )
+            """)
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_mtp_arrival ON military_track_points(arrival_id)
+            """)
+
             rth_cols = {row[1] for row in conn.execute("PRAGMA table_info(route_type_tracker)").fetchall()}
             if "origin_iata" not in rth_cols:
                 conn.execute("ALTER TABLE route_type_tracker ADD COLUMN origin_iata TEXT DEFAULT NULL")
@@ -997,6 +1010,31 @@ class SqliteStore:
                 (now_ts, registration.strip()),
             )
 
+    def add_military_track_point(self, arrival_id: int, ts: int, lat: float, lon: float) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO military_track_points(arrival_id, ts, lat, lon) VALUES (?,?,?,?)",
+                (arrival_id, ts, lat, lon),
+            )
+
+    def get_military_track_points(self, arrival_ids: list) -> dict:
+        """Return {arrival_id: [{ts, lat, lon}, ...]} for the given arrival ids, ordered by ts."""
+        if not arrival_ids:
+            return {}
+        with self._connect() as conn:
+            ph = ",".join("?" * len(arrival_ids))
+            rows = conn.execute(
+                f"SELECT arrival_id, ts, lat, lon FROM military_track_points "
+                f"WHERE arrival_id IN ({ph}) ORDER BY arrival_id, ts",
+                arrival_ids,
+            ).fetchall()
+        out: dict = {}
+        for row in rows:
+            out.setdefault(row["arrival_id"], []).append(
+                {"ts": row["ts"], "lat": row["lat"], "lon": row["lon"]}
+            )
+        return out
+
     # ------------------------------------------------------------------
     # Follow-up tracking (reminder + cancellation/diversion)
     # ------------------------------------------------------------------
@@ -1140,11 +1178,12 @@ class SqliteStore:
         origin_name: str = None,
         arrival_date: str = None,
         airline_icao: str = None,
-    ) -> None:
-        """Store a filter-matched flight in flight_arrivals. Merges notif_types if already present."""
+    ) -> Optional[int]:
+        """Store a filter-matched flight in flight_arrivals. Merges notif_types if already present.
+        Returns the affected row's id."""
         if not registration or not registration.strip():
             log.warning("record_filter_match: skipping flight %s with empty registration", flight_number)
-            return
+            return None
         with self._connect() as conn:
             if arrival_date:
                 existing = conn.execute(
@@ -1168,8 +1207,9 @@ class SqliteStore:
                         "UPDATE flight_arrivals SET notif_types = ? WHERE id = ?",
                         (json.dumps(merged), existing["id"]),
                     )
+                return existing["id"]
             else:
-                conn.execute(
+                cursor = conn.execute(
                     """INSERT OR IGNORE INTO flight_arrivals
                        (registration, flight_number, arrival_ts, first_seen_ts,
                         notif_types, detail, extra_info, origin_iata, origin_name,
@@ -1179,6 +1219,7 @@ class SqliteStore:
                      json.dumps(notif_types), detail, extra_info, origin_iata, origin_name,
                      arrival_date, airline_icao or None),
                 )
+                return cursor.lastrowid
 
     def cleanup_arrived_flights(self, now_ts: int) -> None:
         """Prune complete days older than 30 days — never cuts through a partial day.

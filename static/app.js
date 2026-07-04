@@ -348,7 +348,11 @@ function regoCard(group) {
   const nowTs  = Math.floor(Date.now() / 1000);
   const photo  = group.photo_url || '';
   const status = _cardStatus(group, nowTs);
-  const { airline, acType } = _parseDetail(group.detail || '');
+  const { airline: _parsedAirline, acType } = _parseDetail(group.detail || '');
+  const isMilitary = (group.notif_types || []).includes('Military');
+  const airline = isMilitary
+    ? (group.extra_info || '').split(' · ')[0]
+    : _parsedAirline;
   const count  = (group.flights || []).length;
   const encoded = esc(JSON.stringify(group));
 
@@ -356,8 +360,9 @@ function regoCard(group) {
     `<span class="chip ${chipClass(t)}">${chipLabel(t)}</span>`
   ).join('');
 
-  const { airline: _alName } = _parseDetail(group.detail || '');
-  const airlineLogo = _airlineLogoByIcao(group.airline_icao || '', 23, _alName);
+  const airlineLogo = isMilitary
+    ? _airforceRoundelImg(airline, 23)
+    : _airlineLogoByIcao(group.airline_icao || '', 23, _parsedAirline);
   return `<div class="sq" onclick="openDetail(this)" data-r="${encoded}">
     ${photo ? `<div class="sq-bg" style="background-image:url('${esc(photo)}')"></div>` : ''}
     <div class="sq-top">
@@ -481,6 +486,23 @@ function _detailInner(r, closeCmd, showPhoto = true) {
       };
       return _renderRouteBar(fData, fR);
     }).join('');
+    const isMilitary = (r.notif_types || []).includes('Military');
+    // Newest visit first — r.flights is chronological ascending, the carousel should open on the latest.
+    const mapFlights = isMilitary ? [...r.flights].reverse() : [];
+    const mapPages = isMilitary ? mapFlights.map((f, i) => {
+      const mapId = `${lazyId}-map-${i}`;
+      const mapLabel = fmtTs(f.arrival_ts, { weekday: 'short', hour: '2-digit', minute: '2-digit' });
+      return `<div class="mil-map-page">
+        <div class="mil-map-label">Detected ${esc(mapLabel)}</div>
+        <div class="mil-map" id="${mapId}" data-track='${esc(JSON.stringify(f.track || []))}'></div>
+      </div>`;
+    }).join('') : '';
+    const mapDots = isMilitary && r.flights.length > 1
+      ? `<div class="mil-map-dots">${r.flights.map((_, i) => `<span class="mil-map-dot${i === 0 ? ' active' : ''}"></span>`).join('')}</div>`
+      : '';
+    const mapSections = isMilitary
+      ? `<div class="mil-map-carousel" id="${lazyId}-map-carousel">${mapPages}</div>${mapDots}`
+      : '';
 
     return `
       ${showPhoto && photo ? `<img class="detail-photo" src="${esc(fullPhoto)}" alt="${esc(r.registration)}" onerror="this.src='${esc(photo)}'">` : ''}
@@ -499,10 +521,10 @@ function _detailInner(r, closeCmd, showPhoto = true) {
         ${acType ? `<span class="fc-actype">${esc(acType)}</span>` : ''}
       </div>
       ${airline ? `<div style="margin-top:7px;font-size:12px;color:var(--dim)">${esc(airline)}</div>` : ''}
-      ${r.extra_info ? `<div style="margin-top:6px;font-size:12px;color:var(--dim);font-style:italic;line-height:1.4">${esc(r.extra_info)}</div>` : ''}
-      <div${r.flights.length > 2 ? ' class="flight-bars-scroll" style="max-height:290px"' : ''}>${flightBars}</div>
+      ${r.extra_info && !isMilitary ? `<div style="margin-top:6px;font-size:12px;color:var(--dim);font-style:italic;line-height:1.4">${esc(r.extra_info)}</div>` : ''}
+      ${isMilitary ? mapSections : `<div${r.flights.length > 2 ? ' class="flight-bars-scroll" style="max-height:290px"' : ''}>${flightBars}</div>`}
       <div class="detail-cards">
-        <div class="dc"><span class="lbl">Last Visit</span><span class="val" id="${lazyId}-lastseen" style="color:var(--dim)">—</span></div>
+        ${isMilitary ? '' : `<div class="dc"><span class="lbl">Last Visit</span><span class="val" id="${lazyId}-lastseen" style="color:var(--dim)">—</span></div>`}
         <div class="dc"><span class="lbl">Spotted</span><div id="${spotId}" style="margin-top:4px;color:var(--dim);font-size:12px">Never</div></div>
       </div>`;
   }
@@ -587,6 +609,52 @@ async function openDetail(el) {
     ? ('rego_' + r.registration)
     : (r.id || (r.registration + '_' + (r.arrival_ts || 0)));
   _loadAircraftDetail(r.registration, lazyUid, r);
+
+  requestAnimationFrame(_initMilMaps);
+}
+
+function _initMilMaps() {
+  document.querySelectorAll('.mil-map').forEach(el => {
+    if (el.dataset.mapInit) return;
+    el.dataset.mapInit = '1';
+    const track = JSON.parse(el.dataset.track || '[]');
+    if (!track.length) { el.closest('.mil-map-page')?.remove(); return; }
+    // These are small visit-preview maps inside a swipeable carousel — dragging/pinch
+    // would fight the carousel's own swipe gesture, so panning is disabled; +/- still zooms.
+    const map = L.map(el, {
+      attributionControl: false,
+      dragging: false, touchZoom: false, scrollWheelZoom: false,
+      doubleClickZoom: false, boxZoom: false, keyboard: false,
+    });
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 18 }).addTo(map);
+    const pts = track.map(p => [p.lat, p.lon]);
+    if (pts.length === 1) {
+      L.marker(pts[0]).addTo(map);
+      map.setView(pts[0], 11);
+    } else {
+      const line = L.polyline(pts, { color: '#3b82f6', weight: 3 }).addTo(map);
+      map.fitBounds(line.getBounds(), { padding: [16, 16] });
+    }
+  });
+
+  // Sync the dot indicator to whichever map page is currently snapped into view, and
+  // enable click-and-drag paging on desktop (no touch swipe there, native overflow-x
+  // drag-to-scroll isn't a thing, and the map's own dragging is disabled above).
+  document.querySelectorAll('.mil-map-carousel').forEach(carousel => {
+    if (carousel.dataset.dotsInit) return;
+    carousel.dataset.dotsInit = '1';
+    _initDragScroll(carousel, () => {
+      const idx = Math.round(carousel.scrollLeft / carousel.clientWidth);
+      carousel.scrollTo({ left: idx * carousel.clientWidth, behavior: 'smooth' });
+    });
+    const dotsEl = carousel.nextElementSibling;
+    if (!dotsEl || !dotsEl.classList.contains('mil-map-dots')) return;
+    const dots = dotsEl.querySelectorAll('.mil-map-dot');
+    carousel.addEventListener('scroll', () => {
+      const idx = Math.round(carousel.scrollLeft / carousel.clientWidth);
+      dots.forEach((d, i) => d.classList.toggle('active', i === idx));
+    }, { passive: true });
+  });
 }
 
 function collapseGridDetail() {
@@ -1865,6 +1933,12 @@ function _airlineLogoByIcao(icao, size = 28, fallbackName = '') {
   const src = icao
     ? `/api/airline-logo/${encodeURIComponent(icao)}?v=${_LOGO_V}`
     : `/api/airline-logo-name/${encodeURIComponent(fallbackName.replace(/\s*\(.*?\)/g,'').trim())}?v=${_LOGO_V}`;
+  return `<img src="${src}" onerror="this.style.display='none'" loading="lazy" alt="" style="height:${size}px;max-width:${size * 2}px;object-fit:contain;flex-shrink:0">`;
+}
+
+function _airforceRoundelImg(country, size = 28) {
+  if (!country) return '';
+  const src = `/api/airforce-roundel/${encodeURIComponent(country)}?v=${_LOGO_V}`;
   return `<img src="${src}" onerror="this.style.display='none'" loading="lazy" alt="" style="height:${size}px;max-width:${size * 2}px;object-fit:contain;flex-shrink:0">`;
 }
 
@@ -3458,7 +3532,7 @@ async function _srchInit() {
     });
     _srchDDSetOptions('srch-dd-cat-airport', (d.airports || []).map(ap => ({
       value: ap.iata,
-      label: _srchCatApNames[ap.iata],
+      label: `${ap.iata} · ${_srchCatApNames[ap.iata]}`,
     })));
 
     // Keywords
@@ -3548,6 +3622,16 @@ async function _srchExec() {
         const apName   = _srchCatApNames[s.airport] || s.airport;
         const kwPills  = s.keywords.map(k => `<span class="col-sp-tag ${_colTagClass(k)}">${esc(k)}</span>`).join('');
         const notesHtml = s.notes ? `<span style="font-size:11px;color:var(--dim);font-style:italic;white-space:nowrap;flex-shrink:0">${esc(s.notes)}</span>` : '';
+        if (window.innerWidth < 768) {
+          const hasKw = kwPills.length > 0;
+          return `<div class="srch-fl-row srch-fl-row-m">
+            <div class="srch-fl-m-row1">
+              <span class="srch-fl-date">${esc(s.date)}</span>
+              ${aflag}<span>${esc(s.airport)}</span>
+            </div>
+            ${hasKw ? `<div class="srch-fl-m-row2">${kwPills}${notesHtml}</div>` : ''}
+          </div>`;
+        }
         return `<div class="srch-fl-row" style="display:flex;gap:8px;align-items:center">
           <span class="srch-fl-date" style="flex-shrink:0;width:90px">${esc(s.date)}</span>
           <span class="srch-fl-fn srch-cat-ap" style="display:inline-flex;align-items:center;gap:5px;white-space:nowrap;flex-shrink:0">${aflag}${esc(apName)}</span>
@@ -3557,14 +3641,22 @@ async function _srchExec() {
         </div>`;
       }).join('');
       const sessionPill = `<span style="display:inline-flex;align-items:center;gap:5px;background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:2px 10px;font-size:11px;white-space:nowrap;flex-shrink:0"><span style="color:var(--dim);text-transform:uppercase;letter-spacing:.05em;font-size:10px">Sessions</span><span style="font-weight:600">${r.sessions.length}</span></span>`;
+      const airlineHtml = airlineName ? `<span style="font-size:12px;color:var(--dim)">${esc(airlineName)}${r.aircraft_type ? `<span style="margin:0 4px;opacity:.4">·</span>${esc(r.aircraft_type)}` : ''}</span>` : '';
+      const headerHtml = window.innerWidth < 768
+        ? `<div class="srch-fl-header-m">
+            <div class="srch-fl-hm-row1"><span class="srch-fl-rego"><span style="width:40px;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0">${logo || flag || ''}</span>${esc(r.reg)}</span>${badge}</div>
+            ${airlineHtml ? `<div class="srch-fl-hm-row2">${airlineHtml}</div>` : ''}
+            <div class="srch-fl-hm-row3">${sessionPill}</div>
+          </div>`
+        : `<div class="srch-fl-header">
+            <span class="srch-fl-rego"><span style="width:40px;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0">${logo || flag || ''}</span>${esc(r.reg)}</span>
+            ${badge}
+            ${airlineHtml}
+            <span style="flex:1"></span>
+            ${sessionPill}
+          </div>`;
       return `<div class="srch-fl-card">
-        <div class="srch-fl-header">
-          <span class="srch-fl-rego"><span style="width:40px;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0">${logo || flag || ''}</span>${esc(r.reg)}</span>
-          ${badge}
-          ${airlineName ? `<span style="font-size:12px;color:var(--dim)">${esc(airlineName)}${r.aircraft_type ? `<span style="margin:0 4px;opacity:.4">·</span>${esc(r.aircraft_type)}` : ''}</span>` : ''}
-          <span style="flex:1"></span>
-          ${sessionPill}
-        </div>
+        ${headerHtml}
         <div class="srch-fl-rows">${rows}</div>
       </div>`;
     }));
@@ -3688,6 +3780,12 @@ async function _srchRtExec() {
       // Header: logo + flight number + airline · route
       const logo = g.airline ? _srchLogoWithFallback('', g.airline, 20, '') : '';
       const routeTxt = (() => {
+        if (window.innerWidth < 768) {
+          const home = esc(g.airport_iata);
+          if (g.origin_iata) return `${esc(g.origin_iata)} → ${home}`;
+          if (g.dest_iata)   return `${home} → ${esc(g.dest_iata)}`;
+          return home;
+        }
         const home = esc(_shortAirportName(g.airport_name) || g.airport_iata);
         if (g.origin_iata) { const o = esc(_shortAirportName(g.origin_name) || g.origin_iata); return `${o} → ${home}`; }
         if (g.dest_iata)   { const d = esc(_shortAirportName(g.dest_name)   || g.dest_iata);   return `${home} → ${d}`; }
@@ -4013,7 +4111,9 @@ async function _srchFlExec() {
       const rows = pastFlights.map(f => {
         const arrDt = new Date(f.arrival_ts * 1000);
         const dateStr = arrDt.toLocaleDateString(undefined, { day:'numeric', month:'short', year:'numeric' });
-        const originName = f.origin_name || f.origin_iata || '—';
+        const originName = window.innerWidth < 768
+          ? (f.origin_iata || f.origin_name || '—')
+          : (f.origin_name || f.origin_iata || '—');
         const originCc = f.origin_country_code || _airportCountry(f.origin_iata || '');
         const originFlag = originCc ? _flag(originCc, { h: 11 }) : '';
         return `<div class="srch-fl-row">

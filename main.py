@@ -15,7 +15,7 @@ from environs import Env
 from flightradar24api import FlightRadar24API
 from store import SqliteStore
 from monitor import run_check
-from military import check_military
+from military import check_military, MILITARY_RAPID_INTERVAL_SECS
 from lightroom import find_catalog
 
 log = logging.getLogger(__name__)
@@ -97,6 +97,10 @@ class AppConfig:
     # Rapid mode — in-memory only, never persisted
     rapid_mode: bool = field(repr=False, default=False)
     rapid_mode_interval: int = 120    # seconds, loaded from RAPID_MODE_INTERVAL_MINS
+
+    # Military auto rapid-tracking — in-memory only, never persisted.
+    # {registration: {"stationary_since_ts": int|None, "last_in_radius_ts": int, "arrival_id": int}}
+    military_rapid_tracking: dict = field(repr=False, default_factory=dict)
 
     # Dependencies — excluded from repr/comparison
     fr_api: object = field(repr=False, default=None)
@@ -287,7 +291,8 @@ async def _run_military(cfg: AppConfig) -> None:
         except Exception as _e:
             log.exception("Military check failed")
             _ss.record_task('military_check', False, str(_e))
-        await asyncio.sleep(cfg.military_check_interval)
+        interval = MILITARY_RAPID_INTERVAL_SECS if cfg.military_rapid_tracking else cfg.military_check_interval
+        await asyncio.sleep(interval)
 
 
 async def _run_backup(store) -> None:

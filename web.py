@@ -593,6 +593,7 @@ def create_app(cfg=None) -> FastAPI:
                 "arr_date":  arr_date,
                 "dep_date":  dep_date,
                 "flight": {
+                    "fe_id":          row["fe_id"],
                     "flight_number":  fn,
                     "arrival_ts":     arr_ts,
                     "arr_local_min":  arr_local_min,
@@ -662,6 +663,23 @@ def create_app(cfg=None) -> FastAPI:
         for date_str, cards in day_cards.items():
             for card in cards.values():
                 card["flights"].sort(key=lambda f: f["arrival_ts"] or 0)
+
+        # Attach flown-path track points to military flight events
+        military_fe_ids = [
+            f["fe_id"]
+            for cards in day_cards.values()
+            for card in cards.values()
+            if "Military" in card["notif_types"]
+            for f in card["flights"]
+        ]
+        if military_fe_ids:
+            track_map = store_.get_military_track_points(military_fe_ids)
+            for cards in day_cards.values():
+                for card in cards.values():
+                    if "Military" not in card["notif_types"]:
+                        continue
+                    for f in card["flights"]:
+                        f["track"] = track_map.get(f["fe_id"], [])
 
         today_local = now_dt.date()
         days_result = []
@@ -1766,9 +1784,14 @@ def create_app(cfg=None) -> FastAPI:
                     FROM flight_arrivals fe WHERE fe.detail != '' AND fe.detail IS NOT NULL
                 )
             """).fetchall()
+        def _short_airport_name(name):
+            n = _re2.sub(r'\s*\bInternational\b', '', name or '', flags=_re2.IGNORECASE)
+            n = _re2.sub(r'\s*\bAirports?\b', '', n, flags=_re2.IGNORECASE)
+            return _re2.sub(r'\s+', ' ', n).strip()
         def _iata_label(iata, name):
-            if name and name.strip() and name.upper() != iata.upper():
-                return f"{iata} · {name}"
+            short = _short_airport_name(name)
+            if short and short.upper() != iata.upper():
+                return f"{iata} · {short}"
             return iata
         origins  = [_iata_label(r['iata'], r['name'] or '') for r in origin_rows]
         dests    = [_iata_label(r['iata'], r['name'] or '') for r in dest_rows]
@@ -1784,7 +1807,8 @@ def create_app(cfg=None) -> FastAPI:
         cfg_ = getattr(app.state, 'cfg', None)
         home_iata = (cfg_.airport_iata if cfg_ else None) or store_.load_setting("AIRPORT_CODE") or ""
         home_name = (cfg_.airport_name if cfg_ else None) or ""
-        home_label = f"{home_iata} · {home_name}" if home_name and home_name.upper() != home_iata.upper() else home_iata
+        home_short = _short_airport_name(home_name)
+        home_label = f"{home_iata} · {home_short}" if home_short and home_short.upper() != home_iata.upper() else home_iata
         return JSONResponse({'origins': origins, 'dests': dests, 'airlines': airlines, 'home': home_label})
 
     @app.get("/api/search/route")
@@ -2521,20 +2545,56 @@ def create_app(cfg=None) -> FastAPI:
             row = _conn.execute("SELECT value FROM settings WHERE key='LOGOSTREAM_API_KEY'").fetchone()
         return row[0] if row else ""
 
-    def _fetch_airforce_roundel(icao: str):
-        """Fetch air force roundel from GitHub CDN, save to disk. Returns (Path, media_type) or None."""
+    def _airforce_roundel_filenames():
+        """List of available roundel filenames in the World-Airforce-Insignia CDN repo,
+        fetched from the GitHub API once and cached to disk. No hardcoded country list —
+        whatever the repo has is what we can fuzzy-match against."""
         import json as _json, requests as _req
-        mapping_path = Path(__file__).parent / "static" / "airforce_roundels.json"
-        if not mapping_path.exists():
-            return None, None
+        index_path = Path(__file__).parent / "static" / "airforce_roundels_index.json"
+        if index_path.exists():
+            try:
+                return _json.loads(index_path.read_text())
+            except Exception:
+                pass
         try:
-            mapping = _json.loads(mapping_path.read_text())
+            r = _req.get(
+                "https://api.github.com/repos/chaseAEd/World-Airforce-Insignia/contents/Flags",
+                timeout=10,
+            )
+            r.raise_for_status()
+            files = [item["name"] for item in r.json() if item["name"].lower().endswith(".png")]
+            if files:
+                index_path.write_text(_json.dumps(files))
+            return files
         except Exception:
+            return []
+
+    def _fetch_airforce_roundel(country: str):
+        """Fuzzy-match a country name against the roundel repo's file list, fetch from
+        GitHub CDN, save to disk. Returns (Path, media_type) or (None, None)."""
+        import re as _re3, difflib, requests as _req
+        if not country:
             return None, None
-        filename = mapping.get(icao.upper())
-        if not filename:
+        files = _airforce_roundel_filenames()
+        if not files:
             return None, None
-        cache_path = Path(__file__).parent / "static" / "airline_logos" / f"{icao}_af.png"
+
+        def _norm(s):
+            s = _re3.sub(r'\s*\(.*?\)', '', s)   # strip "(1990-)" style suffixes
+            s = s.rsplit('.', 1)[0]              # strip extension
+            return s.strip().lower()
+
+        norm_map = {_norm(f): f for f in files}
+        query = country.strip().lower()
+        match = difflib.get_close_matches(query, norm_map.keys(), n=1, cutoff=0.6)
+        if not match:
+            match = [k for k in norm_map if query in k or k in query][:1]
+        if not match:
+            return None, None
+        filename = norm_map[match[0]]
+
+        safe_key = _re3.sub(r'[^a-z0-9]+', '_', query).strip('_')
+        cache_path = Path(__file__).parent / "static" / "airline_logos" / f"af_{safe_key}.png"
         if cache_path.exists():
             return cache_path, "image/png"
         url = f"https://cdn.jsdelivr.net/gh/chaseAEd/World-Airforce-Insignia@master/Flags/{filename}"
@@ -2601,16 +2661,22 @@ def create_app(cfg=None) -> FastAPI:
                 return p, mt
         return None, None
 
+    @app.get("/api/airforce-roundel/{country}")
+    async def get_airforce_roundel(country: str):
+        cache_path, media = _fetch_airforce_roundel(country.strip())
+        if not cache_path:
+            raise HTTPException(404, "Roundel not found")
+        from fastapi.responses import FileResponse
+        return FileResponse(str(cache_path), media_type=media,
+                            headers={"Cache-Control": "public, max-age=2592000"})
+
     @app.get("/api/airline-logo/{icao}")
     async def get_airline_logo(icao: str):
         import re as _re
         icao = icao.upper().strip()
         if not _re.match(r'^[A-Z0-9]{2,4}$', icao):
             raise HTTPException(400, "Invalid ICAO code")
-        # Check air force roundel mapping first
-        cache_path, media = _fetch_airforce_roundel(icao)
-        if not cache_path:
-            cache_path, media = _cached_logo_path(icao)
+        cache_path, media = _cached_logo_path(icao)
         if not cache_path:
             try:
                 cache_path, media = _fetch_and_cache_logo(icao)
@@ -2712,7 +2778,7 @@ def create_app(cfg=None) -> FastAPI:
         result: dict[str, Any] = {"now_ts": now, "rapid_mode": False, "version": VERSION,
                                    "runtime_secs": now - _PROCESS_START_TS, **_system_info()}
         if cfg is not None:
-            result["rapid_mode"] = getattr(cfg, "rapid_mode", False)
+            result["rapid_mode"] = bool(getattr(cfg, "military_rapid_tracking", None))
             result["airport_name"] = cfg.airport_name
             result["airport_iata"] = cfg.airport_iata
             result["airport_tz"]   = getattr(cfg, "airport_tz", "")

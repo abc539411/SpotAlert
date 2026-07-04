@@ -77,6 +77,15 @@
     .nav-tab:hover { color: var(--text); }
     .nav-tab.active { color: var(--text); border-bottom-color: var(--accent); }
     .tab-icon { display: none; }
+    @media (min-width: 768px) {
+      /* Desktop order: Spotting, Feed, Collection, Search, Settings.
+         DOM order is Spotting, Collection, Feed, Search, Settings (mobile's order) — reorder visually here only. */
+      .nav-tab[data-tab="recommendation"] { order: 1; }
+      .nav-tab[data-tab="history"]        { order: 2; }
+      .nav-tab[data-tab="collection"]     { order: 3; }
+      .nav-tab[data-tab="search"]         { order: 4; }
+      .nav-tab[data-tab="settings"]       { order: 5; }
+    }
 
     /* ── Nav — mobile: fixed bottom bar ──────────────────────────────────── */
     @media (max-width: 767px) {
@@ -232,7 +241,7 @@
       max-height: 0; overflow: hidden; opacity: 0;
       transition: max-height .3s ease, opacity .2s ease;
     }
-    .grid-detail.open { max-height: 600px; opacity: 1; }
+    .grid-detail.open { max-height: 600px; opacity: 1; overflow-y: auto; }
     .gd-inner {
       padding: 14px 16px;
       margin-left: var(--card-left, 0px);
@@ -490,6 +499,27 @@
     .tags-input:focus { outline: none; border-color: var(--accent); }
     .tags-input::placeholder { color: var(--dim); }
 
+    @media (max-width: 767px) {
+      /* Settings minicards: title / description / input, each its own row */
+      .setting-row {
+        flex-direction: column; align-items: flex-start; gap: 6px;
+        max-width: 100%; box-sizing: border-box; overflow-x: hidden;
+      }
+      .setting-control, .setting-input, .setting-select {
+        width: 100% !important; box-sizing: border-box; max-width: 100%;
+      }
+      input[type="time"].setting-input { width: 100% !important; }
+      /* Prevent long unbroken text (keys, descriptions, values) from forcing horizontal scroll */
+      .set-subtab-page, .settings-group, .setting-row-full, .page-col-block, .page-col, .page-cols {
+        max-width: 100%; overflow-x: hidden; box-sizing: border-box;
+      }
+      .setting-label, .setting-key, .setting-desc { min-width: 0; overflow-wrap: break-word; word-break: break-word; }
+      .setting-label { width: 100%; }
+      /* App info hero card: let the text block shrink and wrap instead of forcing width */
+      .info-hero { max-width: 100%; }
+      .info-hero > div { min-width: 0; flex: 1; }
+      .info-title, .info-subtitle, .info-subtitle a { overflow-wrap: break-word; word-break: break-word; }
+    }
     /* Unused highlight */
     .setting-unused { background: rgba(239,68,68,0.06) !important; border-color: rgba(239,68,68,0.25) !important; }
     .setting-unused .setting-key { color: #ef4444; }
@@ -813,6 +843,24 @@
     .rfc-remarks-pills { display: flex; flex-wrap: wrap; gap: 4px; }
     .rfc-remark-pill { font-size: 10px; background: var(--surface2); color: var(--text); padding: 2px 7px; border-radius: 10px; }
     .rfc-remark-pill.rfc-remark-dq { background: rgba(239,68,68,0.18); color: #f87171; }
+    .mil-map-carousel {
+      display: flex; flex-direction: row; overflow-x: auto; overflow-y: hidden;
+      margin-top: 8px;
+      scrollbar-width: none;
+    }
+    .mil-map-carousel::-webkit-scrollbar { display: none; height: 0; }
+    .mil-map-page { flex: 0 0 100%; width: 100%; }
+    /* CSS scroll-snap fights the JS drag-scroll's manual scrollLeft updates (causes stutter on
+       desktop) — only enable native snap on mobile, where there's no JS drag, just touch swipe. */
+    @media (max-width: 767px) {
+      .mil-map-carousel { scroll-snap-type: x mandatory; }
+      .mil-map-page { scroll-snap-align: start; scroll-snap-stop: always; }
+    }
+    .mil-map-label { font-size: 10px; color: var(--dim); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 4px; }
+    .mil-map { height: 220px; border-radius: var(--r); overflow: hidden; background: var(--surface2); }
+    .mil-map-dots { display: flex; gap: 5px; justify-content: center; margin-top: 6px; }
+    .mil-map-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--border); flex: none; }
+    .mil-map-dot.active { background: var(--accent); }
     .rec-day.rec-today { border-color: var(--accent); }
     .rec-day-hdr {
       padding: 3px 10px 2px; border-bottom: 1px solid var(--border);
@@ -1078,6 +1126,17 @@
         margin-left: 0 !important; width: 100%;
         justify-content: flex-start !important; text-align: left;
       }
+      /* Catalogue session mini-cards: 2 stacked rows, left-aligned */
+      .srch-fl-row-m {
+        display: flex !important; flex-direction: column !important; align-items: flex-start !important;
+        gap: 4px; text-align: left; width: 100%;
+      }
+      .srch-fl-m-row1 { display: flex; align-items: center; gap: 6px; width: 100%; text-align: left; }
+      .srch-fl-m-row2 { display: flex; align-items: center; gap: 6px; width: 100%; text-align: left; }
+      /* Catalogue card header: rego / airline+type / sessions pill, each its own row */
+      .srch-fl-header-m { display: flex; flex-direction: column; align-items: flex-start; gap: 5px; }
+      .srch-fl-hm-row1 { display: flex; align-items: center; gap: 6px; }
+      .srch-fl-hm-row2, .srch-fl-hm-row3 { display: flex; align-items: center; }
     }
     .col-stats-panel-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; flex-shrink: 0; }
     .col-stats-panel-title { font-size: 11px; font-weight: 700; color: var(--dim); text-transform: uppercase; letter-spacing: .08em; }
@@ -1237,6 +1296,8 @@
     .srch-sessions { display: flex; flex-wrap: wrap; gap: 5px; }
   </style>
   <script src="https://cdn.jsdelivr.net/npm/twemoji@14.0.2/dist/twemoji.min.js" crossorigin="anonymous"></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 </head>
 <body>
 

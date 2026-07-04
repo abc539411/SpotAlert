@@ -1488,6 +1488,9 @@ async def run_check(context: ContextTypes.DEFAULT_TYPE) -> None:
                 _nt = _jc.loads(_fr["notif_types"] or "[]")
             except Exception:
                 _nt = []
+            if "Military" in _nt:
+                # Military flights are Feed-only: excluded from clustering/Spotting tab
+                continue
 
             _common = {
                 "registration":  _fr["registration"],
