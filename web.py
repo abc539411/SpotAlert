@@ -607,10 +607,15 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         return JSONResponse({"status": None})
 
     @app.get("/api/aircraft/{registration}")
-    async def get_aircraft(registration: str):
-        cfg   = app.state.cfg
-        store = app.state.store
-        airport_iata = (cfg.airport_iata if cfg else None) or store.load_setting("AIRPORT_CODE") or getattr(app.state, 'settings', {}).get("AIRPORT_CODE") or ""
+    async def get_aircraft(registration: str, user=Depends(_auth_current_user)):
+        # Airport-specific data (flight_arrivals, departure_patterns predictions,
+        # route lookup) must resolve to whichever airport the user has selected —
+        # catalog data (last-spotted/sessions) stays global/user-scoped regardless
+        # of airport, per the design (Phase 5 will make it per-user; for now it's
+        # still the single shared app.state.catalog).
+        cfg   = _cfg_for_user(user)
+        store = cfg.store
+        airport_iata = cfg.airport_iata if cfg else (store.load_setting("AIRPORT_CODE") or "")
         result: dict = {}
 
         # Lightroom: last spotted + all sessions
@@ -1883,8 +1888,8 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         return JSONResponse({'alliances': results})
 
     @app.get("/api/search/flight-filters")
-    async def search_flight_filters():
-        store_ = app.state.store
+    async def search_flight_filters(user=Depends(_auth_current_user)):
+        store_ = _cfg_for_user(user).store
         with store_._connect() as conn:
             mfrs = [r[0] for r in conn.execute(
                 "SELECT DISTINCT manufacturer FROM rego_sightings WHERE manufacturer IS NOT NULL AND manufacturer != '' ORDER BY manufacturer"
@@ -1898,9 +1903,9 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         return JSONResponse({'manufacturers': mfrs, 'airlines': airlines, 'types': types})
 
     @app.get("/api/search/flights")
-    async def search_flights(rego: str = ""):
+    async def search_flights(rego: str = "", user=Depends(_auth_current_user)):
         rego = rego.strip().upper()
-        store_ = app.state.store
+        store_ = _cfg_for_user(user).store
         pat = f'%{rego}%' if rego else '%'
         with store_._connect() as conn:
             rows = conn.execute("""
@@ -1971,8 +1976,8 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         return JSONResponse({'results': results, 'sighting_only': sighting_only})
 
     @app.get("/api/search/route-filters")
-    async def search_route_filters():
-        store_ = app.state.store
+    async def search_route_filters(user=Depends(_auth_current_user)):
+        store_ = _cfg_for_user(user).store
         import re as _re2
         with store_._connect() as conn:
             # Origins: flight_arrivals (historical) UNION route_type_tracker (future)
@@ -2030,7 +2035,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                 seen_airlines.add(name)
                 airlines.append(name)
         airlines.sort()
-        cfg_ = getattr(app.state, 'cfg', None)
+        cfg_ = _cfg_for_user(user)
         home_iata = (cfg_.airport_iata if cfg_ else None) or store_.load_setting("AIRPORT_CODE") or ""
         home_name = (cfg_.airport_name if cfg_ else None) or ""
         home_short = _short_airport_name(home_name)
@@ -2039,9 +2044,10 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
 
     @app.get("/api/search/route")
     async def search_route(fn: str = "", origin: _List[str] = _Query(default=[]),
-                           dest: _List[str] = _Query(default=[]), airline: _List[str] = _Query(default=[])):
+                           dest: _List[str] = _Query(default=[]), airline: _List[str] = _Query(default=[]),
+                           user=Depends(_auth_current_user)):
         fn = fn.strip().upper()
-        store_ = app.state.store
+        store_ = _cfg_for_user(user).store
         def _iata(label): return label.split('·')[0].strip().upper() if '·' in label else label.strip().upper()
         origins  = [_iata(v) for v in origin]
         dests    = [_iata(v) for v in dest]
