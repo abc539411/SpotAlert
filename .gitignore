@@ -13,6 +13,9 @@ data/*.db-shm
 data/*.db-wal
 data/backups/
 
+# Local pre-migration backups (DB dumps pulled from the deployed server)
+/backups/
+
 # Logs
 logs/
 
