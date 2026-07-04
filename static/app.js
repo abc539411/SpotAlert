@@ -53,6 +53,73 @@ async function api(path, opts = {}) {
   return r.json();
 }
 
+// ── Auth gate: login screen + airport picker, decided client-side after the
+// shell loads (never a server-side redirect — the service worker precaches '/'
+// cache-first, so a redirect there could be silently bypassed by a stale cache). ──
+
+function _showAuthView(id) {
+  ['view-login', 'view-airport-picker'].forEach(v => $(v).classList.toggle('hidden', v !== id));
+}
+function _hideAuthViews() {
+  ['view-login', 'view-airport-picker'].forEach(v => $(v).classList.add('hidden'));
+}
+
+async function _authBoot() {
+  let me;
+  try { me = await api('/me'); } catch { me = { authenticated: false }; }
+  if (!me.authenticated) { _showAuthView('view-login'); return; }
+  if (!me.airport) { _renderAirportPicker(me.airports || []); _showAuthView('view-airport-picker'); return; }
+  _hideAuthViews();
+}
+
+async function doLogin() {
+  const username = $('login-username').value.trim();
+  const password = $('login-password').value;
+  const errEl = $('login-error');
+  errEl.classList.add('hidden');
+  try {
+    await api('/auth/login', { method: 'POST', body: JSON.stringify({ username, password }) });
+    location.reload();
+  } catch (e) {
+    errEl.textContent = 'Invalid username or password';
+    errEl.classList.remove('hidden');
+  }
+}
+
+async function doLogout() {
+  try { await api('/auth/logout', { method: 'POST' }); } catch {}
+  location.reload();
+}
+
+function _renderAirportPicker(airports) {
+  const el = $('airport-picker-list');
+  if (!airports.length) {
+    el.innerHTML = '<div class="airport-picker-empty">No airports assigned to your account yet.</div>';
+    return;
+  }
+  el.innerHTML = airports.map(a =>
+    `<button class="airport-pick-btn" onclick="selectAirport('${esc(a.iata)}')">${esc(a.name)} (${esc(a.iata)})</button>`
+  ).join('');
+}
+
+async function selectAirport(iata) {
+  try {
+    await api('/airport/select', { method: 'POST', body: JSON.stringify({ airport_iata: iata }) });
+    location.reload();
+  } catch (e) {
+    toast('Could not select that airport');
+  }
+}
+
+async function showAirportPicker() {
+  let airports = [];
+  try { airports = (await api('/airports/mine')).airports || []; } catch {}
+  _renderAirportPicker(airports);
+  _showAuthView('view-airport-picker');
+}
+
+_authBoot();
+
 function fmtTs(ts, opts = {}) {
   if (!ts) return '—';
   const d = new Date(ts * 1000);

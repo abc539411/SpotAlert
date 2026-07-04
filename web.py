@@ -46,9 +46,11 @@ def _system_info() -> dict:
     info["connection"] = conn
     return info
 
-from fastapi import FastAPI, HTTPException, Query as _Query, Request, Response, BackgroundTasks
+from fastapi import FastAPI, HTTPException, Query as _Query, Request, Response, BackgroundTasks, Depends
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+
+from auth import current_user as _auth_current_user
 
 log = logging.getLogger(__name__)
 
@@ -267,6 +269,23 @@ def create_app(cfg=None) -> FastAPI:
     app.state.cfg = cfg
     app.state.store = cfg.store if cfg else None
 
+    from control_store import ControlStore
+    _data_dir = os.environ.get("SPOTALERT_DATA", "data/")
+    app.state.control_store = ControlStore(os.path.join(_data_dir, "control.db"))
+
+    # Gate every /api/* route behind a valid session, except the handful needed to
+    # log in / check auth status in the first place. No role restrictions yet — any
+    # authenticated user passes; role-based access is layered in separately.
+    _AUTH_EXEMPT_PATHS = {"/api/auth/login", "/api/me"}
+
+    @app.middleware("http")
+    async def _require_session(request: Request, call_next):
+        if request.url.path.startswith("/api/") and request.url.path not in _AUTH_EXEMPT_PATHS:
+            from auth import get_current_user_optional
+            if get_current_user_optional(request) is None:
+                return JSONResponse({"detail": "Not authenticated"}, status_code=401)
+        return await call_next(request)
+
     def _fleet_bg_refresh_loop() -> None:
         """Refresh all fleet cards every 7 days regardless of user activity."""
         import time as _time, system_status as _ss
@@ -292,6 +311,30 @@ def create_app(cfg=None) -> FastAPI:
         else:
             app.state.settings = {}
             app.state.catalog = cfg.catalog if cfg else None
+
+        # First-boot bootstrap: create one Controller account (random logged password)
+        # and register the existing DB in-place as the first watched airport, so an
+        # upgraded deployment lands behind a login with zero data migration.
+        cstore = app.state.control_store
+        if cstore.count_users() == 0:
+            import secrets as _secrets
+            from auth import hash_password as _hash_password
+            _bootstrap_password = _secrets.token_urlsafe(12)
+            _admin_uid = cstore.create_user("admin", _hash_password(_bootstrap_password), "controller")
+            log.warning(
+                "No web accounts found — created initial Controller login. "
+                "Username: admin  Password: %s  (change this after logging in!)",
+                _bootstrap_password,
+            )
+        _acfg = app.state.cfg
+        if _acfg is not None and not cstore.get_watched_airport(_acfg.airport_iata):
+            cstore.register_airport(
+                airport_iata=_acfg.airport_iata, airport_code=_acfg.airport_code,
+                airport_name=_acfg.airport_name, airport_icao=_acfg.airport_icao,
+                airport_tz=_acfg.airport_tz, airport_lat=_acfg.airport_lat,
+                airport_lon=_acfg.airport_lon, db_path=app.state.store.db_path,
+            )
+
         # Refresh ICAO type list in background (no-op if < 90 days old)
         import threading as _thr
         _thr.Thread(target=app.state.store.refresh_icao_type_list, daemon=True).start()
@@ -300,6 +343,88 @@ def create_app(cfg=None) -> FastAPI:
         _col_start_bg_refresh()
         # Fleet cards: refresh any stale cards on startup, then every 7 days
         _thr.Thread(target=_fleet_bg_refresh_loop, daemon=True).start()
+
+    # ── Auth / airport-selection routes ─────────────────────────────────────
+
+    @app.post("/api/auth/login")
+    async def auth_login(request: Request, response: Response):
+        from auth import verify_password, set_session_cookie
+        body = await request.json()
+        username = str(body.get("username") or "").strip()
+        password = str(body.get("password") or "")
+        cstore = app.state.control_store
+        user_row = cstore.get_user_by_username(username)
+        if not user_row or not verify_password(password, user_row["password_hash"]):
+            raise HTTPException(401, "Invalid username or password")
+        set_session_cookie(response, request, user_row["user_id"], user_row["role"],
+                            user_row["session_epoch"])
+        return {"ok": True, "role": user_row["role"]}
+
+    @app.post("/api/auth/logout")
+    async def auth_logout(response: Response):
+        from auth import clear_auth_cookies
+        clear_auth_cookies(response)
+        return {"ok": True}
+
+    @app.post("/api/auth/change-password")
+    async def auth_change_password(request: Request, user=Depends(_auth_current_user)):
+        from auth import verify_password, hash_password
+        body = await request.json()
+        cstore = app.state.control_store
+        user_row = cstore.get_user(user.user_id)
+        if not verify_password(str(body.get("current_password") or ""), user_row["password_hash"]):
+            raise HTTPException(403, "Current password is incorrect")
+        new_password = str(body.get("new_password") or "")
+        if len(new_password) < 8:
+            raise HTTPException(400, "New password must be at least 8 characters")
+        cstore.set_password(user.user_id, hash_password(new_password))
+        return {"ok": True}
+
+    @app.get("/api/me")
+    async def auth_me(request: Request):
+        from auth import get_current_user_optional
+        user = get_current_user_optional(request)
+        if user is None:
+            return {"authenticated": False}
+        cstore = app.state.control_store
+        if user.role == "controller":
+            airports = [dict(a) for a in cstore.get_active_watched_airports()]
+        else:
+            allowed = set(cstore.get_user_airports(user.user_id))
+            airports = [dict(a) for a in cstore.get_active_watched_airports()
+                        if a["airport_iata"] in allowed]
+        return {
+            "authenticated": True,
+            "user": {"id": user.user_id, "username": user.username, "role": user.role},
+            "airport": user.airport_iata,
+            "airports": [{"iata": a["airport_iata"], "name": a["airport_name"]} for a in airports],
+        }
+
+    @app.get("/api/airports/mine")
+    async def airports_mine(user=Depends(_auth_current_user)):
+        cstore = app.state.control_store
+        if user.role == "controller":
+            airports = cstore.get_active_watched_airports()
+        else:
+            allowed = set(cstore.get_user_airports(user.user_id))
+            airports = [a for a in cstore.get_active_watched_airports()
+                        if a["airport_iata"] in allowed]
+        return {"airports": [{"iata": a["airport_iata"], "name": a["airport_name"]} for a in airports]}
+
+    @app.post("/api/airport/select")
+    async def airport_select(request: Request, response: Response, user=Depends(_auth_current_user)):
+        from auth import AIRPORT_COOKIE
+        body = await request.json()
+        iata = str(body.get("airport_iata") or "").strip()
+        cstore = app.state.control_store
+        if not cstore.get_watched_airport(iata):
+            raise HTTPException(404, "Unknown airport")
+        if user.role != "controller" and iata not in cstore.get_user_airports(user.user_id):
+            raise HTTPException(403, "You do not have access to this airport")
+        response.set_cookie(AIRPORT_COOKIE, iata, max_age=90 * 86400,
+                            httponly=False, samesite="lax",
+                            secure=(request.url.scheme == "https"))
+        return {"ok": True}
 
     # ── API routes ──────────────────────────────────────────────────────────
 

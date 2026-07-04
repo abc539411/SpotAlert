@@ -278,6 +278,44 @@
         border-radius: var(--r); max-width: 480px; width: 90%;
       }
     }
+    /* Auth gate: login + airport-picker, above everything (detail-modal is z-index 200) */
+    .auth-view {
+      position: fixed; inset: 0; z-index: 500; background: var(--bg, #111);
+      display: flex; align-items: center; justify-content: center; padding: 20px;
+    }
+    /* This codebase has no generic bare ".hidden{display:none}" utility class — every
+       other component pairs it with its own class (.page.hidden, .detail-modal.hidden,
+       etc). Without this, .auth-view's own "display:flex" wins the cascade over a
+       nonexistent .hidden rule, so both auth views rendered on top of each other. */
+    .auth-view.hidden { display: none; }
+    .auth-card {
+      width: 100%; max-width: 320px; background: var(--surface2); border: 1px solid var(--border);
+      border-radius: var(--r); padding: 24px 20px; display: flex; flex-direction: column; gap: 10px;
+    }
+    .auth-card-wide { max-width: 420px; }
+    .auth-logo { font-size: 18px; font-weight: 700; text-align: center; margin-bottom: 4px; }
+    .auth-title { font-size: 13px; color: var(--dim); text-align: center; margin-bottom: 8px; }
+    .auth-input {
+      background: var(--surface); border: 1px solid var(--border); color: var(--text);
+      padding: 9px 12px; border-radius: var(--r); font-size: 14px;
+    }
+    .auth-btn {
+      background: var(--accent); color: #fff; border: none; padding: 10px 12px;
+      border-radius: var(--r); font-size: 14px; font-weight: 600; cursor: pointer; margin-top: 4px;
+    }
+    .auth-btn-secondary { background: var(--surface); color: var(--dim); border: 1px solid var(--border); }
+    .auth-error {
+      background: rgba(239,68,68,0.12); color: #ef4444; font-size: 12px;
+      padding: 8px 10px; border-radius: var(--r);
+    }
+    .airport-picker-list { display: flex; flex-direction: column; gap: 8px; }
+    .airport-pick-btn {
+      background: var(--surface); border: 1px solid var(--border); color: var(--text);
+      padding: 12px 14px; border-radius: var(--r); font-size: 14px; text-align: left; cursor: pointer;
+    }
+    .airport-pick-btn:hover { border-color: var(--accent); }
+    .airport-picker-empty { font-size: 12px; color: var(--dim); text-align: center; }
+
     .detail-photo {
       width: 100%; border-radius: var(--r); margin-bottom: 12px;
       aspect-ratio: 16/9; object-fit: cover; display: block;
@@ -1420,11 +1458,35 @@
   </nav>
   <div style="margin-left:auto;display:flex;align-items:center;gap:8px;flex-shrink:0">
     <div id="rapid-badge">RAPID</div>
+    <button class="btn-refresh" id="btn-switch-airport" onclick="showAirportPicker()" title="Switch airport">
+      <span>✈</span>
+    </button>
     <button class="btn-refresh" id="btn-refresh" onclick="forceCheck()" title="Force FR24 check now">
       <span id="btn-refresh-icon">↻</span><span id="btn-refresh-label" class="btn-refresh-label">Refresh Feed</span>
     </button>
   </div>
 </header>
+
+<!-- Auth gate: login + airport-picker overlays, sit above everything else -->
+<div id="view-login" class="auth-view hidden">
+  <div class="auth-card">
+    <div class="auth-logo">✈ SpotAlert</div>
+    <div class="auth-title">Sign in</div>
+    <div id="login-error" class="auth-error hidden"></div>
+    <input id="login-username" class="auth-input" type="text" placeholder="Username" autocomplete="username">
+    <input id="login-password" class="auth-input" type="password" placeholder="Password" autocomplete="current-password">
+    <button class="auth-btn" onclick="doLogin()">Sign in</button>
+  </div>
+</div>
+
+<div id="view-airport-picker" class="auth-view hidden">
+  <div class="auth-card auth-card-wide">
+    <div class="auth-logo">✈ SpotAlert</div>
+    <div class="auth-title">Choose an airport</div>
+    <div id="airport-picker-list" class="airport-picker-list"></div>
+    <button class="auth-btn auth-btn-secondary" onclick="doLogout()">Log out</button>
+  </div>
+</div>
 
 <div id="app">
   <!-- Recommendation -->

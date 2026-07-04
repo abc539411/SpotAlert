@@ -17,6 +17,8 @@ $FILES = @(
     'weather.py',
     'web.py',
     'store.py',
+    'control_store.py',
+    'auth.py',
     'lightroom.py',
     'system_status.py',
     'requirements.txt',
