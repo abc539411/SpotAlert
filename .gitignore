@@ -3,6 +3,7 @@
 
 # Runtime secrets
 data/.fr24_cookies.pkl
+data/.secret_key
 
 # Runtime downloaded assets — fetched on demand, not committed
 static/airline_logos/

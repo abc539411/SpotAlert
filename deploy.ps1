@@ -19,6 +19,7 @@ $FILES = @(
     'store.py',
     'control_store.py',
     'auth.py',
+    'monitor_runner.py',
     'lightroom.py',
     'system_status.py',
     'requirements.txt',

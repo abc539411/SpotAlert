@@ -14,8 +14,6 @@ from environs import Env
 
 from flightradar24api import FlightRadar24API
 from store import SqliteStore
-from monitor import run_check
-from military import check_military, MILITARY_RAPID_INTERVAL_SECS
 from lightroom import find_catalog
 
 log = logging.getLogger(__name__)
@@ -245,72 +243,53 @@ async def _backup_db(context) -> None:
 import asyncio
 import uvicorn
 from web import create_app
+from monitor_runner import run_monitor as _run_monitor, run_military as _run_military
 
 
-class _NoopBot:
-    """Drop-in replacement for telegram.Bot — all sends are silent no-ops."""
-    async def send_message(self, *a, **kw): pass
-    async def send_photo(self, *a, **kw): pass
-
-
-class _FakeJob:
-    def __init__(self, data): self.data = data
-
-
-class _FakeContext:
-    """Minimal context stub so monitor.py / military.py run without Telegram."""
-    def __init__(self, cfg):
-        from datetime import datetime, timezone
-        self.bot_data = {"cfg": cfg, "start_time": datetime.now(timezone.utc)}
-        self.bot = _NoopBot()
-        self.job = _FakeJob(cfg.chat_id)
-
-
-async def _run_monitor(cfg: AppConfig) -> None:
-    import system_status as _ss
-    ctx = _FakeContext(cfg)
-    event = cfg.check_now_event
-    while True:
-        # Wait for the interval to elapse, or for /api/force-check to wake us early.
-        # Either way the timer resets from here — a manual check counts as "just ran".
-        try:
-            await asyncio.wait_for(event.wait(), timeout=cfg.check_interval)
-        except asyncio.TimeoutError:
-            pass
-        event.clear()
-        try:
-            await run_check(ctx)
-            _ss.record_task('arrivals_check', True)
-        except Exception as _e:
-            log.exception("Arrivals check failed")
-            _ss.record_task('arrivals_check', False, str(_e))
-
-
-async def _run_military(cfg: AppConfig) -> None:
-    import system_status as _ss
-    ctx = _FakeContext(cfg)
-    while True:
-        try:
-            await check_military(ctx)
-            _ss.record_task('military_check', True)
-        except Exception as _e:
-            log.exception("Military check failed")
-            _ss.record_task('military_check', False, str(_e))
-        interval = MILITARY_RAPID_INTERVAL_SECS if cfg.military_rapid_tracking else cfg.military_check_interval
-        await asyncio.sleep(interval)
-
-
-async def _run_backup(store) -> None:
+async def _run_backup(control_store, cfgs: Dict[str, "AppConfig"]) -> None:
+    """Backs up control.db plus every active airport's own DB file."""
     import system_status as _ss
     while True:
         await asyncio.sleep(86400)
         try:
-            path = store.backup()
-            log.info("DB backup saved: %s", path)
+            control_store_backup_path = control_store.db_path + ".bak"
+            import shutil
+            shutil.copy2(control_store.db_path, control_store_backup_path)
+            log.info("Control DB backup saved: %s", control_store_backup_path)
+            for cfg in cfgs.values():
+                path = cfg.store.backup()
+                log.info("DB backup saved: %s (%s)", path, cfg.airport_iata)
             _ss.record_task('db_backup', True)
         except Exception as _e:
             log.exception("DB backup failed")
             _ss.record_task('db_backup', False, str(_e))
+
+
+def build_cfgs_for_watched_airports(fr_api, control_store, primary_store, data_dir: str,
+                                     catalog=None) -> Dict[str, "AppConfig"]:
+    """One AppConfig per active watched_airports row, each bound to its own
+    SqliteStore (its own DB file) — the "one DB file per airport" architecture.
+    First-ever boot (no watched_airports rows yet): registers the existing
+    single-airport DB in place, in-memory, no data migration."""
+    watched = control_store.get_active_watched_airports()
+    cfgs: Dict[str, "AppConfig"] = {}
+
+    if not watched:
+        cfg = build_config(fr_api, primary_store, catalog)
+        control_store.register_airport(
+            airport_iata=cfg.airport_iata, airport_code=cfg.airport_code,
+            airport_name=cfg.airport_name, airport_icao=cfg.airport_icao,
+            airport_tz=cfg.airport_tz, airport_lat=cfg.airport_lat,
+            airport_lon=cfg.airport_lon, db_path=primary_store.db_path,
+        )
+        cfgs[cfg.airport_iata] = cfg
+        return cfgs
+
+    for row in watched:
+        store = primary_store if row["db_path"] == primary_store.db_path else SqliteStore(row["db_path"])
+        cfg = build_config(fr_api, store, catalog)
+        cfgs[row["airport_iata"]] = cfg
+    return cfgs
 
 
 def main() -> None:
@@ -341,38 +320,43 @@ def main() -> None:
     except Exception as _e:
         log.warning("Cloudflare warm-up failed (will retry on first API call): %s", _e)
 
-    store = SqliteStore(os.path.join(data_dir, "spotalert.db"))
-    store.migrate_from_csv_folder(data_dir)
+    # primary_store is always the original data/spotalert.db — the first-ever watched
+    # airport, kept at its existing path so an upgraded deployment needs zero data
+    # migration. Additional airports each get their own SqliteStore(db_path) instead.
+    primary_store = SqliteStore(os.path.join(data_dir, "spotalert.db"))
+    primary_store.migrate_from_csv_folder(data_dir)
 
     import system_status as _ss
-    _ss.init(store)
+    _ss.init(primary_store)  # process-wide task/health status — bound to one store for now
+
+    from control_store import ControlStore
+    control_store = ControlStore(os.path.join(data_dir, "control.db"))
 
     catalog = find_catalog()
-    cfg = build_config(fr_api, store, catalog)
-    cfg.check_now_event = asyncio.Event()
+    cfgs = build_cfgs_for_watched_airports(fr_api, control_store, primary_store, data_dir, catalog)
 
-    _backfilled = store.backfill_arrival_dates(cfg.airport_tz)
-    if _backfilled:
-        log.info("Backfilled arrival_date for %d flight_events rows", _backfilled)
+    for cfg in cfgs.values():
+        cfg.check_now_event = asyncio.Event()
+        _backfilled = cfg.store.backfill_arrival_dates(cfg.airport_tz)
+        if _backfilled:
+            log.info("Backfilled arrival_date for %d flight_events rows (%s)", _backfilled, cfg.airport_iata)
 
     port = int(os.environ.get("WEB_PORT", "8088"))
-    log.info(
-        "Monitoring %s (%s) — check every %ds, web on :%d",
-        cfg.airport_name, cfg.airport_iata, cfg.check_interval, port,
-    )
+    for cfg in cfgs.values():
+        log.info("Monitoring %s (%s) — check every %ds", cfg.airport_name, cfg.airport_iata, cfg.check_interval)
+    log.info("Web on :%d", port)
 
-    web_app = create_app(cfg)
+    web_app = create_app(cfgs, control_store=control_store, fr_api=fr_api, data_dir=data_dir)
     web_config = uvicorn.Config(web_app, host="0.0.0.0", port=port, log_level="warning",
                                 timeout_graceful_shutdown=1)
     web_server = uvicorn.Server(web_config)
 
     async def _run_all():
-        await asyncio.gather(
-            web_server.serve(),
-            _run_monitor(cfg),
-            _run_military(cfg),
-            _run_backup(store),
-        )
+        tasks = [web_server.serve(), _run_backup(control_store, cfgs)]
+        for cfg in cfgs.values():
+            tasks.append(_run_monitor(cfg))
+            tasks.append(_run_military(cfg))
+        await asyncio.gather(*tasks)
 
     asyncio.run(_run_all())
 

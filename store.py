@@ -74,9 +74,6 @@ class SqliteStore:
                     description TEXT
                 )
             """)
-            conn.execute(
-                "CREATE UNIQUE INDEX IF NOT EXISTS idx_excl_reg ON filter_exclusions(registration)"
-            )
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS filter_regos (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -86,9 +83,6 @@ class SqliteStore:
                     last_notified_ts INTEGER
                 )
             """)
-            conn.execute(
-                "CREATE UNIQUE INDEX IF NOT EXISTS idx_rego_reg ON filter_regos(registration)"
-            )
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS filter_types (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -97,9 +91,6 @@ class SqliteStore:
                     last_notified_ts INTEGER
                 )
             """)
-            conn.execute(
-                "CREATE UNIQUE INDEX IF NOT EXISTS idx_type_uniq ON filter_types(airline, aircraft_type)"
-            )
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS filter_airlines (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -109,9 +100,29 @@ class SqliteStore:
                     last_notified_ts INTEGER DEFAULT 0
                 )
             """)
-            conn.execute(
-                "CREATE UNIQUE INDEX IF NOT EXISTS idx_airline_uniq ON filter_airlines(icao_code, entry_type)"
-            )
+            # owner_user_id: multi-user retrofit — 'controller' is the sentinel for the
+            # existing/ground-truth list; a Pilot's own list is fully independent (no
+            # merge with the Controller's), matched by owner_user_id alone. Existing
+            # rows backfill to 'controller' so today's lists are completely unaffected
+            # until Pilot accounts actually exist (Phase 4).
+            for _tbl in ("filter_exclusions", "filter_regos", "filter_types", "filter_airlines"):
+                _cols = {row[1] for row in conn.execute(f"PRAGMA table_info({_tbl})").fetchall()}
+                if "owner_user_id" not in _cols:
+                    conn.execute(f"ALTER TABLE {_tbl} ADD COLUMN owner_user_id TEXT NOT NULL DEFAULT 'controller'")
+            # Unique indexes extended to include owner_user_id so two different owners
+            # (e.g. two Pilots, or a Pilot and the Controller) can each independently
+            # exclude/watch the same registration/type/airline without colliding.
+            # Existing indexes of the same name (pre-dating owner_user_id) must be
+            # dropped first — CREATE INDEX IF NOT EXISTS matches by name only, so it
+            # would silently keep the old, stricter (owner-less) constraint otherwise.
+            conn.execute("DROP INDEX IF EXISTS idx_excl_reg")
+            conn.execute("CREATE UNIQUE INDEX idx_excl_reg ON filter_exclusions(owner_user_id, registration)")
+            conn.execute("DROP INDEX IF EXISTS idx_rego_reg")
+            conn.execute("CREATE UNIQUE INDEX idx_rego_reg ON filter_regos(owner_user_id, registration)")
+            conn.execute("DROP INDEX IF EXISTS idx_type_uniq")
+            conn.execute("CREATE UNIQUE INDEX idx_type_uniq ON filter_types(owner_user_id, airline, aircraft_type)")
+            conn.execute("DROP INDEX IF EXISTS idx_airline_uniq")
+            conn.execute("CREATE UNIQUE INDEX idx_airline_uniq ON filter_airlines(owner_user_id, icao_code, entry_type)")
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS livery_cooldowns (
                     registration TEXT PRIMARY KEY,
@@ -191,12 +202,35 @@ class SqliteStore:
                     conn.execute(f"ALTER TABLE departure_patterns ADD COLUMN {col} {typ} DEFAULT NULL")
 
             # All app settings — set via web UI and persisted across restarts.
+            # user_id dimension added for multi-user support: 'controller' is the
+            # ground-truth sentinel row (what the Controller role owns, and what
+            # Passengers always read); a Pilot's own user_id overrides it per-key.
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS settings (
-                    key   TEXT PRIMARY KEY,
-                    value TEXT NOT NULL
+                    user_id TEXT NOT NULL DEFAULT 'controller',
+                    key     TEXT NOT NULL,
+                    value   TEXT NOT NULL,
+                    PRIMARY KEY (user_id, key)
                 )
             """)
+            _settings_cols = {row[1] for row in conn.execute("PRAGMA table_info(settings)").fetchall()}
+            if "user_id" not in _settings_cols:
+                # Table predates the user_id column (single-key PK) — recreate with the
+                # composite PK, migrating every existing row to the 'controller' sentinel.
+                conn.execute("ALTER TABLE settings RENAME TO settings_old")
+                conn.execute("""
+                    CREATE TABLE settings (
+                        user_id TEXT NOT NULL DEFAULT 'controller',
+                        key     TEXT NOT NULL,
+                        value   TEXT NOT NULL,
+                        PRIMARY KEY (user_id, key)
+                    )
+                """)
+                conn.execute(
+                    "INSERT INTO settings (user_id, key, value) "
+                    "SELECT 'controller', key, value FROM settings_old"
+                )
+                conn.execute("DROP TABLE settings_old")
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS users (
                     chat_id  TEXT PRIMARY KEY,
@@ -635,18 +669,39 @@ class SqliteStore:
             conn.execute("DELETE FROM fleet_cards WHERE icao=?", (icao.upper(),))
 
     def save_setting(self, key: str, value: str) -> None:
-        with self._connect() as conn:
-            conn.execute(
-                "INSERT OR REPLACE INTO settings(key, value) VALUES (?, ?)",
-                (key, str(value)),
-            )
+        """Writes the Controller-role ground-truth row. Existing call sites are
+        unaffected by the multi-user settings retrofit — they all mean "the
+        Controller's setting" until a caller explicitly scopes to a Pilot via
+        set_setting()."""
+        self.set_setting("controller", key, value)
 
     def load_setting(self, key: str) -> Optional[str]:
+        """Reads the Controller-role ground-truth row (see save_setting)."""
+        return self.get_setting("controller", key)
+
+    def set_setting(self, user_id: str, key: str, value: str) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO settings(user_id, key, value) VALUES (?, ?, ?)",
+                (user_id, key, str(value)),
+            )
+
+    def get_setting(self, user_id: str, key: str, fallback_to_controller: bool = True) -> Optional[str]:
+        """Reads user_id's own row for this key; if absent and fallback_to_controller,
+        falls back to the 'controller' ground-truth row (e.g. a Pilot who hasn't
+        overridden this particular key yet)."""
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT value FROM settings WHERE key = ?", (key,)
+                "SELECT value FROM settings WHERE user_id = ? AND key = ?", (user_id, key)
             ).fetchone()
-            return row["value"] if row else None
+            if row:
+                return row["value"]
+            if fallback_to_controller and user_id != "controller":
+                row = conn.execute(
+                    "SELECT value FROM settings WHERE user_id = 'controller' AND key = ?", (key,)
+                ).fetchone()
+                return row["value"] if row else None
+            return None
 
     # ------------------------------------------------------------------
     # CSV migration (one-time import from legacy)

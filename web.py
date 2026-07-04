@@ -50,7 +50,7 @@ from fastapi import FastAPI, HTTPException, Query as _Query, Request, Response, 
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from auth import current_user as _auth_current_user
+from auth import current_user as _auth_current_user, require_role as _auth_require_role
 
 log = logging.getLogger(__name__)
 
@@ -258,20 +258,48 @@ def cluster_day_for_cache(
 # App factory
 # ---------------------------------------------------------------------------
 
-def create_app(cfg=None) -> FastAPI:
+def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> FastAPI:
     """
-    cfg: AppConfig instance (when running integrated with the monitor loop).
-    If None, loads config/store from disk (standalone mode).
+    cfgs: dict {airport_iata: AppConfig} — one per watched airport, when running
+    integrated with the monitor loop. A bare AppConfig is also accepted (wrapped
+    into a single-entry dict) for backward compatibility. If None, loads a single
+    config/store from disk (standalone mode, no monitor loop).
     """
     app = FastAPI(title="SpotAlert", docs_url=None, redoc_url=None)
 
-    # State shared across request handlers
-    app.state.cfg = cfg
-    app.state.store = cfg.store if cfg else None
+    if cfgs is not None and not isinstance(cfgs, dict):
+        cfgs = {cfgs.airport_iata: cfgs}  # single AppConfig passed directly
 
-    from control_store import ControlStore
-    _data_dir = os.environ.get("SPOTALERT_DATA", "data/")
-    app.state.control_store = ControlStore(os.path.join(_data_dir, "control.db"))
+    # State shared across request handlers. app.state.cfg/app.state.store remain a
+    # single "primary" airport's config — used as-is by routes that are either
+    # explicitly airport-independent (Collection/Fleet/Search-Catalogue, per the
+    # multi-airport design) or not yet rewired to resolve per-request. Routes that
+    # ARE airport-aware use the _cfg_for_user()/_store_for_user() helpers below.
+    _primary_cfg = next(iter(cfgs.values())) if cfgs else None
+    app.state.cfg = _primary_cfg
+    app.state.store = _primary_cfg.store if _primary_cfg else None
+    app.state.cfgs = cfgs or {}
+
+    _data_dir = data_dir or os.environ.get("SPOTALERT_DATA", "data/")
+    app.state.data_dir = _data_dir
+    app.state.fr_api = fr_api
+
+    if control_store is not None:
+        app.state.control_store = control_store
+    else:
+        from control_store import ControlStore
+        app.state.control_store = ControlStore(os.path.join(_data_dir, "control.db"))
+
+    def _cfg_for_user(user) -> "AppConfig":
+        """Resolves the AppConfig for the airport the user currently has selected.
+        Raises 400 if they haven't picked one yet (shouldn't happen — the frontend
+        gates on this via /api/me before making any other call)."""
+        cfg = app.state.cfgs.get(user.airport_iata)
+        if cfg is None:
+            raise HTTPException(400, "No airport selected")
+        return cfg
+
+    app.state.cfg_for_user = _cfg_for_user
 
     # Gate every /api/* route behind a valid session, except the handful needed to
     # log in / check auth status in the first place. No role restrictions yet — any
@@ -310,11 +338,15 @@ def create_app(cfg=None) -> FastAPI:
             app.state.catalog = catalog
         else:
             app.state.settings = {}
-            app.state.catalog = cfg.catalog if cfg else None
+            app.state.catalog = _primary_cfg.catalog if _primary_cfg else None
 
         # First-boot bootstrap: create one Controller account (random logged password)
-        # and register the existing DB in-place as the first watched airport, so an
-        # upgraded deployment lands behind a login with zero data migration.
+        # and register every passed-in cfg's airport in-place, so an upgraded
+        # deployment lands behind a login with zero data migration. main.py already
+        # does this same registration before building cfgs (it needs the airport list
+        # up front) — register_airport() is INSERT OR IGNORE, so repeating it here is
+        # a harmless no-op in the integrated case, and is what actually does the work
+        # in standalone mode (no main.py driving things).
         cstore = app.state.control_store
         if cstore.count_users() == 0:
             import secrets as _secrets
@@ -326,14 +358,14 @@ def create_app(cfg=None) -> FastAPI:
                 "Username: admin  Password: %s  (change this after logging in!)",
                 _bootstrap_password,
             )
-        _acfg = app.state.cfg
-        if _acfg is not None and not cstore.get_watched_airport(_acfg.airport_iata):
-            cstore.register_airport(
-                airport_iata=_acfg.airport_iata, airport_code=_acfg.airport_code,
-                airport_name=_acfg.airport_name, airport_icao=_acfg.airport_icao,
-                airport_tz=_acfg.airport_tz, airport_lat=_acfg.airport_lat,
-                airport_lon=_acfg.airport_lon, db_path=app.state.store.db_path,
-            )
+        for _acfg in app.state.cfgs.values():
+            if not cstore.get_watched_airport(_acfg.airport_iata):
+                cstore.register_airport(
+                    airport_iata=_acfg.airport_iata, airport_code=_acfg.airport_code,
+                    airport_name=_acfg.airport_name, airport_icao=_acfg.airport_icao,
+                    airport_tz=_acfg.airport_tz, airport_lat=_acfg.airport_lat,
+                    airport_lon=_acfg.airport_lon, db_path=_acfg.store.db_path,
+                )
 
         # Refresh ICAO type list in background (no-op if < 90 days old)
         import threading as _thr
@@ -426,6 +458,71 @@ def create_app(cfg=None) -> FastAPI:
                             secure=(request.url.scheme == "https"))
         return {"ok": True}
 
+    @app.post("/api/controller/airports")
+    async def controller_add_airport(request: Request, user=Depends(_auth_require_role("controller"))):
+        """Add a new watched airport at runtime — no process restart. Each airport
+        gets its own SQLite DB file (data/airports/<iata>.db), so this never touches
+        any existing airport's data."""
+        body = await request.json()
+        airport_code = str(body.get("airport_code") or "").strip()
+        if not airport_code:
+            raise HTTPException(400, "airport_code is required")
+        if app.state.fr_api is None:
+            raise HTTPException(400, "Only available in integrated mode")
+
+        import asyncio as _asyncio
+        from store import SqliteStore
+        from main import build_config  # deferred: main.py imports create_app from
+                                        # this module at its own top level, so this
+                                        # import must stay lazy (resolved at call
+                                        # time, once both modules are fully loaded).
+        from monitor_runner import run_monitor, run_military, log_task_result
+
+        new_dir = os.path.join(app.state.data_dir, "airports")
+        os.makedirs(new_dir, exist_ok=True)
+        new_store = SqliteStore(os.path.join(new_dir, f"{airport_code.upper()}.db"))
+        new_store.save_setting("AIRPORT_CODE", airport_code)
+
+        cfg = build_config(app.state.fr_api, new_store, app.state.catalog)
+        if cfg.airport_iata in app.state.cfgs:
+            raise HTTPException(400, f"{cfg.airport_iata} is already being watched")
+        cfg.check_now_event = _asyncio.Event()
+
+        app.state.control_store.register_airport(
+            airport_iata=cfg.airport_iata, airport_code=cfg.airport_code,
+            airport_name=cfg.airport_name, airport_icao=cfg.airport_icao,
+            airport_tz=cfg.airport_tz, airport_lat=cfg.airport_lat, airport_lon=cfg.airport_lon,
+            db_path=new_store.db_path, added_by_user_id=user.user_id,
+        )
+        app.state.cfgs[cfg.airport_iata] = cfg  # same dict _run_backup() iterates —
+                                                 # mutating in place makes it visible there too
+
+        if not hasattr(app.state, "monitor_tasks"):
+            app.state.monitor_tasks = {}
+        t1 = _asyncio.create_task(run_monitor(cfg), name=f"monitor-{cfg.airport_iata}")
+        t1.add_done_callback(log_task_result)
+        t2 = _asyncio.create_task(run_military(cfg), name=f"military-{cfg.airport_iata}")
+        t2.add_done_callback(log_task_result)
+        app.state.monitor_tasks[cfg.airport_iata] = (t1, t2)
+
+        return JSONResponse({"ok": True, "airport_iata": cfg.airport_iata, "airport_name": cfg.airport_name})
+
+    @app.delete("/api/controller/airports/{iata}")
+    async def controller_remove_airport(iata: str, user=Depends(_auth_require_role("controller"))):
+        """Soft-delete: stops polling and hides the airport from pickers, but keeps
+        its DB file on disk (history preserved, matches other soft-delete patterns
+        already used elsewhere in this app)."""
+        iata = iata.upper()
+        if iata not in app.state.cfgs:
+            raise HTTPException(404, "Unknown airport")
+        app.state.control_store.deactivate_airport(iata)
+        tasks = getattr(app.state, "monitor_tasks", {}).pop(iata, None)
+        if tasks:
+            for t in tasks:
+                t.cancel()
+        app.state.cfgs.pop(iata, None)
+        return JSONResponse({"ok": True})
+
     # ── API routes ──────────────────────────────────────────────────────────
 
     @app.post("/api/restart")
@@ -446,10 +543,8 @@ def create_app(cfg=None) -> FastAPI:
         return JSONResponse({"ok": ok, "msg": "Cookies reloaded" if ok else "No cookie file found"})
 
     @app.post("/api/force-check")
-    async def force_check():
-        cfg = app.state.cfg
-        if cfg is None:
-            raise HTTPException(400, "Only available in integrated mode")
+    async def force_check(user=Depends(_auth_require_role("controller"))):
+        cfg = _cfg_for_user(user)
         if cfg.check_now_event is None:
             raise HTTPException(400, "Monitor loop not running")
         # Wake the monitor loop immediately instead of spawning a disconnected
@@ -459,22 +554,25 @@ def create_app(cfg=None) -> FastAPI:
         return JSONResponse({"ok": True})
 
     @app.get("/api/live-status/{registration}")
-    async def get_live_status(registration: str):
+    async def get_live_status(registration: str, user=Depends(_auth_current_user)):
         """Check if the aircraft is currently on the ground at the local airport.
         Uses the airport schedule's ground section — the same API call the monitor uses.
         Called lazily only when stored status inference returns N/A."""
-        cfg_ = app.state.cfg
+        cfg_ = _cfg_for_user(user)
         if not cfg_ or not getattr(cfg_, 'fr_api', None):
             return JSONResponse({"status": None})
         try:
             reg_upper = registration.upper().strip()
             now_ts_ = int(time.time())
-            # Reuse cached airport page for 90s — prevents burst FR24 calls when multiple cards open
-            if now_ts_ - _live_status_cache["ts"] > 90 or _live_status_cache["schedule"] is None:
+            # Cache keyed per-airport — one process now serves multiple airports'
+            # schedules, so a single shared cache would leak one airport's board
+            # into another's live-status lookups.
+            cache = _live_status_cache.setdefault(cfg_.airport_iata, {"ts": 0, "schedule": None})
+            if now_ts_ - cache["ts"] > 90 or cache["schedule"] is None:
                 data = cfg_.fr_api.get_airport_details(code=cfg_.airport_code, page=-1)
-                _live_status_cache["schedule"] = data["airport"]["pluginData"]["schedule"]
-                _live_status_cache["ts"] = now_ts_
-            schedule = _live_status_cache["schedule"]
+                cache["schedule"] = data["airport"]["pluginData"]["schedule"]
+                cache["ts"] = now_ts_
+            schedule = cache["schedule"]
 
             # Check recent arrivals: real_arr set = landed; no real_dep = still on ground
             for entry in (schedule.get("arrivals") or {}).get("data") or []:
@@ -626,11 +724,11 @@ def create_app(cfg=None) -> FastAPI:
         return JSONResponse(result)
 
     @app.get("/api/feed")
-    async def get_feed(days: int = 30):
+    async def get_feed(days: int = 30, user=Depends(_auth_current_user)):
         import datetime, json as _json, pytz
 
-        cfg_   = app.state.cfg
-        store_ = app.state.store
+        cfg_   = _cfg_for_user(user)
+        store_ = cfg_.store
         airport_iata_ = (cfg_.airport_iata if cfg_ else None) or store_.load_setting("AIRPORT_CODE") or ""
         airport_name_ = (cfg_.airport_name if cfg_ else None) or ""
         tz_name = (
@@ -835,11 +933,11 @@ def create_app(cfg=None) -> FastAPI:
         return JSONResponse({"days": days_result, "airport_iata": airport_iata_, "airport_name": airport_name_, "timezone": tz_name})
 
     @app.get("/api/recommendation")
-    async def get_recommendation():
+    async def get_recommendation(user=Depends(_auth_current_user)):
         import datetime as _dt2, json as _json, pytz
 
-        cfg_   = app.state.cfg
-        store_ = app.state.store
+        cfg_   = _cfg_for_user(user)
+        store_ = cfg_.store
 
         airport_iata_ = (cfg_.airport_iata if cfg_ else None) or store_.load_setting("AIRPORT_CODE") or ""
         tz_name = (store_.load_setting("WEB_TIMEZONE")
@@ -2900,8 +2998,8 @@ def create_app(cfg=None) -> FastAPI:
         return JSONResponse({'ok': True})
 
     @app.get("/api/status")
-    async def get_status():
-        cfg = app.state.cfg
+    async def get_status(user=Depends(_auth_current_user)):
+        cfg = _cfg_for_user(user)
         now = int(time.time())
         result: dict[str, Any] = {"now_ts": now, "rapid_mode": False, "version": VERSION,
                                    "runtime_secs": now - _PROCESS_START_TS, **_system_info()}
@@ -2913,7 +3011,7 @@ def create_app(cfg=None) -> FastAPI:
             result["check_interval"] = cfg.check_interval
             result["military_check_interval"] = cfg.military_check_interval
         # Effective timezone (WEB_TIMEZONE override or airport tz)
-        store_ = app.state.store
+        store_ = cfg.store if cfg else app.state.store
         _eff_tz = (store_.load_setting("WEB_TIMEZONE") if store_ else None) \
                   or result.get("airport_tz") or "UTC"
         result["effective_tz"] = _eff_tz
@@ -2923,7 +3021,13 @@ def create_app(cfg=None) -> FastAPI:
             result["current_time"] = _dt.datetime.now(_tz).strftime("%H:%M:%S")
         except Exception:
             result["current_time"] = ""
-        else:
+        if cfg is None:
+            # Standalone mode only (no AppConfig/monitor loop) — this used to run
+            # unconditionally via a try/else, which meant it silently clobbered the
+            # real per-airport check_interval set above with this stale default
+            # every time /api/status succeeded in integrated mode. Invisible with a
+            # single airport (both usually 30 min by default); became visible as
+            # soon as a second airport with a different interval existed.
             s = app.state.settings
             result["airport_code"] = s.get("AIRPORT_CODE", "")
             result["check_interval"] = float(s.get("CHECK_INTERVAL_MINUTES", 30)) * 60
@@ -2947,10 +3051,13 @@ def create_app(cfg=None) -> FastAPI:
         return FileResponse(log_path, media_type="text/plain", filename="spotalert.log")
 
     @app.get("/api/system-tasks")
-    async def get_system_tasks():
+    async def get_system_tasks(user=Depends(_auth_current_user)):
         import system_status as _ss, time as _time
-        cfg_  = app.state.cfg
-        store_ = app.state.store
+        # NOTE: system_status itself is a process-wide singleton (not per-airport
+        # yet) — task health below always reflects whichever airport's store it was
+        # initialized with in main.py, not necessarily the one currently selected.
+        cfg_  = _cfg_for_user(user)
+        store_ = cfg_.store if cfg_ else app.state.store
         now   = int(_time.time())
         check_int = getattr(cfg_, 'check_interval', 1800) if cfg_ else 1800
         mil_int   = getattr(cfg_, 'military_check_interval', 900) if cfg_ else 900
@@ -3000,98 +3107,104 @@ def create_app(cfg=None) -> FastAPI:
         ]
         return JSONResponse({'tasks': tasks, 'apis': apis, 'now': now})
 
+    # NOTE (Phase 3 scope): settings/filters below are resolved to the correct
+    # per-airport store, but still always operate on the 'controller' sentinel
+    # owner row/rows — role-based Pilot-vs-Controller precedence and per-owner
+    # filtering are Phase 4 work (no Pilot accounts exist yet, so this is behaviorally
+    # identical to today for the only account type currently in use).
+
     @app.get("/api/settings")
-    async def get_settings():
-        store = app.state.store
+    async def get_settings(user=Depends(_auth_current_user)):
+        store = _cfg_for_user(user).store
         result = {}
         with store._connect() as conn:
-            rows = conn.execute("SELECT key, value FROM settings ORDER BY key").fetchall()
+            rows = conn.execute("SELECT key, value FROM settings WHERE user_id = 'controller' ORDER BY key").fetchall()
         for r in rows:
             result[r["key"]] = r["value"]
         return JSONResponse(result)
 
     @app.put("/api/settings")
-    async def put_settings(request: Request):
+    async def put_settings(request: Request, user=Depends(_auth_require_role("controller"))):
         body = await request.json()
         if not isinstance(body, dict):
             raise HTTPException(400, "Expected JSON object")
-        store = app.state.store
+        store = _cfg_for_user(user).store
         for key, value in body.items():
             store.save_setting(str(key), str(value))
         return JSONResponse({"ok": True})
 
     @app.get("/api/filters")
-    async def get_filters():
-        store = app.state.store
+    async def get_filters(user=Depends(_auth_current_user)):
+        store = _cfg_for_user(user).store
         def _fetch_rows(sql, *args):
             with store._connect() as conn:
                 return [dict(r) for r in conn.execute(sql, *args).fetchall()]
         return JSONResponse({
-            "filter_exclusions":  _fetch_rows("SELECT id, registration, description FROM filter_exclusions ORDER BY id"),
-            "filter_regos":  _fetch_rows("SELECT id, registration, description FROM filter_regos ORDER BY id"),
-            "filter_types":  _fetch_rows("SELECT id, airline, aircraft_type FROM filter_types ORDER BY id"),
-            "filter_airlines": _fetch_rows("SELECT id, icao_code, entry_type, name FROM filter_airlines ORDER BY id"),
+            "filter_exclusions":  _fetch_rows("SELECT id, registration, description FROM filter_exclusions WHERE owner_user_id = 'controller' ORDER BY id"),
+            "filter_regos":  _fetch_rows("SELECT id, registration, description FROM filter_regos WHERE owner_user_id = 'controller' ORDER BY id"),
+            "filter_types":  _fetch_rows("SELECT id, airline, aircraft_type FROM filter_types WHERE owner_user_id = 'controller' ORDER BY id"),
+            "filter_airlines": _fetch_rows("SELECT id, icao_code, entry_type, name FROM filter_airlines WHERE owner_user_id = 'controller' ORDER BY id"),
         })
 
     @app.post("/api/filters/exclusion")
-    async def add_exclusion(request: Request):
+    async def add_exclusion(request: Request, user=Depends(_auth_require_role("controller"))):
         body = await request.json()
-        store = app.state.store
+        store = _cfg_for_user(user).store
         store.add_exclusion(body.get("airline", ""), body["registration"], body.get("description", ""))
         return JSONResponse({"ok": True})
 
     @app.delete("/api/filters/exclusion/{registration}")
-    async def delete_exclusion(registration: str):
-        store = app.state.store
+    async def delete_exclusion(registration: str, user=Depends(_auth_require_role("controller"))):
+        store = _cfg_for_user(user).store
         with store._connect() as conn:
-            conn.execute("DELETE FROM filter_exclusions WHERE registration = ?", (registration,))
+            conn.execute("DELETE FROM filter_exclusions WHERE registration = ? AND owner_user_id = 'controller'", (registration,))
         return JSONResponse({"ok": True})
 
     @app.post("/api/filters/rego")
-    async def add_rego(request: Request):
+    async def add_rego(request: Request, user=Depends(_auth_require_role("controller"))):
         body = await request.json()
-        store = app.state.store
+        store = _cfg_for_user(user).store
         store.add_rego_watch(body.get("airline", ""), body["registration"], body.get("description", ""))
         return JSONResponse({"ok": True})
 
     @app.delete("/api/filters/rego/{registration}")
-    async def delete_rego(registration: str):
-        store = app.state.store
+    async def delete_rego(registration: str, user=Depends(_auth_require_role("controller"))):
+        store = _cfg_for_user(user).store
         with store._connect() as conn:
-            conn.execute("DELETE FROM filter_regos WHERE registration = ?", (registration,))
+            conn.execute("DELETE FROM filter_regos WHERE registration = ? AND owner_user_id = 'controller'", (registration,))
         return JSONResponse({"ok": True})
 
     @app.post("/api/filters/type")
-    async def add_type(request: Request):
+    async def add_type(request: Request, user=Depends(_auth_require_role("controller"))):
         body = await request.json()
-        store = app.state.store
+        store = _cfg_for_user(user).store
         store.add_type_watch(body["airline"], body["aircraft_type"])
         return JSONResponse({"ok": True})
 
     @app.delete("/api/filters/type")
-    async def delete_type(request: Request):
+    async def delete_type(request: Request, user=Depends(_auth_require_role("controller"))):
         body = await request.json()
-        store = app.state.store
+        store = _cfg_for_user(user).store
         with store._connect() as conn:
             conn.execute(
-                "DELETE FROM filter_types WHERE airline = ? AND aircraft_type = ?",
+                "DELETE FROM filter_types WHERE airline = ? AND aircraft_type = ? AND owner_user_id = 'controller'",
                 (body["airline"], body["aircraft_type"]),
             )
         return JSONResponse({"ok": True})
 
     @app.post("/api/filters/airline")
-    async def add_airline(request: Request):
+    async def add_airline(request: Request, user=Depends(_auth_require_role("controller"))):
         body = await request.json()
-        store = app.state.store
+        store = _cfg_for_user(user).store
         store.add_airline_watch(body["icao_code"], body.get("entry_type", "airline"), body.get("name", ""))
         return JSONResponse({"ok": True})
 
     @app.delete("/api/filters/airline/{icao_code}")
-    async def delete_airline(icao_code: str, entry_type: str = "airline"):
-        store = app.state.store
+    async def delete_airline(icao_code: str, entry_type: str = "airline", user=Depends(_auth_require_role("controller"))):
+        store = _cfg_for_user(user).store
         with store._connect() as conn:
             conn.execute(
-                "DELETE FROM filter_airlines WHERE icao_code = ? AND entry_type = ?",
+                "DELETE FROM filter_airlines WHERE icao_code = ? AND entry_type = ? AND owner_user_id = 'controller'",
                 (icao_code.upper(), entry_type),
             )
         return JSONResponse({"ok": True})
