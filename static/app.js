@@ -68,7 +68,11 @@ async function _authBoot() {
   let me;
   try { me = await api('/me'); } catch { me = { authenticated: false }; }
   if (!me.authenticated) { _showAuthView('view-login'); return; }
-  if (!me.airport) { _renderAirportPicker(me.airports || []); _showAuthView('view-airport-picker'); return; }
+  if (!me.airport) {
+    _renderAirportPicker(me.airports || [], me.user.role);
+    _showAuthView('view-airport-picker');
+    return;
+  }
   _hideAuthViews();
 }
 
@@ -91,15 +95,17 @@ async function doLogout() {
   location.reload();
 }
 
-function _renderAirportPicker(airports) {
+function _renderAirportPicker(airports, role) {
   const el = $('airport-picker-list');
   if (!airports.length) {
     el.innerHTML = '<div class="airport-picker-empty">No airports assigned to your account yet.</div>';
-    return;
+  } else {
+    el.innerHTML = airports.map(a =>
+      `<button class="airport-pick-btn" onclick="selectAirport('${esc(a.iata)}')">${esc(a.name)} (${esc(a.iata)})</button>`
+    ).join('');
   }
-  el.innerHTML = airports.map(a =>
-    `<button class="airport-pick-btn" onclick="selectAirport('${esc(a.iata)}')">${esc(a.name)} (${esc(a.iata)})</button>`
-  ).join('');
+  // Only a Controller can add new watched airports.
+  $('add-airport-block').classList.toggle('hidden', role !== 'controller');
 }
 
 async function selectAirport(iata) {
@@ -112,10 +118,29 @@ async function selectAirport(iata) {
 }
 
 async function showAirportPicker() {
-  let airports = [];
-  try { airports = (await api('/airports/mine')).airports || []; } catch {}
-  _renderAirportPicker(airports);
+  let me;
+  try { me = await api('/me'); } catch { me = { airports: [], user: {} }; }
+  _renderAirportPicker(me.airports || [], (me.user || {}).role);
   _showAuthView('view-airport-picker');
+}
+
+async function addAirport() {
+  const codeEl = $('add-airport-code');
+  const errEl = $('add-airport-error');
+  const code = codeEl.value.trim();
+  errEl.classList.add('hidden');
+  if (!code) return;
+  try {
+    const r = await api('/controller/airports', { method: 'POST', body: JSON.stringify({ airport_code: code }) });
+    codeEl.value = '';
+    toast(`Added ${r.airport_name} (${r.airport_iata})`);
+    showAirportPicker();
+  } catch (e) {
+    let msg = 'Could not add that airport';
+    try { msg = JSON.parse(e.message).detail || msg; } catch {}
+    errEl.textContent = msg;
+    errEl.classList.remove('hidden');
+  }
 }
 
 _authBoot();

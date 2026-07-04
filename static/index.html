@@ -315,6 +315,10 @@
     }
     .airport-pick-btn:hover { border-color: var(--accent); }
     .airport-picker-empty { font-size: 12px; color: var(--dim); text-align: center; }
+    #add-airport-block { margin-top: 4px; padding-top: 12px; border-top: 1px solid var(--border); }
+    .add-airport-row { display: flex; gap: 8px; }
+    .add-airport-row .auth-input { flex: 1; }
+    .add-airport-row .auth-btn { margin-top: 0; flex-shrink: 0; width: auto; padding-left: 16px; padding-right: 16px; }
 
     .detail-photo {
       width: 100%; border-radius: var(--r); margin-bottom: 12px;
@@ -1484,6 +1488,13 @@
     <div class="auth-logo">✈ SpotAlert</div>
     <div class="auth-title">Choose an airport</div>
     <div id="airport-picker-list" class="airport-picker-list"></div>
+    <div id="add-airport-block" class="hidden">
+      <div class="add-airport-row">
+        <input id="add-airport-code" class="auth-input" type="text" placeholder="Airport code, e.g. MEL" autocomplete="off">
+        <button class="auth-btn" onclick="addAirport()">Add</button>
+      </div>
+      <div id="add-airport-error" class="auth-error hidden"></div>
+    </div>
     <button class="auth-btn auth-btn-secondary" onclick="doLogout()">Log out</button>
   </div>
 </div>
