@@ -33,6 +33,8 @@ from lightroom import find_catalog
 
 
 def _fetch_weather_range(lat: float, lon: float, tz_name: str, start_date: str, end_date: str) -> dict:
+    import pytz
+    tz = pytz.timezone(tz_name)
     tz_enc = tz_name.replace("/", "%2F")
     url = (f"https://historical-forecast-api.open-meteo.com/v1/forecast"
            f"?latitude={lat}&longitude={lon}&start_date={start_date}&end_date={end_date}"
@@ -46,8 +48,12 @@ def _fetch_weather_range(lat: float, lon: float, tz_name: str, start_date: str, 
             sr_s = (daily.get("sunrise") or [])[i]
             ss_s = (daily.get("sunset") or [])[i]
             wc = int((daily.get("weathercode") or [])[i] or 0)
-            sr = int(datetime.fromisoformat(sr_s).timestamp()) if sr_s else 0
-            ss = int(datetime.fromisoformat(ss_s).timestamp()) if ss_s else 0
+            # Open-Meteo returns naive local-wall-clock strings — .timestamp() on a
+            # naive datetime uses the *host's* system timezone, not the airport's,
+            # silently corrupting the result for any airport whose tz differs from
+            # wherever this script happens to run. Must localize explicitly.
+            sr = int(tz.localize(datetime.fromisoformat(sr_s)).timestamp()) if sr_s else 0
+            ss = int(tz.localize(datetime.fromisoformat(ss_s)).timestamp()) if ss_s else 0
             tmax = (daily.get("temperature_2m_max") or [])[i]
             tmin = (daily.get("temperature_2m_min") or [])[i]
             SEVERE = {75, 82, 86, 95, 96, 99}
@@ -62,7 +68,7 @@ def _fetch_weather_range(lat: float, lon: float, tz_name: str, start_date: str, 
     return out
 
 
-def backfill(db_path: str, dry_run: bool = False) -> None:
+def backfill(db_path: str, dry_run: bool = False, force_refetch: bool = False) -> None:
     store = SqliteStore(db_path)
 
     with store._connect() as conn:
@@ -83,7 +89,11 @@ def backfill(db_path: str, dry_run: bool = False) -> None:
                 w = json.loads(wj)
             except Exception:
                 w = None
-        if w and w.get("sunrise_ts") and w.get("sunset_ts"):
+        # --force-refetch: don't trust existing cached sunrise/sunset even if
+        # present and non-zero — used after fixing the naive-datetime timezone
+        # bug, whose corrupted values are wrong but still nonzero, so the normal
+        # "missing or zeroed" check wouldn't have caught them.
+        if w and w.get("sunrise_ts") and w.get("sunset_ts") and not force_refetch:
             existing_weather[row["date"]] = w
         else:
             missing_dates.append(row["date"])
@@ -217,5 +227,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--db", default="data/spotalert.db")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--force-refetch", action="store_true",
+                         help="Re-fetch weather for every date, ignoring existing cached values")
     args = parser.parse_args()
-    backfill(args.db, dry_run=args.dry_run)
+    backfill(args.db, dry_run=args.dry_run, force_refetch=args.force_refetch)

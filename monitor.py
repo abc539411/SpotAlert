@@ -1667,8 +1667,16 @@ async def run_check(context: ContextTypes.DEFAULT_TYPE) -> None:
                         _sr_s = (_daily.get("sunrise") or [])[_wi]
                         _ss_s = (_daily.get("sunset")  or [])[_wi]
                         _wc   = int((_daily.get("weathercode") or [])[_wi] or 0)
-                        _sr   = int(datetime.fromisoformat(_sr_s).timestamp()) if _sr_s else 0
-                        _ss   = int(datetime.fromisoformat(_ss_s).timestamp()) if _ss_s else 0
+                        # Open-Meteo returns these as naive local-wall-clock strings
+                        # (per the &timezone= param) — .timestamp() on a naive
+                        # datetime uses the SERVER's own system timezone, not the
+                        # airport's, silently corrupting sunrise/sunset for any
+                        # airport whose tz differs from the server's (invisible for
+                        # the server's own home airport, wrong for every other one).
+                        # Must localize to the airport's tz explicitly before
+                        # converting to an epoch timestamp.
+                        _sr = int(_tz_c.localize(datetime.fromisoformat(_sr_s)).timestamp()) if _sr_s else 0
+                        _ss = int(_tz_c.localize(datetime.fromisoformat(_ss_s)).timestamp()) if _ss_s else 0
                         _tmax = (_daily.get("temperature_2m_max") or [])[_wi]
                         _tmin = (_daily.get("temperature_2m_min") or [])[_wi]
                         _weather[_wd] = {
