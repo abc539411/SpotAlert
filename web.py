@@ -736,12 +736,9 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         store_ = cfg_.store
         airport_iata_ = (cfg_.airport_iata if cfg_ else None) or store_.load_setting("AIRPORT_CODE") or ""
         airport_name_ = (cfg_.airport_name if cfg_ else None) or ""
-        tz_name = (
-            store_.load_setting("WEB_TIMEZONE")
-            or (getattr(cfg_, 'airport_tz', None) if cfg_ else None)
-            or store_.load_setting("_airport_tz")
-            or "UTC"
-        )
+        # Timezone is tied to the airport's own location — never separately
+        # user-settable (WEB_TIMEZONE override removed).
+        tz_name = (getattr(cfg_, 'airport_tz', None) if cfg_ else None) or "UTC"
         try:
             tz = pytz.timezone(tz_name)
         except Exception:
@@ -945,9 +942,9 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         store_ = cfg_.store
 
         airport_iata_ = (cfg_.airport_iata if cfg_ else None) or store_.load_setting("AIRPORT_CODE") or ""
-        tz_name = (store_.load_setting("WEB_TIMEZONE")
-                   or (getattr(cfg_, 'airport_tz', None) if cfg_ else None)
-                   or store_.load_setting("_airport_tz") or "UTC")
+        # Timezone is tied to the airport's own location — never separately
+        # user-settable (WEB_TIMEZONE override removed).
+        tz_name = (getattr(cfg_, 'airport_tz', None) if cfg_ else None) or "UTC"
         try:
             tz = pytz.timezone(tz_name)
         except Exception:
@@ -3016,10 +3013,10 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
             result["airport_tz"]   = getattr(cfg, "airport_tz", "")
             result["check_interval"] = cfg.check_interval
             result["military_check_interval"] = cfg.military_check_interval
-        # Effective timezone (WEB_TIMEZONE override or airport tz)
+        # Timezone is tied to the airport's own location — never separately
+        # user-settable (WEB_TIMEZONE override removed).
         store_ = cfg.store if cfg else app.state.store
-        _eff_tz = (store_.load_setting("WEB_TIMEZONE") if store_ else None) \
-                  or result.get("airport_tz") or "UTC"
+        _eff_tz = result.get("airport_tz") or "UTC"
         result["effective_tz"] = _eff_tz
         try:
             import pytz as _pytz, datetime as _dt

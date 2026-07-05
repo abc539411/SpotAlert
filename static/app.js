@@ -3400,7 +3400,7 @@ async function loadInfo() {
     const airportCodeEl = $('info-airport-code');
     if (airportCodeEl) airportCodeEl.value = s.airport_iata || s.airport_code || '';
     const tzInEl = $('info-timezone-input');
-    if (tzInEl && !tzInEl.dataset.userEdited) tzInEl.value = s.effective_tz || s.airport_tz || '';
+    if (tzInEl) tzInEl.value = s.effective_tz || s.airport_tz || '';
 
     function _fmtRuntime(secs) {
       if (!secs && secs !== 0) return '—';

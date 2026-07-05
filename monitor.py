@@ -1638,7 +1638,14 @@ async def run_check(context: ContextTypes.DEFAULT_TYPE) -> None:
         # Days to (re-)cluster: yesterday, today, +1, +2, +3
         _cluster_dates = [_today + __timedelta(days=d) for d in range(-1, 4)]
 
-        # Fetch weather for today + future only (4 days)
+        # Fetch weather for the full cluster window (yesterday .. +3 days). This must
+        # match _cluster_dates exactly — it previously started at _today, one day
+        # short of _cluster_dates' "yesterday" entry, so "yesterday" always fell
+        # through to sunrise_ts=sunset_ts=0 below, silently disabling the lighting
+        # gate for that day. Because the result is cached permanently in
+        # timeline_cache and only -1..+3 are ever re-clustered, each day was
+        # permanently corrupted at the moment it passed through the "yesterday"
+        # slot — see backfill_timeline_weather.py for fixing already-cached days.
         _weather: dict = {}
         _lat = getattr(cfg, 'airport_lat', 0) or 0
         _lon = getattr(cfg, 'airport_lon', 0) or 0
@@ -1647,7 +1654,7 @@ async def run_check(context: ContextTypes.DEFAULT_TYPE) -> None:
                 _tz_enc = cfg.airport_tz.replace("/", "%2F")
                 _url = (f"https://historical-forecast-api.open-meteo.com/v1/forecast"
                         f"?latitude={_lat}&longitude={_lon}"
-                        f"&start_date={_today}&end_date={_today + __timedelta(days=3)}"
+                        f"&start_date={_today - __timedelta(days=1)}&end_date={_today + __timedelta(days=3)}"
                         f"&daily=sunrise,sunset,weathercode,temperature_2m_max,temperature_2m_min"
                         f"&timezone={_tz_enc}")
                 with _ur.urlopen(_url, timeout=10) as _resp:
