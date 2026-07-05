@@ -56,6 +56,19 @@ log = logging.getLogger(__name__)
 
 STATIC_DIR = Path(__file__).parent / "static"
 
+# Settings keys a Pilot may edit for themselves (spotrec/livery/rare/routetype
+# groups in static/app.js's SETTINGS_SCHEMA — kept in sync with that list by
+# hand since this is the server-side enforcement backstop, not just a UI
+# affordance). Everything else (monitoring internals, military, notification,
+# airport identity) is Controller-only.
+PILOT_EDITABLE_SETTINGS = frozenset({
+    "SPECIAL_LIVERY_KEYWORDS", "SPECIAL_LIVERY_EXCLUDE_KEYWORDS",
+    "RARE_PLANE_MIN_ABSENCE_DAYS",
+    "SPOT_MAX_GAP_HOURS", "SPOT_LULL_MINS", "SPOT_MAX_LULLS", "SPOT_LIGHTING_GATE",
+    "SPOT_MAX_SPOTTED", "SPOT_LIGHT_BUFFER_MINS", "SPOT_BAD_LIGHT_START", "SPOT_BAD_LIGHT_END",
+    "ROUTE_TYPE_MIN_DAYS", "ROUTE_TYPE_DOMINANCE_X", "ROUTE_TYPE_LOOKBACK_DAYS",
+})
+
 # Cache for /api/live-status — one shared airport page fetch, reused for 90s
 _live_status_cache: dict = {"ts": 0, "schedule": None}
 
@@ -521,6 +534,91 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
             for t in tasks:
                 t.cancel()
         app.state.cfgs.pop(iata, None)
+        return JSONResponse({"ok": True})
+
+    @app.get("/api/controller/users")
+    async def controller_list_users(user=Depends(_auth_require_role("controller"))):
+        cstore = app.state.control_store
+        out = []
+        for u in cstore.list_users():
+            out.append({
+                "id": u["user_id"], "username": u["username"], "role": u["role"],
+                "airport_iatas": [] if u["role"] == "controller" else cstore.get_user_airports(u["user_id"]),
+                "created_ts": u["created_ts"],
+            })
+        return JSONResponse({"users": out})
+
+    @app.post("/api/controller/users")
+    async def controller_create_user(request: Request, user=Depends(_auth_require_role("controller"))):
+        from auth import hash_password
+        body = await request.json()
+        username = str(body.get("username") or "").strip()
+        password = str(body.get("password") or "")
+        role = str(body.get("role") or "")
+        airport_iatas = body.get("airport_iatas") or []
+        if not username or len(password) < 8 or role not in ("controller", "pilot", "passenger"):
+            raise HTTPException(400, "username, a password of at least 8 characters, and a valid role are required")
+        cstore = app.state.control_store
+        if cstore.get_user_by_username(username):
+            raise HTTPException(409, "That username is already taken")
+        new_id = cstore.create_user(username, hash_password(password), role, airport_iatas)
+        return JSONResponse({"ok": True, "id": new_id})
+
+    @app.put("/api/controller/users/{target_id}")
+    async def controller_update_user(target_id: str, request: Request, user=Depends(_auth_require_role("controller"))):
+        body = await request.json()
+        cstore = app.state.control_store
+        if not cstore.get_user(target_id):
+            raise HTTPException(404, "Unknown user")
+        role = body.get("role")
+        if role is not None and role not in ("controller", "pilot", "passenger"):
+            raise HTTPException(400, "Invalid role")
+        airport_iatas = body.get("airport_iatas")
+        cstore.update_user(target_id, role=role, airport_iatas=airport_iatas)
+        return JSONResponse({"ok": True})
+
+    @app.post("/api/controller/users/{target_id}/reset-password")
+    async def controller_reset_password(target_id: str, request: Request, user=Depends(_auth_require_role("controller"))):
+        from auth import hash_password
+        body = await request.json()
+        new_password = str(body.get("new_password") or "")
+        if len(new_password) < 8:
+            raise HTTPException(400, "New password must be at least 8 characters")
+        cstore = app.state.control_store
+        if not cstore.get_user(target_id):
+            raise HTTPException(404, "Unknown user")
+        cstore.set_password(target_id, hash_password(new_password))
+        return JSONResponse({"ok": True})
+
+    @app.delete("/api/controller/users/{target_id}")
+    async def controller_delete_user(target_id: str, user=Depends(_auth_require_role("controller"))):
+        """Cascade-deletes the user's data everywhere: their control.db row (and,
+        via ON DELETE CASCADE, user_airport_access), their catalog file, and —
+        since SQLite has no cross-file foreign keys — their settings/filter rows
+        in every per-airport DB they had access to. This is why the loop below is
+        application code rather than a single DB constraint; missing an airport
+        here would leave orphaned rows behind."""
+        cstore = app.state.control_store
+        target = cstore.get_user(target_id)
+        if not target:
+            raise HTTPException(404, "Unknown user")
+        if target_id == user.user_id:
+            raise HTTPException(400, "You cannot delete your own account")
+
+        for cfg in app.state.cfgs.values():
+            with cfg.store._connect() as conn:
+                conn.execute("DELETE FROM settings WHERE user_id = ?", (target_id,))
+                for tbl in ("filter_exclusions", "filter_regos", "filter_types", "filter_airlines"):
+                    conn.execute(f"DELETE FROM {tbl} WHERE owner_user_id = ?", (target_id,))
+
+        catalog_path = target["catalog_path"]
+        if catalog_path and os.path.exists(catalog_path):
+            try:
+                os.remove(catalog_path)
+            except OSError as exc:
+                log.warning("Could not remove catalog file for deleted user %s: %s", target_id, exc)
+
+        cstore.delete_user(target_id)
         return JSONResponse({"ok": True})
 
     # ── API routes ──────────────────────────────────────────────────────────
@@ -3110,105 +3208,121 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         ]
         return JSONResponse({'tasks': tasks, 'apis': apis, 'now': now})
 
-    # NOTE (Phase 3 scope): settings/filters below are resolved to the correct
-    # per-airport store, but still always operate on the 'controller' sentinel
-    # owner row/rows — role-based Pilot-vs-Controller precedence and per-owner
-    # filtering are Phase 4 work (no Pilot accounts exist yet, so this is behaviorally
-    # identical to today for the only account type currently in use).
+    def _owner_for(user) -> str:
+        """The owner_user_id a write from this user should land under —
+        Controller writes are the 'controller' ground-truth row; a Pilot's own
+        writes are fully independent, keyed by their own stable token."""
+        return "controller" if user.role == "controller" else user.user_id
 
     @app.get("/api/settings")
     async def get_settings(user=Depends(_auth_current_user)):
         store = _cfg_for_user(user).store
-        result = {}
         with store._connect() as conn:
-            rows = conn.execute("SELECT key, value FROM settings WHERE user_id = 'controller' ORDER BY key").fetchall()
-        for r in rows:
-            result[r["key"]] = r["value"]
+            result = {r["key"]: r["value"] for r in conn.execute(
+                "SELECT key, value FROM settings WHERE user_id = 'controller' ORDER BY key").fetchall()}
+            if user.role == "pilot":
+                # Layer the pilot's own overrides on top of the Controller's
+                # defaults, for whichever pilot-editable keys they've touched.
+                own = conn.execute(
+                    "SELECT key, value FROM settings WHERE user_id = ?", (user.user_id,)
+                ).fetchall()
+                for r in own:
+                    if r["key"] in PILOT_EDITABLE_SETTINGS:
+                        result[r["key"]] = r["value"]
         return JSONResponse(result)
 
     @app.put("/api/settings")
-    async def put_settings(request: Request, user=Depends(_auth_require_role("controller"))):
+    async def put_settings(request: Request, user=Depends(_auth_require_role("controller", "pilot"))):
         body = await request.json()
         if not isinstance(body, dict):
             raise HTTPException(400, "Expected JSON object")
+        if user.role == "pilot":
+            not_allowed = [k for k in body if k not in PILOT_EDITABLE_SETTINGS]
+            if not_allowed:
+                raise HTTPException(403, f"Not allowed to edit: {', '.join(not_allowed)}")
         store = _cfg_for_user(user).store
+        owner = _owner_for(user)
         for key, value in body.items():
-            store.save_setting(str(key), str(value))
+            store.set_setting(owner, str(key), str(value))
         return JSONResponse({"ok": True})
 
     @app.get("/api/filters")
     async def get_filters(user=Depends(_auth_current_user)):
         store = _cfg_for_user(user).store
+        # Passengers have no filter list of their own — they see the Controller's
+        # (read-only, per "inherit the Controller's settings"). A Pilot's list is
+        # fully independent, never merged with the Controller's.
+        owner = "controller" if user.role in ("controller", "passenger") else user.user_id
         def _fetch_rows(sql, *args):
             with store._connect() as conn:
                 return [dict(r) for r in conn.execute(sql, *args).fetchall()]
         return JSONResponse({
-            "filter_exclusions":  _fetch_rows("SELECT id, registration, description FROM filter_exclusions WHERE owner_user_id = 'controller' ORDER BY id"),
-            "filter_regos":  _fetch_rows("SELECT id, registration, description FROM filter_regos WHERE owner_user_id = 'controller' ORDER BY id"),
-            "filter_types":  _fetch_rows("SELECT id, airline, aircraft_type FROM filter_types WHERE owner_user_id = 'controller' ORDER BY id"),
-            "filter_airlines": _fetch_rows("SELECT id, icao_code, entry_type, name FROM filter_airlines WHERE owner_user_id = 'controller' ORDER BY id"),
+            "filter_exclusions":  _fetch_rows("SELECT id, registration, description FROM filter_exclusions WHERE owner_user_id = ? ORDER BY id", (owner,)),
+            "filter_regos":  _fetch_rows("SELECT id, registration, description FROM filter_regos WHERE owner_user_id = ? ORDER BY id", (owner,)),
+            "filter_types":  _fetch_rows("SELECT id, airline, aircraft_type FROM filter_types WHERE owner_user_id = ? ORDER BY id", (owner,)),
+            "filter_airlines": _fetch_rows("SELECT id, icao_code, entry_type, name FROM filter_airlines WHERE owner_user_id = ? ORDER BY id", (owner,)),
         })
 
     @app.post("/api/filters/exclusion")
-    async def add_exclusion(request: Request, user=Depends(_auth_require_role("controller"))):
+    async def add_exclusion(request: Request, user=Depends(_auth_require_role("controller", "pilot"))):
         body = await request.json()
         store = _cfg_for_user(user).store
-        store.add_exclusion(body.get("airline", ""), body["registration"], body.get("description", ""))
+        store.add_exclusion(body.get("airline", ""), body["registration"], body.get("description", ""), _owner_for(user))
         return JSONResponse({"ok": True})
 
     @app.delete("/api/filters/exclusion/{registration}")
-    async def delete_exclusion(registration: str, user=Depends(_auth_require_role("controller"))):
+    async def delete_exclusion(registration: str, user=Depends(_auth_require_role("controller", "pilot"))):
         store = _cfg_for_user(user).store
         with store._connect() as conn:
-            conn.execute("DELETE FROM filter_exclusions WHERE registration = ? AND owner_user_id = 'controller'", (registration,))
+            conn.execute("DELETE FROM filter_exclusions WHERE registration = ? AND owner_user_id = ?", (registration, _owner_for(user)))
         return JSONResponse({"ok": True})
 
     @app.post("/api/filters/rego")
-    async def add_rego(request: Request, user=Depends(_auth_require_role("controller"))):
+    async def add_rego(request: Request, user=Depends(_auth_require_role("controller", "pilot"))):
         body = await request.json()
         store = _cfg_for_user(user).store
-        store.add_rego_watch(body.get("airline", ""), body["registration"], body.get("description", ""))
+        store.add_rego_watch(body.get("airline", ""), body["registration"], body.get("description", ""), _owner_for(user))
         return JSONResponse({"ok": True})
 
     @app.delete("/api/filters/rego/{registration}")
-    async def delete_rego(registration: str, user=Depends(_auth_require_role("controller"))):
+    async def delete_rego(registration: str, user=Depends(_auth_require_role("controller", "pilot"))):
         store = _cfg_for_user(user).store
         with store._connect() as conn:
-            conn.execute("DELETE FROM filter_regos WHERE registration = ? AND owner_user_id = 'controller'", (registration,))
+            conn.execute("DELETE FROM filter_regos WHERE registration = ? AND owner_user_id = ?", (registration, _owner_for(user)))
         return JSONResponse({"ok": True})
 
     @app.post("/api/filters/type")
-    async def add_type(request: Request, user=Depends(_auth_require_role("controller"))):
+    async def add_type(request: Request, user=Depends(_auth_require_role("controller", "pilot"))):
         body = await request.json()
         store = _cfg_for_user(user).store
-        store.add_type_watch(body["airline"], body["aircraft_type"])
+        store.add_type_watch(body["airline"], body["aircraft_type"], _owner_for(user))
         return JSONResponse({"ok": True})
 
     @app.delete("/api/filters/type")
-    async def delete_type(request: Request, user=Depends(_auth_require_role("controller"))):
+    async def delete_type(request: Request, user=Depends(_auth_require_role("controller", "pilot"))):
         body = await request.json()
         store = _cfg_for_user(user).store
         with store._connect() as conn:
             conn.execute(
-                "DELETE FROM filter_types WHERE airline = ? AND aircraft_type = ? AND owner_user_id = 'controller'",
-                (body["airline"], body["aircraft_type"]),
+                "DELETE FROM filter_types WHERE airline = ? AND aircraft_type = ? AND owner_user_id = ?",
+                (body["airline"], body["aircraft_type"], _owner_for(user)),
             )
         return JSONResponse({"ok": True})
 
     @app.post("/api/filters/airline")
-    async def add_airline(request: Request, user=Depends(_auth_require_role("controller"))):
+    async def add_airline(request: Request, user=Depends(_auth_require_role("controller", "pilot"))):
         body = await request.json()
         store = _cfg_for_user(user).store
-        store.add_airline_watch(body["icao_code"], body.get("entry_type", "airline"), body.get("name", ""))
+        store.add_airline_watch(body["icao_code"], body.get("entry_type", "airline"), body.get("name", ""), _owner_for(user))
         return JSONResponse({"ok": True})
 
     @app.delete("/api/filters/airline/{icao_code}")
-    async def delete_airline(icao_code: str, entry_type: str = "airline", user=Depends(_auth_require_role("controller"))):
+    async def delete_airline(icao_code: str, entry_type: str = "airline", user=Depends(_auth_require_role("controller", "pilot"))):
         store = _cfg_for_user(user).store
         with store._connect() as conn:
             conn.execute(
-                "DELETE FROM filter_airlines WHERE icao_code = ? AND entry_type = ? AND owner_user_id = 'controller'",
-                (icao_code.upper(), entry_type),
+                "DELETE FROM filter_airlines WHERE icao_code = ? AND entry_type = ? AND owner_user_id = ?",
+                (icao_code.upper(), entry_type, _owner_for(user)),
             )
         return JSONResponse({"ok": True})
 

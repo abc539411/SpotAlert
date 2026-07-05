@@ -819,25 +819,27 @@ class SqliteStore:
             ])
         raise ValueError(f"Unknown list: {list_name!r}")
 
-    def add_exclusion(self, airline: str, registration: str, description: str) -> None:
+    def add_exclusion(self, airline: str, registration: str, description: str,
+                       owner_user_id: str = "controller") -> None:
         with self._connect() as conn:
             conn.execute(
-                "INSERT OR IGNORE INTO filter_exclusions(airline, registration, description) VALUES (?,?,?)",
-                (airline.strip(), registration.strip(), description.strip()),
+                "INSERT OR IGNORE INTO filter_exclusions(airline, registration, description, owner_user_id) VALUES (?,?,?,?)",
+                (airline.strip(), registration.strip(), description.strip(), owner_user_id),
             )
 
-    def add_rego_watch(self, airline: str, registration: str, description: str) -> None:
+    def add_rego_watch(self, airline: str, registration: str, description: str,
+                        owner_user_id: str = "controller") -> None:
         with self._connect() as conn:
             conn.execute(
-                "INSERT OR IGNORE INTO filter_regos(airline, registration, description, last_notified_ts) VALUES (?,?,?,0)",
-                (airline.strip(), registration.strip(), description.strip()),
+                "INSERT OR IGNORE INTO filter_regos(airline, registration, description, last_notified_ts, owner_user_id) VALUES (?,?,?,0,?)",
+                (airline.strip(), registration.strip(), description.strip(), owner_user_id),
             )
 
-    def add_type_watch(self, airline: str, aircraft_type: str) -> None:
+    def add_type_watch(self, airline: str, aircraft_type: str, owner_user_id: str = "controller") -> None:
         with self._connect() as conn:
             conn.execute(
-                "INSERT OR IGNORE INTO filter_types(airline, aircraft_type, last_notified_ts) VALUES (?,?,0)",
-                (airline.strip(), aircraft_type.strip()),
+                "INSERT OR IGNORE INTO filter_types(airline, aircraft_type, last_notified_ts, owner_user_id) VALUES (?,?,0,?)",
+                (airline.strip(), aircraft_type.strip(), owner_user_id),
             )
 
     def delete_entries_by_index(self, list_name: str, indexes: Sequence[int]) -> TableView:
@@ -1005,12 +1007,13 @@ class SqliteStore:
                 (now_ts, airline.strip(), aircraft_type.strip()),
             )
 
-    def add_airline_watch(self, icao_code: str, entry_type: str, name: str) -> None:
+    def add_airline_watch(self, icao_code: str, entry_type: str, name: str,
+                           owner_user_id: str = "controller") -> None:
         with self._connect() as conn:
             conn.execute(
-                "INSERT OR IGNORE INTO filter_airlines(icao_code, entry_type, name, last_notified_ts)"
-                " VALUES (?,?,?,0)",
-                (icao_code.strip().upper(), entry_type.strip(), name.strip()),
+                "INSERT OR IGNORE INTO filter_airlines(icao_code, entry_type, name, last_notified_ts, owner_user_id)"
+                " VALUES (?,?,?,0,?)",
+                (icao_code.strip().upper(), entry_type.strip(), name.strip(), owner_user_id),
             )
 
     def should_notify_airline_watchlist(self, icao_code: str, entry_type: str,

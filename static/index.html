@@ -76,6 +76,7 @@
     }
     .nav-tab:hover { color: var(--text); }
     .nav-tab.active { color: var(--text); border-bottom-color: var(--accent); }
+    .nav-tab.hidden { display: none; }
     .tab-icon { display: none; }
     @media (min-width: 768px) {
       /* Desktop order: Spotting, Feed, Collection, Search, Settings.
@@ -288,6 +289,12 @@
        etc). Without this, .auth-view's own "display:flex" wins the cascade over a
        nonexistent .hidden rule, so both auth views rendered on top of each other. */
     .auth-view.hidden { display: none; }
+    /* Same gotcha, one level down: any plain class="hidden" element nested inside
+       an .auth-view (add-airport-block, picker-subtabs, picker-panel-*, etc.)
+       needs this — a bare .hidden class does nothing on its own anywhere in this
+       codebase. Scoped to .auth-view descendants rather than a truly global rule,
+       matching the existing per-component pairing convention. */
+    .auth-view .hidden { display: none; }
     .auth-card {
       width: 100%; max-width: 320px; background: var(--surface2); border: 1px solid var(--border);
       border-radius: var(--r); padding: 24px 20px; display: flex; flex-direction: column; gap: 10px;
@@ -317,6 +324,24 @@
     .airport-picker-empty { font-size: 12px; color: var(--dim); text-align: center; }
     #add-airport-block { margin-top: 4px; padding-top: 12px; border-top: 1px solid var(--border); }
     .add-airport-row { display: flex; gap: 8px; }
+    .picker-subtabs { display: flex; gap: 4px; margin-bottom: 12px; background: var(--surface); border-radius: var(--r); padding: 3px; }
+    .picker-subtab { flex: 1; background: transparent; border: none; color: var(--dim); font-size: 12px; font-weight: 600; padding: 7px; border-radius: 5px; cursor: pointer; }
+    .picker-subtab.active { background: var(--accent); color: #fff; }
+    .user-mgmt-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; max-height: 320px; overflow-y: auto; }
+    .user-mgmt-row { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); padding: 10px 12px; }
+    .user-mgmt-row-hdr { display: flex; align-items: center; gap: 8px; }
+    .user-mgmt-username { font-weight: 600; font-size: 13px; flex: 1; }
+    .user-mgmt-role { font-size: 10px; text-transform: uppercase; letter-spacing: .04em; color: var(--dim); background: var(--surface2); padding: 2px 7px; border-radius: 10px; }
+    .user-mgmt-airports { font-size: 11px; color: var(--dim); margin-top: 4px; }
+    .user-mgmt-actions { display: flex; gap: 6px; margin-top: 8px; }
+    .user-mgmt-actions button {
+      background: var(--surface2); border: 1px solid var(--border); color: var(--dim);
+      font-size: 11px; padding: 4px 8px; border-radius: 5px; cursor: pointer;
+    }
+    .user-mgmt-actions button:hover { color: var(--text); }
+    .user-mgmt-actions button.danger:hover { color: #ef4444; border-color: #ef4444; }
+    .user-mgmt-airport-checks { display: flex; flex-wrap: wrap; gap: 8px; font-size: 12px; margin-bottom: 8px; }
+    .user-mgmt-airport-checks label { display: flex; align-items: center; gap: 4px; }
     .add-airport-row .auth-input { flex: 1; }
     .add-airport-row .auth-btn { margin-top: 0; flex-shrink: 0; width: auto; padding-left: 16px; padding-right: 16px; }
 
@@ -676,6 +701,17 @@
     .setting-unused .tags-list,
     .setting-unused .tags-add-row { opacity: 0.55; pointer-events: none; }
     .setting-unused-tag { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: rgba(239,68,68,0.7); margin-left: 6px; vertical-align: middle; }
+    /* Role-based read-only rows (Pilot viewing a Controller-only key, or any
+       Passenger row) — same disabling mechanics as .setting-unused, no red
+       "not active" styling since this isn't about the setting being unused. */
+    .setting-readonly .seg-ctrl,
+    .setting-readonly .day-toggles,
+    .setting-readonly .tog-track,
+    .setting-readonly .setting-select,
+    .setting-readonly .setting-input,
+    .setting-readonly .tags-list,
+    .setting-readonly .tags-add-row,
+    .setting-readonly .add-btn { opacity: 0.55; pointer-events: none; }
     .num-with-unit { display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0; }
     .num-unit { font-size: 11px; color: var(--dim); white-space: nowrap; width: 40px; flex-shrink: 0; }
     .save-hint { font-size: 11px; color: var(--dim); text-align: right; padding: 2px 4px; }
@@ -1398,6 +1434,7 @@
     .srch-subtab { background: none; border: none; border-bottom: 2px solid transparent; color: var(--dim); font-size: 13px; padding: 10px 16px; cursor: pointer; }
     .srch-subtab:hover { color: var(--text); }
     .srch-subtab.active { color: var(--text); border-bottom-color: var(--accent); }
+    .srch-subtab.hidden { display: none; }
     .srch-page { display: flex; flex-direction: column; flex: 1; overflow: hidden; }
     .srch-page.hidden { display: none; }
     .srch-bar { display: flex; gap: 8px; padding: 12px 14px; background: var(--surface); border-bottom: 1px solid var(--border); flex-wrap: wrap; align-items: flex-end; }
@@ -1486,15 +1523,41 @@
 <div id="view-airport-picker" class="auth-view hidden">
   <div class="auth-card auth-card-wide">
     <div class="auth-logo">✈ SpotAlert</div>
-    <div class="auth-title">Choose an airport</div>
-    <div id="airport-picker-list" class="airport-picker-list"></div>
-    <div id="add-airport-block" class="hidden">
-      <div class="add-airport-row">
-        <input id="add-airport-code" class="auth-input" type="text" placeholder="Airport code, e.g. MEL" autocomplete="off">
-        <button class="auth-btn" onclick="addAirport()">Add</button>
-      </div>
-      <div id="add-airport-error" class="auth-error hidden"></div>
+    <div id="picker-subtabs" class="picker-subtabs hidden">
+      <button class="picker-subtab active" data-picker-tab="airports" onclick="_pickerSubtab('airports')">Airports</button>
+      <button class="picker-subtab" data-picker-tab="users" onclick="_pickerSubtab('users')">Manage Users</button>
     </div>
+
+    <div id="picker-panel-airports">
+      <div class="auth-title">Choose an airport</div>
+      <div id="airport-picker-list" class="airport-picker-list"></div>
+      <div id="add-airport-block" class="hidden">
+        <div class="add-airport-row">
+          <input id="add-airport-code" class="auth-input" type="text" placeholder="Airport code, e.g. MEL" autocomplete="off">
+          <button class="auth-btn" onclick="addAirport()">Add</button>
+        </div>
+        <div id="add-airport-error" class="auth-error hidden"></div>
+      </div>
+    </div>
+
+    <div id="picker-panel-users" class="hidden">
+      <div class="auth-title">Manage users</div>
+      <div id="user-mgmt-list" class="user-mgmt-list"></div>
+      <button class="auth-btn auth-btn-secondary" style="margin-bottom:8px" onclick="_showAddUserForm()">+ Add user</button>
+      <div id="add-user-form" class="hidden">
+        <input id="add-user-username" class="auth-input" type="text" placeholder="Username" autocomplete="off" style="margin-bottom:6px">
+        <input id="add-user-password" class="auth-input" type="password" placeholder="Password (min 8 characters)" autocomplete="new-password" style="margin-bottom:6px">
+        <select id="add-user-role" class="auth-input" style="margin-bottom:6px">
+          <option value="pilot">Pilot</option>
+          <option value="passenger">Passenger</option>
+          <option value="controller">Controller</option>
+        </select>
+        <div id="add-user-airports" class="user-mgmt-airport-checks"></div>
+        <div id="add-user-error" class="auth-error hidden"></div>
+        <button class="auth-btn" onclick="createUser()">Create user</button>
+      </div>
+    </div>
+
     <button class="auth-btn auth-btn-secondary" onclick="doLogout()">Log out</button>
   </div>
 </div>

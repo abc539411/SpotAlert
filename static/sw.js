@@ -1,4 +1,4 @@
-const CACHE        = 'spotalert-v440';
+const CACHE        = 'spotalert-v441';
 const LOGOS_CACHE  = 'airline-logos-v3';  // persistent — never cleared on SW update
 const PRECACHE = ['/', '/static/app.js', '/manifest.json'];
 

@@ -64,6 +64,33 @@ function _hideAuthViews() {
   ['view-login', 'view-airport-picker'].forEach(v => $(v).classList.add('hidden'));
 }
 
+// Set once at boot (_authBoot) — Controller sees everything; Pilot loses the
+// operational Settings subtabs but keeps Collection/Fleet/Catalogue; Passenger
+// additionally loses the Collection tab and Search's Catalogue subtab. Kept as
+// a plain global (not re-derived per render) since role never changes mid-session.
+let _appRole = '';
+const PILOT_EDITABLE_GROUPS = new Set(['spotrec', 'livery', 'rare', 'routetype']);
+
+function _applyRoleUI(role) {
+  _appRole = role;
+  const isController = role === 'controller';
+  const isPassenger  = role === 'passenger';
+
+  // Operational/monitoring-internals Settings subtabs — Controller-only,
+  // hidden entirely (not just disabled) for Pilot and Passenger alike.
+  ['config', 'notification', 'logs'].forEach(name => {
+    const btn = document.querySelector(`.srch-subtab[data-subtab="${name}"]`);
+    if (btn) btn.classList.toggle('hidden', !isController);
+  });
+
+  // Passenger loses the Collection tab and Search's Catalogue subtab entirely —
+  // both are catalog-backed views a read-only viewer has no use for.
+  const collectionTab = document.querySelector('.nav-tab[data-tab="collection"]');
+  if (collectionTab) collectionTab.classList.toggle('hidden', isPassenger);
+  const catalogueSubtab = document.querySelector('.srch-subtab[data-srch-subtab="catalog"]');
+  if (catalogueSubtab) catalogueSubtab.classList.toggle('hidden', isPassenger);
+}
+
 async function _authBoot() {
   let me;
   try { me = await api('/me'); } catch { me = { authenticated: false }; }
@@ -77,6 +104,7 @@ async function _authBoot() {
   // (Feed cards, detail views, etc.) read _appTz as their default, and must
   // never fall back to the viewing device's own timezone.
   try { _appTz = (await api('/status')).effective_tz || ''; } catch {}
+  _applyRoleUI(me.user.role);
   _hideAuthViews();
 }
 
@@ -99,7 +127,12 @@ async function doLogout() {
   location.reload();
 }
 
+let _pickerAirports = [];  // cached for the Add User form's airport checkboxes
+let _pickerIsController = false;
+
 function _renderAirportPicker(airports, role) {
+  _pickerAirports = airports || [];
+  _pickerIsController = role === 'controller';
   const el = $('airport-picker-list');
   if (!airports.length) {
     el.innerHTML = '<div class="airport-picker-empty">No airports assigned to your account yet.</div>';
@@ -108,8 +141,18 @@ function _renderAirportPicker(airports, role) {
       `<button class="airport-pick-btn" onclick="selectAirport('${esc(a.iata)}')">${esc(a.name)} (${esc(a.iata)})</button>`
     ).join('');
   }
-  // Only a Controller can add new watched airports.
-  $('add-airport-block').classList.toggle('hidden', role !== 'controller');
+  // Only a Controller can add new watched airports or manage users.
+  $('add-airport-block').classList.toggle('hidden', !_pickerIsController);
+  $('picker-subtabs').classList.toggle('hidden', !_pickerIsController);
+  _pickerSubtab('airports');
+}
+
+function _pickerSubtab(name) {
+  document.querySelectorAll('.picker-subtab').forEach(b =>
+    b.classList.toggle('active', b.dataset.pickerTab === name));
+  $('picker-panel-airports').classList.toggle('hidden', name !== 'airports');
+  $('picker-panel-users').classList.toggle('hidden', name !== 'users');
+  if (name === 'users' && _pickerIsController) loadUserManagement();
 }
 
 async function selectAirport(iata) {
@@ -126,6 +169,83 @@ async function showAirportPicker() {
   try { me = await api('/me'); } catch { me = { airports: [], user: {} }; }
   _renderAirportPicker(me.airports || [], (me.user || {}).role);
   _showAuthView('view-airport-picker');
+}
+
+// ── Manage Users (Controller only) ──────────────────────────────────────────
+
+async function loadUserManagement() {
+  const listEl = $('user-mgmt-list');
+  listEl.innerHTML = '<div class="airport-picker-empty">Loading…</div>';
+  try {
+    const { users } = await api('/controller/users');
+    listEl.innerHTML = users.map(u => {
+      const airportsTxt = u.role === 'controller' ? 'All airports' : (u.airport_iatas.join(', ') || 'No airports assigned');
+      return `<div class="user-mgmt-row">
+        <div class="user-mgmt-row-hdr">
+          <span class="user-mgmt-username">${esc(u.username)}</span>
+          <span class="user-mgmt-role">${esc(u.role)}</span>
+        </div>
+        <div class="user-mgmt-airports">${esc(airportsTxt)}</div>
+        <div class="user-mgmt-actions">
+          <button onclick="_resetUserPassword('${esc(u.id)}','${esc(u.username)}')">Reset password</button>
+          <button class="danger" onclick="_deleteUser('${esc(u.id)}','${esc(u.username)}')">Delete</button>
+        </div>
+      </div>`;
+    }).join('') || '<div class="airport-picker-empty">No users yet.</div>';
+  } catch (e) {
+    listEl.innerHTML = '<div class="airport-picker-empty">Could not load users.</div>';
+  }
+}
+
+function _showAddUserForm() {
+  $('add-user-airports').innerHTML = _pickerAirports.map(a =>
+    `<label><input type="checkbox" value="${esc(a.iata)}"> ${esc(a.iata)}</label>`
+  ).join('');
+  $('add-user-form').classList.remove('hidden');
+}
+
+async function createUser() {
+  const username = $('add-user-username').value.trim();
+  const password = $('add-user-password').value;
+  const role = $('add-user-role').value;
+  const airport_iatas = Array.from(document.querySelectorAll('#add-user-airports input:checked')).map(cb => cb.value);
+  const errEl = $('add-user-error');
+  errEl.classList.add('hidden');
+  try {
+    await api('/controller/users', { method: 'POST', body: JSON.stringify({ username, password, role, airport_iatas }) });
+    $('add-user-username').value = '';
+    $('add-user-password').value = '';
+    $('add-user-form').classList.add('hidden');
+    toast(`Created ${username}`);
+    loadUserManagement();
+  } catch (e) {
+    let msg = 'Could not create user';
+    try { msg = JSON.parse(e.message).detail || msg; } catch {}
+    errEl.textContent = msg;
+    errEl.classList.remove('hidden');
+  }
+}
+
+async function _resetUserPassword(id, username) {
+  const newPassword = prompt(`New password for ${username} (min 8 characters):`);
+  if (!newPassword) return;
+  try {
+    await api(`/controller/users/${id}/reset-password`, { method: 'POST', body: JSON.stringify({ new_password: newPassword }) });
+    toast('Password reset');
+  } catch (e) {
+    toast('Could not reset password');
+  }
+}
+
+async function _deleteUser(id, username) {
+  if (!confirm(`Delete ${username}? This removes their settings, filters, and catalog everywhere.`)) return;
+  try {
+    await api(`/controller/users/${id}`, { method: 'DELETE' });
+    toast(`Deleted ${username}`);
+    loadUserManagement();
+  } catch (e) {
+    toast('Could not delete user');
+  }
 }
 
 async function addAirport() {
@@ -1540,11 +1660,18 @@ async function loadSettings() {
   try {
     const s = await api('/settings');
     const groups = [...new Set(SETTINGS_SCHEMA.map(x => x.group))];
+    // Controller edits everything; a Pilot edits only their own spotting/filter
+    // groups (everything else in a visible subtab is still shown, just
+    // read-only); a Passenger never edits anything.
+    const editable = g => _appRole === 'controller' || (_appRole === 'pilot' && PILOT_EDITABLE_GROUPS.has(g));
     groups.forEach(g => {
       const el = $('settings-' + g);
       if (!el) return;
       el.innerHTML = SETTINGS_SCHEMA.filter(x => x.group === g)
         .map(item => _settingRow(item, s[item.key] ?? '')).join('');
+      if (!editable(g)) {
+        el.querySelectorAll('.setting-row, .setting-row-full').forEach(r => r.classList.add('setting-readonly'));
+      }
     });
     // Static inputs not in SETTINGS_SCHEMA — populate manually
     const lsEl = $('info-logostream-key');
