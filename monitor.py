@@ -1819,9 +1819,22 @@ async def run_check(context: ContextTypes.DEFAULT_TYPE) -> None:
                     **_common, "ts": _dep_ts, "side": "departure",
                 })
 
+        # Fall back to each date's own previously-cached weather when this cycle's
+        # fetch didn't return that date (transient API miss/rate-limit/etc) — never
+        # silently fall back to sunrise_ts=sunset_ts=0, which disables the lighting
+        # gate for that day. upsert_timeline_cache only overwrites weather_json when
+        # given a non-None value, so a stale-but-correct weather_json can otherwise
+        # sit next to a freshly-recomputed (and wrongly unqualified) clusters_json.
+        _old_cache = cfg.store.get_timeline_cache(_date_strs)
+
         for _cd in _cluster_dates:
             _ds  = _cd.strftime("%Y-%m-%d")
-            _sw  = _weather.get(_ds, {})
+            _sw  = _weather.get(_ds)
+            if not _sw:
+                try:
+                    _sw = _jc.loads(_old_cache.get(_ds, {}).get("weather_json") or "{}")
+                except Exception:
+                    _sw = {}
             _sr, _ss = _sw.get("sunrise_ts", 0), _sw.get("sunset_ts", 0)
 
             _clusters = cluster_day_for_cache(

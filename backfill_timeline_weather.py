@@ -1,10 +1,22 @@
-"""One-time backfill: recompute timeline_cache entries whose cached sunrise/sunset
-was silently zeroed out by a date-range bug in monitor.py's weather fetch (fixed
-alongside this script — see monitor.py's Open-Meteo call). Any date processed while
-it sat in the "yesterday" slot of the cluster window got permanently cached with
-sunrise_ts=sunset_ts=0, which disables the lighting gate (pre-sunrise/post-sunset
-flights were incorrectly marked "qualifying") — and since only the last 4 days are
-ever re-clustered, the bad entry for a given calendar date never self-heals.
+"""One-time backfill: recompute every timeline_cache date's clusters.
+
+Two related monitor.py bugs (both fixed alongside this script) could leave a
+date's clusters_json computed with sunrise_ts=sunset_ts=0 — silently disabling
+the lighting gate, so pre-sunrise/post-sunset flights were wrongly marked
+"qualifying" — while its weather_json still looked perfectly fine:
+
+1. The Open-Meteo fetch used to start at "today", one day short of the cluster
+   window's "yesterday" entry, so yesterday always missed that cycle's fetch.
+2. upsert_timeline_cache() only overwrites weather_json when given a non-None
+   value — so on any cycle where that day's weather lookup came up empty
+   (rate-limit, transient miss, anything), clusters_json still got silently
+   recomputed with a sunrise/sunset of 0 while a STALE-BUT-CORRECT weather_json
+   from an earlier cycle was left untouched, masking the corruption.
+
+Because of #2, corruption isn't reliably detectable from weather_json alone —
+so this reprocesses every cached date's clusters unconditionally, using each
+date's existing weather_json when valid and only hitting the Open-Meteo API
+for dates where it's missing/zeroed.
 
 Usage: python backfill_timeline_weather.py [--db path/to/spotalert.db] [--dry-run]
 """
@@ -56,34 +68,41 @@ def backfill(db_path: str, dry_run: bool = False) -> None:
     with store._connect() as conn:
         rows = conn.execute("SELECT date, weather_json FROM timeline_cache ORDER BY date").fetchall()
 
-    corrupted_dates = []
-    for row in rows:
-        wj = row["weather_json"]
-        if not wj:
-            corrupted_dates.append(row["date"])
-            continue
-        try:
-            w = json.loads(wj)
-            if not w.get("sunrise_ts") or not w.get("sunset_ts"):
-                corrupted_dates.append(row["date"])
-        except Exception:
-            corrupted_dates.append(row["date"])
-
-    if not corrupted_dates:
-        print("No corrupted timeline_cache entries found — nothing to do.")
+    if not rows:
+        print("timeline_cache is empty — nothing to do.")
         return
 
-    print(f"Found {len(corrupted_dates)} corrupted date(s): {corrupted_dates[0]} .. {corrupted_dates[-1]}"
-          f" ({len(corrupted_dates)} total)")
+    all_dates = [row["date"] for row in rows]
+    existing_weather: dict = {}
+    missing_dates = []
+    for row in rows:
+        wj = row["weather_json"]
+        w = None
+        if wj:
+            try:
+                w = json.loads(wj)
+            except Exception:
+                w = None
+        if w and w.get("sunrise_ts") and w.get("sunset_ts"):
+            existing_weather[row["date"]] = w
+        else:
+            missing_dates.append(row["date"])
+
+    print(f"Reprocessing {len(all_dates)} cached date(s) ({all_dates[0]} .. {all_dates[-1]}); "
+          f"{len(missing_dates)} need a fresh weather fetch.")
 
     lat = float(store.load_setting("_airport_lat") or 0)
     lon = float(store.load_setting("_airport_lon") or 0)
     tz_name = store.load_setting("_airport_tz") or "UTC"
-    if not lat or not lon:
-        print("No cached airport lat/lon found in this DB — cannot fetch weather. Aborting.")
-        return
 
-    weather = _fetch_weather_range(lat, lon, tz_name, corrupted_dates[0], corrupted_dates[-1])
+    weather = dict(existing_weather)
+    if missing_dates:
+        if not lat or not lon:
+            print("No cached airport lat/lon found in this DB — cannot fetch weather for "
+                  f"{len(missing_dates)} date(s) missing it; those will be skipped.")
+        else:
+            fetched = _fetch_weather_range(lat, lon, tz_name, missing_dates[0], missing_dates[-1])
+            weather.update(fetched)
 
     import pytz
     tz = pytz.timezone(tz_name)
@@ -120,10 +139,10 @@ def backfill(db_path: str, dry_run: bool = False) -> None:
     # Build events_by_date exactly like monitor.py: arrivals bucketed by their own
     # arrival date, departures bucketed by their own (possibly different) departure
     # date — a +/-1 day buffer on the query window catches overnight turnarounds
-    # whose departure lands on a corrupted date despite arriving the day before.
+    # whose departure lands on a target date despite arriving the day before.
     from datetime import timedelta
-    window_start = (datetime.strptime(corrupted_dates[0], "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")
-    window_end   = (datetime.strptime(corrupted_dates[-1], "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
+    window_start = (datetime.strptime(all_dates[0], "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")
+    window_end   = (datetime.strptime(all_dates[-1], "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
     with store._connect() as conn:
         fe_rows = conn.execute("""
             SELECT fe.registration, fe.flight_number, fe.arrival_ts,
@@ -169,10 +188,10 @@ def backfill(db_path: str, dry_run: bool = False) -> None:
             events_by_date.setdefault(dep_date, []).append({**common, "ts": dep_ts, "side": "departure"})
 
     updated = 0
-    for date_str in corrupted_dates:
+    for date_str in all_dates:
         w = weather.get(date_str)
         if not w or not w.get("sunrise_ts") or not w.get("sunset_ts"):
-            print(f"  {date_str}: no weather data available from API (too far in the past?) — skipped")
+            print(f"  {date_str}: no weather data available (too far in the past?) — skipped")
             continue
 
         events = events_by_date.get(date_str, [])
@@ -191,7 +210,7 @@ def backfill(db_path: str, dry_run: bool = False) -> None:
             store.upsert_timeline_cache(date_str, json.dumps(clusters), weather_json=json.dumps(w))
         updated += 1
 
-    print(f"\n{'[dry-run] would have updated' if dry_run else 'Updated'} {updated}/{len(corrupted_dates)} date(s).")
+    print(f"\n{'[dry-run] would have updated' if dry_run else 'Updated'} {updated}/{len(all_dates)} date(s).")
 
 
 if __name__ == "__main__":
