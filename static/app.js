@@ -2848,9 +2848,31 @@ async function loadRecommendation(force) {
 function _renderRecommendation(data) {
   if (!data || !data.days || !data.days.length)
     return '<div style="padding:24px;text-align:center;color:var(--dim)">No data yet.</div>';
+  const tz = data.timezone || '';
+  const render = d => _renderDayCard(d, tz);
   const cards = data.days.filter(d => d.clusters && d.clusters.length > 0 || d.is_today);
-  if (!cards.length) return '<div class="rec-scroll">' + data.days.slice(0,3).map(_renderDayCard).join('') + '</div>';
-  return `<div class="rec-scroll">${data.days.map(_renderDayCard).join('')}</div>`;
+  if (!cards.length) return '<div class="rec-scroll">' + data.days.slice(0,3).map(render).join('') + '</div>';
+  return `<div class="rec-scroll">${data.days.map(render).join('')}</div>`;
+}
+
+// Wall-clock hour/minute of a given instant (default: now) AT THE AIRPORT's own
+// timezone — never the viewing device's local time (a spotter checking a
+// different airport's feed from home would otherwise see their own local
+// clock, not the airport's).
+function _nowHM(tzName, d) {
+  d = d || new Date();
+  if (!tzName) return { h: d.getHours(), m: d.getMinutes() };
+  try {
+    const parts = new Intl.DateTimeFormat('en-GB', {
+      timeZone: tzName, hour: '2-digit', minute: '2-digit', hour12: false,
+    }).formatToParts(d);
+    return {
+      h: parseInt(parts.find(p => p.type === 'hour').value, 10),
+      m: parseInt(parts.find(p => p.type === 'minute').value, 10),
+    };
+  } catch {
+    return { h: d.getHours(), m: d.getMinutes() };
+  }
 }
 
 function _recFlightCard(f, nowTs, adjPy, sr, ss) {
@@ -2980,7 +3002,7 @@ function _buildLayout(eventMins) {
   return { segs, totalPx: curPx, toY };
 }
 
-function _renderDayCard(day) {
+function _renderDayCard(day, tzName) {
   const todayCls = day.is_today ? ' rec-today' : '';
   const clusters = day.clusters || [];
   const nowTs    = Math.floor(Date.now() / 1000);
@@ -3078,11 +3100,11 @@ function _renderDayCard(day) {
   // Sunrise/sunset axis markers
   let srLine = '', ssLine = '';
   if (day.sunrise_ts) {
-    const py = layout.toY(_tsToLocalMin(day.sunrise_ts, day));
+    const py = layout.toY(_tsToLocalMin(day.sunrise_ts, tzName));
     srLine = `<span class="rec-sun-line" style="top:${py.toFixed(1)}px">Sunrise</span>`;
   }
   if (day.sunset_ts) {
-    const py = layout.toY(_tsToLocalMin(day.sunset_ts, day));
+    const py = layout.toY(_tsToLocalMin(day.sunset_ts, tzName));
     ssLine = `<span class="rec-sun-line rec-sun-set" style="top:${py.toFixed(1)}px">Sunset</span>`;
   }
 
@@ -3113,9 +3135,8 @@ function _renderDayCard(day) {
   // Current time line (today only) — built after card layout so overlaps can be checked
   let currentTimeLine = '';
   if (day.is_today) {
-    const dt = new Date();
-    const nowPy = layout.toY(dt.getHours() * 60 + dt.getMinutes());
-    const nowH = dt.getHours(), nowM = dt.getMinutes();
+    const { h: nowH, m: nowM } = _nowHM(tzName);
+    const nowPy = layout.toY(nowH * 60 + nowM);
     const nowStr = `${nowH < 10 ? '0'+nowH : nowH}:${nowM < 10 ? '0'+nowM : nowM}`;
     const HALF = CARD_H_PX / 2;
     const arrOvlp = arrEvts.some(ev => nowPy >= ev.py - HALF && nowPy <= ev.py + HALF);
@@ -3292,11 +3313,12 @@ function _renderDayCard(day) {
   return `<div class="rec-day${todayCls}">${hdr}${colLabels}${body}</div>`;
 }
 
-// Helper: convert unix timestamp to local minutes-from-midnight for timeline positioning
-function _tsToLocalMin(ts, day) {
+// Helper: convert unix timestamp to minutes-from-midnight IN THE AIRPORT'S OWN
+// TIMEZONE, not the viewing device's — same reasoning as _nowHM above.
+function _tsToLocalMin(ts, tzName) {
   if (!ts) return 0;
-  const d = new Date(ts * 1000);
-  return d.getHours() * 60 + d.getMinutes();
+  const { h, m } = _nowHM(tzName, new Date(ts * 1000));
+  return h * 60 + m;
 }
 
 async function loadSystemTasks() {
