@@ -73,6 +73,10 @@ async function _authBoot() {
     _showAuthView('view-airport-picker');
     return;
   }
+  // Resolve the airport's timezone before anything else renders — fmtTs/fmtDate
+  // (Feed cards, detail views, etc.) read _appTz as their default, and must
+  // never fall back to the viewing device's own timezone.
+  try { _appTz = (await api('/status')).effective_tz || ''; } catch {}
   _hideAuthViews();
 }
 
@@ -145,16 +149,28 @@ async function addAirport() {
 
 _authBoot();
 
+// The monitored airport's own IANA timezone — set once at boot (_authBoot) and
+// kept fresh by pollStatus(). fmtTs/fmtDate must always format in this
+// timezone, never the viewing device's own — a spotter checking the feed from
+// somewhere else would otherwise see every time shifted to their own clock.
+let _appTz = '';
+
 function fmtTs(ts, opts = {}) {
   if (!ts) return '—';
   const d = new Date(ts * 1000);
-  const s = d.toLocaleString(undefined, { hour: 'numeric', minute: '2-digit', hour12: true, ...opts });
+  const s = d.toLocaleString(undefined, {
+    hour: 'numeric', minute: '2-digit', hour12: true,
+    ...(_appTz ? { timeZone: _appTz } : {}), ...opts,
+  });
   return s.replace(' AM', 'am').replace(' PM', 'pm');
 }
 
 function fmtDate(ts) {
   if (!ts) return '—';
-  return new Date(ts * 1000).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+  return new Date(ts * 1000).toLocaleDateString(undefined, {
+    weekday: 'short', month: 'short', day: 'numeric',
+    ...(_appTz ? { timeZone: _appTz } : {}),
+  });
 }
 
 // ── Country flags ────────────────────────────────────────────────────────────
@@ -1598,6 +1614,7 @@ async function pollStatus() {
     const s = await api('/status');
     const badge = $('rapid-badge');
     badge.classList.toggle('visible', !!s.rapid_mode);
+    if (s.effective_tz) _appTz = s.effective_tz;
   } catch {}
 }
 
