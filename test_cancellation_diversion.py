@@ -110,12 +110,8 @@ class Harness:
             airport_icao="YSSY", airport_tz="UTC", airport_lat=-33.9, airport_lon=151.2,
             fetch_pages=[1], chat_id="",
             livery_keywords=[], livery_exclude_keywords=[],
-            livery_interval_hours=12, livery_days=[], livery_time_filter="",
-            rare_plane_min_absence_days=30, rare_plane_days=[], rare_plane_time_filter="",
-            rego_interval_hours=12, rego_days=[], rego_time_filter="",
-            type_interval_hours=12, type_days=[], type_time_filter="",
-            airline_interval_hours=12, airline_days=[], airline_time_filter="",
-            check_interval=1800, reminder_hours=0,
+            rare_plane_min_absence_days=30,
+            check_interval=1800,
             military_check_interval=900, military_radius_nm=50,
             military_max_alt_ft=5000, military_renotify_hours=4,
         )
@@ -137,14 +133,20 @@ class Harness:
                 (reg,),
             )
 
-    def seed_exclude(self, reg: str):
-        """Guarantee `reg` matches NO filter — every check_* function honors filter_exclusions,
-        including check_rare_plane, which would otherwise always match a never-before-seen
-        airline/type combo in a brand-new scratch DB."""
+    def seed_rare_plane_seen(self, airline_icao: str, aircraft_type: str):
+        """Pre-seed rare_plane_cooldowns so this airline/type combo is already
+        'recently seen' and won't independently match check_rare_plane. Exclusion
+        no longer suppresses filter matching at all (it's a per-viewer web display
+        concept now, applied in web.py — see _exclusion_owner/cluster_day_for_cache
+        — never an ingestion gate), so a control aircraft needs a real reason not
+        to match: rare-plane is the only filter in this suite that matches
+        everything by default in a brand-new scratch DB."""
+        now_ts = int(datetime.now().timestamp())
         with self.store._connect() as conn:
             conn.execute(
-                "INSERT OR IGNORE INTO filter_exclusions(registration) VALUES (?)",
-                (reg,),
+                "INSERT OR REPLACE INTO rare_plane_cooldowns"
+                "(airline, aircraft_type, last_seen_ts, last_notified_ts) VALUES (?,?,?,0)",
+                (airline_icao.strip(), aircraft_type.strip(), now_ts),
             )
 
     def seed_arrival_row(self, reg, fn, arr_ts, arr_date, current_status="Scheduled"):
@@ -374,7 +376,8 @@ async def scenario_aircraft_swap():
         reg_a, reg_b, fn, date = "VH-SWA", "VH-SWB", "QF940", TODAY
         arr_ts = int(today_at(10, 0).timestamp())
         h.seed_watchlist(reg_a)  # only A is independently interesting
-        h.seed_exclude(reg_b)    # guarantee B matches no filter (incl. rare-plane) in this scratch DB
+        h.seed_rare_plane_seen("TST", "B738")  # B's swapped-in flight uses these defaults —
+                                                 # pre-seed so it doesn't independently rare-plane-match
         h.seed_arrival_row(reg_a, fn, arr_ts, date)
 
         # Check: fn now shows under reg_b instead of reg_a

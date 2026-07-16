@@ -7,6 +7,7 @@ data/.secret_key
 
 # Runtime downloaded assets — fetched on demand, not committed
 static/airline_logos/
+static/translations/
 
 # Runtime database in data/ — static JSON files in data/ are tracked
 data/*.db
@@ -47,6 +48,12 @@ scripts/catalog/*.lrcat-wal
 scripts/catalog/fr24_cache.json
 scripts/catalog/airline_codes.json
 scripts/catalog/user_overrides.json
+
+# SpotAlert Studio — local runtime data (thumbnails cache, inbox/output test photos, its own log)
+studio/data/thumbnails/
+studio/data/inbox/
+studio/data/output/
+studio/server.log
 
 # Python
 __pycache__/

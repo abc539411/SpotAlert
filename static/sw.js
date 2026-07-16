@@ -1,4 +1,4 @@
-const CACHE        = 'spotalert-v441';
+const CACHE        = 'spotalert-v549';
 const LOGOS_CACHE  = 'airline-logos-v3';  // persistent — never cleared on SW update
 const PRECACHE = ['/', '/static/app.js', '/manifest.json'];
 
@@ -64,7 +64,8 @@ self.addEventListener('push', e => {
 self.addEventListener('notificationclick', e => {
   e.notification.close();
   const reg = e.notification.data?.registration || '';
-  const url = reg ? `/?flight=${reg}` : '/';
+  const isSpottingReminder = !!e.notification.data?.spotting_reminder;
+  const url = isSpottingReminder ? '/?spotting=tomorrow' : (reg ? `/?flight=${reg}` : '/');
   e.waitUntil(
     clients.matchAll({ type: 'window', includeUncontrolled: true }).then(ws => {
       const existing = ws.find(w => w.url.startsWith(self.location.origin));

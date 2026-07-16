@@ -95,6 +95,7 @@ class UserCtx:
     username: str
     role: str
     airport_iata: Optional[str]
+    language: Optional[str] = None
 
 
 def set_session_cookie(response, request: Request, user_id: str, role: str, session_epoch: int) -> None:
@@ -140,6 +141,7 @@ def _resolve_session(request: Request, control_store) -> Optional[UserCtx]:
         username=user_row["username"],
         role=user_row["role"],
         airport_iata=airport_iata,
+        language=user_row["language"],
     )
 
 

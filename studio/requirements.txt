@@ -1,0 +1,8 @@
+flask>=3.0.0
+requests>=2.31.0
+cloudscraper
+curl-cffi>=0.7.0
+brotli>=1.1.0
+pillow>=11.0.0
+airportsdata>=20240101
+waitress>=3.0.0

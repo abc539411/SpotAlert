@@ -1,0 +1,14 @@
+services:
+  spotalert:
+    build: .
+    container_name: spotalert
+    restart: unless-stopped
+    ports:
+      - "7478:8088"
+    volumes:
+      - /Volume2/public/docker/spotalert/data:/app/data
+      - /Volume2/public/docker/spotalert/lightroom:/app/lightroom
+      - /Volume2/public/docker/spotalert/logs:/app/logs
+      - /Volume2/public/docker/spotalert/translations:/app/static/translations
+    environment:
+      - TZ=Australia/Sydney

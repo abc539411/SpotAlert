@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import csv
 import json
@@ -24,7 +24,13 @@ class SqliteStore:
         self._init_db()
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path)
+        # Default busy timeout (sqlite3.connect's own default) is only 5s — a busy
+        # airport's monitor check can hold the write lock for longer than that while
+        # bulk-updating sightings/route-types/departure-patterns for hundreds of
+        # flights, at which point every OTHER connection (including a web request
+        # trying to read Feed data) hits "database is locked" and raises immediately
+        # instead of just waiting. 30s gives real contention room to clear on its own.
+        conn = sqlite3.connect(self.db_path, timeout=30.0)
         conn.row_factory = sqlite3.Row
         return conn
 
@@ -33,7 +39,7 @@ class SqliteStore:
             conn.execute("PRAGMA journal_mode=WAL;")
             conn.execute("PRAGMA synchronous=NORMAL;")
 
-            # ── Table renames migration ───────────────────────────────────────
+            # â”€â”€ Table renames migration â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             # Rename old table names to new names if old table exists and new doesn't.
             _table_renames = [
                 ("exclusion_list",          "filter_exclusions"),
@@ -100,7 +106,7 @@ class SqliteStore:
                     last_notified_ts INTEGER DEFAULT 0
                 )
             """)
-            # owner_user_id: multi-user retrofit — 'controller' is the sentinel for the
+            # owner_user_id: multi-user retrofit â€” 'controller' is the sentinel for the
             # existing/ground-truth list; a Pilot's own list is fully independent (no
             # merge with the Controller's), matched by owner_user_id alone. Existing
             # rows backfill to 'controller' so today's lists are completely unaffected
@@ -113,7 +119,7 @@ class SqliteStore:
             # (e.g. two Pilots, or a Pilot and the Controller) can each independently
             # exclude/watch the same registration/type/airline without colliding.
             # Existing indexes of the same name (pre-dating owner_user_id) must be
-            # dropped first — CREATE INDEX IF NOT EXISTS matches by name only, so it
+            # dropped first â€” CREATE INDEX IF NOT EXISTS matches by name only, so it
             # would silently keep the old, stricter (owner-less) constraint otherwise.
             conn.execute("DROP INDEX IF EXISTS idx_excl_reg")
             conn.execute("CREATE UNIQUE INDEX idx_excl_reg ON filter_exclusions(owner_user_id, registration)")
@@ -201,7 +207,7 @@ class SqliteStore:
                 if col not in fdp_cols:
                     conn.execute(f"ALTER TABLE departure_patterns ADD COLUMN {col} {typ} DEFAULT NULL")
 
-            # All app settings — set via web UI and persisted across restarts.
+            # All app settings â€” set via web UI and persisted across restarts.
             # user_id dimension added for multi-user support: 'controller' is the
             # ground-truth sentinel row (what the Controller role owns, and what
             # Passengers always read); a Pilot's own user_id overrides it per-key.
@@ -215,7 +221,7 @@ class SqliteStore:
             """)
             _settings_cols = {row[1] for row in conn.execute("PRAGMA table_info(settings)").fetchall()}
             if "user_id" not in _settings_cols:
-                # Table predates the user_id column (single-key PK) — recreate with the
+                # Table predates the user_id column (single-key PK) â€” recreate with the
                 # composite PK, migrating every existing row to the 'controller' sentinel.
                 conn.execute("ALTER TABLE settings RENAME TO settings_old")
                 conn.execute("""
@@ -271,17 +277,6 @@ class SqliteStore:
             if "photo_url" not in af_cols:
                 conn.execute("ALTER TABLE airframes ADD COLUMN photo_url TEXT DEFAULT NULL")
 
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS push_subscriptions (
-                    id           INTEGER PRIMARY KEY AUTOINCREMENT,
-                    endpoint     TEXT NOT NULL UNIQUE,
-                    p256dh       TEXT NOT NULL,
-                    auth         TEXT NOT NULL,
-                    user_agent   TEXT DEFAULT '',
-                    created_ts   INTEGER NOT NULL
-                )
-            """)
-
             # flight_arrivals is the canonical filter-match store.
             # One row per (registration, flight_number). notif_types is a JSON array of all
             # filter types that matched this flight. notified=1 when a push is sent (future use).
@@ -313,6 +308,8 @@ class SqliteStore:
                 ("airline_icao",   "TEXT"),
                 ("diverted_to_iata", "TEXT"),
                 ("photo_url",      "TEXT"),
+                ("aircraft_type",     "TEXT"),
+                ("rare_absence_days", "REAL"),
             ]:
                 if _col not in fe_cols:
                     conn.execute(f"ALTER TABLE flight_arrivals ADD COLUMN {_col} {_typ} DEFAULT NULL")
@@ -347,6 +344,8 @@ class SqliteStore:
                 conn.execute("ALTER TABLE flight_departures ADD COLUMN dep_label TEXT DEFAULT NULL")
             if "dep_confidence" not in fd_cols:
                 conn.execute("ALTER TABLE flight_departures ADD COLUMN dep_confidence INTEGER DEFAULT NULL")
+            if "cross_day_push_sent" not in fd_cols:
+                conn.execute("ALTER TABLE flight_departures ADD COLUMN cross_day_push_sent INTEGER NOT NULL DEFAULT 0")
 
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS military_track_points (
@@ -413,6 +412,15 @@ class SqliteStore:
                     source TEXT DEFAULT 'icaolist'
                 )
             """)
+            at_cols = {row[1] for row in conn.execute("PRAGMA table_info(aircraft_types)").fetchall()}
+            if "manufacturer" not in at_cols:
+                # `name` is deliberately just the model (e.g. "A321neo") — the
+                # ICAOList CSV's "MANUFACTURER, Model" column gets split on ingest
+                # (see refresh_icao_type_list) so existing UI that displays `name`
+                # as a type chip doesn't show a redundant manufacturer prefix. But
+                # that means `name` alone can't be fed into _derive_manufacturer()
+                # for sighting enrichment — store the manufacturer half separately.
+                conn.execute("ALTER TABLE aircraft_types ADD COLUMN manufacturer TEXT DEFAULT NULL")
 
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS timeline_cache (
@@ -422,6 +430,14 @@ class SqliteStore:
                     computed_at   INTEGER NOT NULL
                 )
             """)
+            # events_json: the raw pre-exclusion, pre-clustering flight events for the
+            # date (registration/ts/side/etc, no _spotted baked in). clusters_json is
+            # only ever built from the Controller's own settings/catalog/exclusions â€”
+            # a Pilot viewer needs the raw events to re-run clustering with their own
+            # settings/catalog/exclusion list instead of inheriting the Controller's.
+            tlc_cols = {row[1] for row in conn.execute("PRAGMA table_info(timeline_cache)").fetchall()}
+            if "events_json" not in tlc_cols:
+                conn.execute("ALTER TABLE timeline_cache ADD COLUMN events_json TEXT")
 
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS fleet_cards (
@@ -462,7 +478,7 @@ class SqliteStore:
                 pass
 
         import csv as _csv, io as _io, urllib.request as _req
-        log.info("Refreshing ICAO aircraft type list from GitHub…")
+        log.info("Refreshing ICAO aircraft type list from GitHubâ€¦")
         try:
             with _req.urlopen(self._ICAOLIST_URL, timeout=30) as resp:
                 text = resp.read().decode("utf-8-sig")
@@ -483,9 +499,9 @@ class SqliteStore:
                 if not icao or not mfr_model:
                     continue
                 if "," in mfr_model:
-                    name = mfr_model.split(",", 1)[1].strip()
+                    mfr, name = (p.strip() for p in mfr_model.split(",", 1))
                 else:
-                    name = mfr_model.strip()
+                    mfr, name = None, mfr_model.strip()
                 existing = conn.execute(
                     "SELECT source FROM aircraft_types WHERE icao=?", (icao,)
                 ).fetchone()
@@ -493,34 +509,58 @@ class SqliteStore:
                     if existing[0] == 'user':
                         continue  # never overwrite user entries
                     conn.execute(
-                        "UPDATE aircraft_types SET name=?, source='icaolist' WHERE icao=?",
-                        (name, icao)
+                        "UPDATE aircraft_types SET name=?, manufacturer=?, source='icaolist' WHERE icao=?",
+                        (name, mfr, icao)
                     )
                     updated += 1
                 else:
                     conn.execute(
-                        "INSERT INTO aircraft_types(icao, name, source) VALUES(?,?,'icaolist')",
-                        (icao, name)
+                        "INSERT INTO aircraft_types(icao, name, manufacturer, source) VALUES(?,?,?,'icaolist')",
+                        (icao, name, mfr)
                     )
                     inserted += 1
 
         import time as _time2
         self.save_setting('icao_list_last_update', str(_time2.time()))
-        log.info("ICAO type list refreshed — inserted: %d  updated: %d", inserted, updated)
+        log.info("ICAO type list refreshed â€” inserted: %d  updated: %d", inserted, updated)
         try:
             import system_status as _ss; _ss.record_api('icaolist_github', True)
         except Exception:
             pass
 
-    def upsert_aircraft_type(self, icao: str, name: str, source: str = 'user') -> None:
+    def upsert_aircraft_type(self, icao: str, name: str, source: str = 'user', manufacturer: str = None) -> None:
         if not icao or not name:
             return
         with self._connect() as conn:
             conn.execute(
-                "INSERT INTO aircraft_types(icao, name, source) VALUES(?,?,?) "
-                "ON CONFLICT(icao) DO UPDATE SET name=excluded.name, source=excluded.source "
+                "INSERT INTO aircraft_types(icao, name, source, manufacturer) VALUES(?,?,?,?) "
+                "ON CONFLICT(icao) DO UPDATE SET name=excluded.name, source=excluded.source, "
+                "manufacturer=excluded.manufacturer "
                 "WHERE excluded.source='user' OR aircraft_types.source != 'user'",
-                (icao.upper(), name, source),
+                (icao.upper(), name, source, manufacturer),
+            )
+
+    def upsert_aircraft_types_bulk(self, rows: list) -> None:
+        """Same upsert as upsert_aircraft_type, but for many rows in ONE connection/
+        transaction via executemany. rows: [(icao, name, source, manufacturer), ...].
+        The full aircraft_types reference table is ~2700 rows and gets copied into
+        every OTHER watched airport's DB whenever one is added or reconciled — doing
+        that as one open/execute/close per row (thousands of individual SQLite
+        connections at startup, multiplied by however many airports are watched) was
+        enough to transiently exhaust the process's file-descriptor limit (ulimit -n)
+        and crash the whole app on startup once a 4th airport pushed it over ~8000
+        connections in a few seconds. One connection for the whole batch avoids this
+        entirely and is dramatically faster besides."""
+        rows = [(icao.upper(), name, source, manufacturer) for icao, name, source, manufacturer in rows if icao and name]
+        if not rows:
+            return
+        with self._connect() as conn:
+            conn.executemany(
+                "INSERT INTO aircraft_types(icao, name, source, manufacturer) VALUES(?,?,?,?) "
+                "ON CONFLICT(icao) DO UPDATE SET name=excluded.name, source=excluded.source, "
+                "manufacturer=excluded.manufacturer "
+                "WHERE excluded.source='user' OR aircraft_types.source != 'user'",
+                rows,
             )
 
     def get_aircraft_type_name(self, icao: str) -> str:
@@ -544,15 +584,49 @@ class SqliteStore:
             ).fetchall()
         return {r[0]: r[1] for r in rows}
 
+    def get_watchlist_sets(self, owner_user_id: str) -> dict:
+        """This owner's own watchlist entries across the 3 filter tables — used to
+        re-derive per-viewer visibility of the shared "Watchlist Registration"/
+        "Watchlist Aircraft Type"/"Watchlist Airline" tags baked into flight_arrivals/
+        timeline_cache at ingestion time (monitor.py's check_*_watchlist functions
+        match against ANY owner's rows, not just this one's — see
+        web.py's _strip_unowned_watchlist_tags for the full story)."""
+        with self._connect() as conn:
+            regos = {r[0] for r in conn.execute(
+                "SELECT registration FROM filter_regos WHERE owner_user_id = ?", (owner_user_id,)).fetchall()}
+            types = {(r[0], r[1]) for r in conn.execute(
+                "SELECT airline, aircraft_type FROM filter_types WHERE owner_user_id = ?", (owner_user_id,)).fetchall()}
+            airline_icaos = {r[0] for r in conn.execute(
+                "SELECT icao_code FROM filter_airlines WHERE owner_user_id = ?", (owner_user_id,)).fetchall()}
+        return {"regos": regos, "types": types, "airline_icaos": airline_icaos}
+
+    def get_aircraft_type_manufacturers(self, icao_list: list) -> dict:
+        """Return {icao: manufacturer} for codes with a known manufacturer. `name` alone
+        (the model, e.g. "A321neo") can't be fed into _derive_manufacturer() — this reads
+        the raw CSV manufacturer half stored separately (see aircraft_types.manufacturer)."""
+        if not icao_list:
+            return {}
+        ph = ','.join('?' * len(icao_list))
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"SELECT icao, manufacturer FROM aircraft_types WHERE icao IN ({ph}) AND manufacturer IS NOT NULL",
+                [c.upper() for c in icao_list],
+            ).fetchall()
+        return {r[0]: r[1] for r in rows}
+
     def upsert_airport(self, iata: str, name: str, country_code: str, source: str = 'fr24') -> None:
-        """Insert or update airport info. FR24 data always wins over airportsdata. city is never overwritten (FR24 doesn't supply it)."""
+        """Insert or update airport info. Priority: user > fr24 > airportsdata — a 'user'
+        write always wins (and can never be clobbered by a later fr24/airportsdata
+        auto-population write); among the two non-user sources, fr24 still wins over
+        airportsdata as before. city is never overwritten (FR24 doesn't supply it)."""
         if not iata or not name:
             return
         with self._connect() as conn:
             conn.execute(
                 "INSERT INTO airports(iata, name, country_code, source) VALUES(?,?,?,?) "
                 "ON CONFLICT(iata) DO UPDATE SET name=excluded.name, country_code=excluded.country_code, "
-                "source=excluded.source WHERE excluded.source='fr24' OR airports.source='airportsdata'",
+                "source=excluded.source WHERE excluded.source='user' "
+                "OR (airports.source != 'user' AND (excluded.source='fr24' OR airports.source='airportsdata'))",
                 (iata.upper(), name, country_code or '', source),
             )
 
@@ -567,36 +641,37 @@ class SqliteStore:
             return (row['name'], row['country_code'], row['city']) if row else None
 
     def upsert_timeline_cache(self, date: str, clusters_json: str,
-                              weather_json: Optional[str] = None) -> None:
-        """Store pre-computed cluster (and optionally weather) JSON for a calendar date."""
+                              weather_json: Optional[str] = None,
+                              events_json: Optional[str] = None) -> None:
+        """Store pre-computed cluster (and optionally weather/raw-events) JSON for a
+        calendar date. events_json lets a Pilot viewer re-cluster with their own
+        settings/catalog/exclusions instead of the Controller's baked-in result."""
         import time as _time
         with self._connect() as conn:
+            cols = ["date", "clusters_json", "computed_at"]
+            vals = [date, clusters_json, int(_time.time())]
+            updates = ["clusters_json=excluded.clusters_json", "computed_at=excluded.computed_at"]
             if weather_json is not None:
-                conn.execute(
-                    "INSERT INTO timeline_cache(date, clusters_json, weather_json, computed_at) "
-                    "VALUES (?, ?, ?, ?) "
-                    "ON CONFLICT(date) DO UPDATE SET "
-                    "clusters_json=excluded.clusters_json, weather_json=excluded.weather_json, "
-                    "computed_at=excluded.computed_at",
-                    (date, clusters_json, weather_json, int(_time.time())),
-                )
-            else:
-                conn.execute(
-                    "INSERT INTO timeline_cache(date, clusters_json, computed_at) "
-                    "VALUES (?, ?, ?) "
-                    "ON CONFLICT(date) DO UPDATE SET "
-                    "clusters_json=excluded.clusters_json, computed_at=excluded.computed_at",
-                    (date, clusters_json, int(_time.time())),
-                )
+                cols.append("weather_json"); vals.append(weather_json)
+                updates.append("weather_json=excluded.weather_json")
+            if events_json is not None:
+                cols.append("events_json"); vals.append(events_json)
+                updates.append("events_json=excluded.events_json")
+            placeholders = ",".join("?" * len(vals))
+            conn.execute(
+                f"INSERT INTO timeline_cache({','.join(cols)}) VALUES ({placeholders}) "
+                f"ON CONFLICT(date) DO UPDATE SET {', '.join(updates)}",
+                vals,
+            )
 
     def get_timeline_cache(self, dates: List[str]) -> Dict[str, dict]:
-        """Return {date: {clusters_json, weather_json, computed_at}} for the given dates."""
+        """Return {date: {clusters_json, weather_json, events_json, computed_at}} for the given dates."""
         if not dates:
             return {}
         placeholders = ",".join("?" * len(dates))
         with self._connect() as conn:
             rows = conn.execute(
-                f"SELECT date, clusters_json, weather_json, computed_at "
+                f"SELECT date, clusters_json, weather_json, events_json, computed_at "
                 f"FROM timeline_cache WHERE date IN ({placeholders})",
                 dates,
             ).fetchall()
@@ -626,7 +701,7 @@ class SqliteStore:
     # App settings (bot-managed, persisted across restarts)
     # ------------------------------------------------------------------
 
-    # ── Fleet cards ──────────────────────────────────────────────────────────
+    # â”€â”€ Fleet cards â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     def get_fleet_cards(self) -> list:
         import json as _json
         with self._connect() as conn:
@@ -670,7 +745,7 @@ class SqliteStore:
 
     def save_setting(self, key: str, value: str) -> None:
         """Writes the Controller-role ground-truth row. Existing call sites are
-        unaffected by the multi-user settings retrofit — they all mean "the
+        unaffected by the multi-user settings retrofit â€” they all mean "the
         Controller's setting" until a caller explicitly scopes to a Pilot via
         set_setting()."""
         self.set_setting("controller", key, value)
@@ -819,6 +894,80 @@ class SqliteStore:
             ])
         raise ValueError(f"Unknown list: {list_name!r}")
 
+    def copy_controller_settings_to_owner(self, owner_user_id: str, keys) -> None:
+        """One-time seed of the Controller's current value for each key in
+        `keys` (PILOT_EDITABLE_SETTINGS) into owner_user_id's own settings
+        row â€” called alongside copy_controller_filters_to_owner, same timing
+        and same idempotency guarantee: a no-op per key once owner_user_id
+        already has a row of their own for it, so it never overwrites edits
+        made after the initial seed. After this runs, that Pilot's value for
+        each key is fully independent â€” no live fallback to the Controller's
+        row (see web.py's _pilot_setting)."""
+        with self._connect() as conn:
+            for key in keys:
+                if conn.execute(
+                    "SELECT 1 FROM settings WHERE user_id = ? AND key = ?", (owner_user_id, key)
+                ).fetchone():
+                    continue
+                row = conn.execute(
+                    "SELECT value FROM settings WHERE user_id = 'controller' AND key = ?", (key,)
+                ).fetchone()
+                if row is not None:
+                    conn.execute(
+                        "INSERT OR REPLACE INTO settings(user_id, key, value) VALUES (?, ?, ?)",
+                        (owner_user_id, key, row["value"]),
+                    )
+
+    def copy_controller_filters_to_owner(self, owner_user_id: str) -> None:
+        """One-time snapshot of the Controller's current exclusion/watchlist
+        rows into owner_user_id's own rows, across all 4 tables â€” called when
+        a Pilot is first set up or granted access to a new airport. Safe to
+        call repeatedly: a no-op for any table owner_user_id already has rows
+        in (so it never overwrites edits made after the initial copy), and
+        after this runs, that Pilot's list is fully independent â€” no further
+        Controller changes propagate, and an empty Pilot list stays empty."""
+        with self._connect() as conn:
+            if not conn.execute(
+                "SELECT 1 FROM filter_exclusions WHERE owner_user_id = ? LIMIT 1", (owner_user_id,)
+            ).fetchone():
+                for r in conn.execute(
+                    "SELECT airline, registration, description FROM filter_exclusions WHERE owner_user_id = 'controller'"
+                ).fetchall():
+                    conn.execute(
+                        "INSERT OR IGNORE INTO filter_exclusions(airline, registration, description, owner_user_id) VALUES (?,?,?,?)",
+                        (r["airline"], r["registration"], r["description"], owner_user_id),
+                    )
+            if not conn.execute(
+                "SELECT 1 FROM filter_regos WHERE owner_user_id = ? LIMIT 1", (owner_user_id,)
+            ).fetchone():
+                for r in conn.execute(
+                    "SELECT airline, registration, description FROM filter_regos WHERE owner_user_id = 'controller'"
+                ).fetchall():
+                    conn.execute(
+                        "INSERT OR IGNORE INTO filter_regos(airline, registration, description, last_notified_ts, owner_user_id) VALUES (?,?,?,0,?)",
+                        (r["airline"], r["registration"], r["description"], owner_user_id),
+                    )
+            if not conn.execute(
+                "SELECT 1 FROM filter_types WHERE owner_user_id = ? LIMIT 1", (owner_user_id,)
+            ).fetchone():
+                for r in conn.execute(
+                    "SELECT airline, aircraft_type FROM filter_types WHERE owner_user_id = 'controller'"
+                ).fetchall():
+                    conn.execute(
+                        "INSERT OR IGNORE INTO filter_types(airline, aircraft_type, last_notified_ts, owner_user_id) VALUES (?,?,0,?)",
+                        (r["airline"], r["aircraft_type"], owner_user_id),
+                    )
+            if not conn.execute(
+                "SELECT 1 FROM filter_airlines WHERE owner_user_id = ? LIMIT 1", (owner_user_id,)
+            ).fetchone():
+                for r in conn.execute(
+                    "SELECT icao_code, entry_type, name FROM filter_airlines WHERE owner_user_id = 'controller'"
+                ).fetchall():
+                    conn.execute(
+                        "INSERT OR IGNORE INTO filter_airlines(icao_code, entry_type, name, last_notified_ts, owner_user_id) VALUES (?,?,?,0,?)",
+                        (r["icao_code"], r["entry_type"], r["name"], owner_user_id),
+                    )
+
     def add_exclusion(self, airline: str, registration: str, description: str,
                        owner_user_id: str = "controller") -> None:
         with self._connect() as conn:
@@ -904,14 +1053,14 @@ class SqliteStore:
                 (registration,),
             ).fetchone()
             if row is None:
-                # First time seen — insert sentinel so we don't lose track of it
+                # First time seen â€” insert sentinel so we don't lose track of it
                 conn.execute(
                     "INSERT INTO livery_cooldowns(registration, last_notified_ts) VALUES (?,0)",
                     (registration,),
                 )
                 return True
             last_ts = int(row["last_notified_ts"])
-            # ts=0 means a previous send attempt failed — always retry
+            # ts=0 means a previous send attempt failed â€” always retry
             if last_ts == 0:
                 return True
             return (now_ts - last_ts) / 3600 > min_hours
@@ -923,11 +1072,17 @@ class SqliteStore:
                 (now_ts, registration.strip()),
             )
 
-    def update_rare_plane_seen(self, airline: str, aircraft_type: str, now_ts: int, min_absence_days: int) -> bool:
-        """Record a sighting and return True if the combo was absent long enough to be considered rare.
+    def record_rare_plane_sighting(self, airline: str, aircraft_type: str, now_ts: int) -> Optional[float]:
+        """Record a sighting and return how many days this combo had been absent
+        BEFORE this sighting (None if never seen before â€” 'infinitely' rare).
 
-        Updates last_seen_ts on every call so regular arrivals never trigger a rare notification.
-        Only returns True when the gap since the last sighting exceeds min_absence_days.
+        Always updates last_seen_ts to now_ts, unconditionally â€” the absence
+        threshold is a per-viewer display concern (see web.py's per-viewer
+        Rare Plane re-tagging), not an ingestion-time decision anymore. The
+        caller is responsible for snapshotting the returned value onto the
+        flight_arrivals row, since last_seen_ts here keeps moving forward and
+        can't be used to reconstruct 'how rare was it AT THE TIME this flight
+        arrived' after the fact.
         """
         airline, aircraft_type = airline.strip(), aircraft_type.strip()
         with self._connect() as conn:
@@ -940,14 +1095,14 @@ class SqliteStore:
                     "INSERT INTO rare_plane_cooldowns(airline, aircraft_type, last_seen_ts, last_notified_ts) VALUES (?,?,?,0)",
                     (airline, aircraft_type, now_ts),
                 )
-                return True
+                return None
             last_seen = int(row["last_seen_ts"])
-            is_rare = last_seen == 0 or (now_ts - last_seen) / 86400 > min_absence_days
+            days_absent = None if last_seen == 0 else (now_ts - last_seen) / 86400
             conn.execute(
                 "UPDATE rare_plane_cooldowns SET last_seen_ts = ? WHERE airline = ? AND aircraft_type = ?",
                 (now_ts, airline, aircraft_type),
             )
-            return is_rare
+            return days_absent
 
     def get_rare_plane_last_seen(self, airline: str, aircraft_type: str) -> Optional[int]:
         """Return last_seen_ts for a rare plane combo, or None if never seen."""
@@ -1095,6 +1250,35 @@ class SqliteStore:
             )
         return out
 
+    def get_resumable_military_visits(self, now_ts: int, exit_secs: int) -> dict:
+        """Return {registration: {"arrival_id": id, "last_in_radius_ts": ts}} for the
+        most recent military flight_arrivals row per registration whose latest track
+        point is still within the exit grace window. Used on startup to resume
+        cfg.military_rapid_tracking (an in-memory-only dict) after a process restart,
+        so a restart mid-visit doesn't get treated as a brand-new approach and
+        fragment one continuous visit into multiple flight_arrivals rows."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT fa.registration, fa.id AS arrival_id, MAX(mtp.ts) AS last_ts
+                FROM flight_arrivals fa
+                JOIN military_track_points mtp ON mtp.arrival_id = fa.id
+                WHERE fa.notif_types LIKE '%"Military"%'
+                GROUP BY fa.id
+                """
+            ).fetchall()
+        latest_per_reg: dict = {}
+        for row in rows:
+            reg = row["registration"]
+            last_ts = row["last_ts"]
+            if reg not in latest_per_reg or last_ts > latest_per_reg[reg][1]:
+                latest_per_reg[reg] = (row["arrival_id"], last_ts)
+        return {
+            reg: {"arrival_id": arrival_id, "last_in_radius_ts": last_ts}
+            for reg, (arrival_id, last_ts) in latest_per_reg.items()
+            if now_ts - last_ts <= exit_secs
+        }
+
     # ------------------------------------------------------------------
     # Follow-up tracking (reminder + cancellation/diversion)
     # ------------------------------------------------------------------
@@ -1161,7 +1345,7 @@ class SqliteStore:
 
         Real data (is_prediction=False) always wins.
         A prediction never overwrites real data once real data has been stored.
-        dep_label: 'Estimated' | 'Scheduled' | 'Predicted' — shown in the UI.
+        dep_label: 'Estimated' | 'Scheduled' | 'Predicted' â€” shown in the UI.
         dep_confidence: 0-100 pattern confidence, only set for predictions.
         """
         pred_int = 1 if is_prediction else 0
@@ -1187,6 +1371,24 @@ class SqliteStore:
                 (arrival_id, dep_flight, dep_ts, dep_dest_iata, dep_dest_name,
                  pred_int, dep_label, dep_confidence),
             )
+
+    def try_claim_cross_day_departure_push(self, arrival_id: int) -> bool:
+        """Atomically marks this arrival's cross-day-departure push as handled,
+        returning True only the very first time this is called for a given
+        arrival_id — False on every subsequent call (e.g. the same next-day
+        departure getting reconfirmed on later check cycles). Caller decides
+        whether "handled" means actually sending a push or silently consuming
+        the one-time trigger (see monitor.py's run_check Step 7b: a cross-day
+        departure already known the moment the arrival card was first created
+        is consumed without sending, since the arrival's own push already told
+        the whole story)."""
+        with self._connect() as conn:
+            cur = conn.execute(
+                "UPDATE flight_departures SET cross_day_push_sent = 1 "
+                "WHERE arrival_id = ? AND cross_day_push_sent = 0",
+                (arrival_id,),
+            )
+            return cur.rowcount > 0
 
     def get_flight_departure(self, arrival_id: int) -> Optional[dict]:
         """Return the paired departure row for an arrival, or None."""
@@ -1231,12 +1433,44 @@ class SqliteStore:
         arrival_date: str = None,
         airline_icao: str = None,
         photo_url: str = None,
+        aircraft_type: str = None,
+        rare_absence_days: float = None,
     ) -> Optional[int]:
         """Store a filter-matched flight in flight_arrivals. Merges notif_types if already present.
-        Returns the affected row's id."""
+        Returns the affected row's id. For "was this row brand new" (used to
+        trigger a push notification exactly once per Feed card, not on every
+        re-check of an already-known flight), see record_filter_match_ex below —
+        this method is kept id-only for the many callers that don't care."""
+        return self.record_filter_match_ex(
+            registration, flight_number, notif_types, arrival_ts, first_seen_ts,
+            detail=detail, extra_info=extra_info, origin_iata=origin_iata, origin_name=origin_name,
+            arrival_date=arrival_date, airline_icao=airline_icao, photo_url=photo_url,
+            aircraft_type=aircraft_type, rare_absence_days=rare_absence_days,
+        )[0]
+
+    def record_filter_match_ex(
+        self,
+        registration: str,
+        flight_number: str,
+        notif_types: list,
+        arrival_ts: int,
+        first_seen_ts: int,
+        detail: str = "",
+        extra_info: str = "",
+        origin_iata: str = None,
+        origin_name: str = None,
+        arrival_date: str = None,
+        airline_icao: str = None,
+        photo_url: str = None,
+        aircraft_type: str = None,
+        rare_absence_days: float = None,
+    ) -> "tuple":
+        """Same as record_filter_match, but returns (id, is_new) — is_new is True
+        only the first time this (registration, flight_number[, arrival_date])
+        triple is ever recorded, False on every subsequent re-check/update."""
         if not registration or not registration.strip():
             log.warning("record_filter_match: skipping flight %s with empty registration", flight_number)
-            return None
+            return None, False
         with self._connect() as conn:
             if arrival_date:
                 existing = conn.execute(
@@ -1259,7 +1493,7 @@ class SqliteStore:
                 if merged != current:
                     set_cols.append("notif_types = ?")
                     params.append(json.dumps(merged))
-                # Backfill only — never overwrite an existing snapshot with a possibly
+                # Backfill only â€” never overwrite an existing snapshot with a possibly
                 # different/newer one; this column is a frozen-at-creation display value,
                 # not a live cache (airframes.photo_url is the one that keeps refreshing).
                 if photo_url and not existing["photo_url"]:
@@ -1268,22 +1502,23 @@ class SqliteStore:
                 if set_cols:
                     params.append(existing["id"])
                     conn.execute(f"UPDATE flight_arrivals SET {', '.join(set_cols)} WHERE id = ?", params)
-                return existing["id"]
+                return existing["id"], False
             else:
                 cursor = conn.execute(
                     """INSERT OR IGNORE INTO flight_arrivals
                        (registration, flight_number, arrival_ts, first_seen_ts,
                         notif_types, detail, extra_info, origin_iata, origin_name,
-                        arrival_date, airline_icao, photo_url)
-                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                        arrival_date, airline_icao, photo_url, aircraft_type, rare_absence_days)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                     (registration.strip(), flight_number, arrival_ts, first_seen_ts,
                      json.dumps(notif_types), detail, extra_info, origin_iata, origin_name,
-                     arrival_date, airline_icao or None, photo_url or None),
+                     arrival_date, airline_icao or None, photo_url or None,
+                     aircraft_type or None, rare_absence_days),
                 )
-                return cursor.lastrowid
+                return cursor.lastrowid, cursor.rowcount > 0
 
     def cleanup_arrived_flights(self, now_ts: int) -> None:
-        """Prune complete days older than 30 days — never cuts through a partial day.
+        """Prune complete days older than 30 days â€” never cuts through a partial day.
         Uses arrival_date (YYYY-MM-DD) so only fully-elapsed days are removed.
         Falls back to first_seen_ts for rows with no arrival_date set."""
         try:
@@ -1332,27 +1567,6 @@ class SqliteStore:
             }
 
     # ------------------------------------------------------------------
-    # Web Push subscriptions
-    # ------------------------------------------------------------------
-
-    def add_push_subscription(self, endpoint: str, p256dh: str, auth: str,
-                               user_agent: str, ts: int) -> None:
-        with self._connect() as conn:
-            conn.execute(
-                """INSERT OR REPLACE INTO push_subscriptions
-                   (endpoint, p256dh, auth, user_agent, created_ts)
-                   VALUES (?, ?, ?, ?, ?)""",
-                (endpoint, p256dh, auth, user_agent, ts),
-            )
-
-    def remove_push_subscription(self, endpoint: str) -> None:
-        with self._connect() as conn:
-            conn.execute("DELETE FROM push_subscriptions WHERE endpoint = ?", (endpoint,))
-
-    def get_push_subscriptions(self) -> List[sqlite3.Row]:
-        return self._fetch("SELECT * FROM push_subscriptions")
-
-    # ------------------------------------------------------------------
     # Departure pattern learning
     # ------------------------------------------------------------------
 
@@ -1367,7 +1581,7 @@ class SqliteStore:
                                   dest_name: Optional[str] = None,
                                   dest_iata: Optional[str] = None,
                                   dest_icao: Optional[str] = None) -> None:
-        """Increment the observation count for an arrival→departure flight number pairing.
+        """Increment the observation count for an arrivalâ†’departure flight number pairing.
 
         turnaround_secs is computed from scheduled times only (not actual) so that
         day-to-day variance in real departure times doesn't corrupt the offset.
@@ -1408,7 +1622,7 @@ class SqliteStore:
                                      airport_iata: str,
                                      estimated_dep_ts: Optional[int],
                                      scheduled_dep_ts: Optional[int]) -> None:
-        """Refresh departure timestamps for an existing pairing — no count increment."""
+        """Refresh departure timestamps for an existing pairing â€” no count increment."""
         with self._connect() as conn:
             conn.execute(
                 """
@@ -1422,7 +1636,7 @@ class SqliteStore:
             )
 
     def backfill_rare_plane_seen(self, airline: str, aircraft_type: str, seen_ts: int) -> None:
-        """Raw upsert for historical backfill — updates last_seen_ts without notification logic."""
+        """Raw upsert for historical backfill â€” updates last_seen_ts without notification logic."""
         with self._connect() as conn:
             conn.execute(
                 """
@@ -1505,8 +1719,13 @@ class SqliteStore:
     def bulk_update_sightings(self, sightings: dict) -> None:
         """Record actual arrival timestamps for planes that have landed.
 
-        sightings: {registration: {"ts": int}} or {registration: int} (legacy).
-        Maintains last_seen_ts (most recent) and prev_seen_ts (previous different-day visit).
+        sightings: {registration: {"ts": int, "manufacturer"?, "airline"?,
+        "aircraft_type"?, "airline_icao"?}} or {registration: int} (legacy, no
+        enrichment). Maintains last_seen_ts (most recent) and prev_seen_ts
+        (previous different-day visit). The 4 enrichment fields use
+        COALESCE(new, old) — a call with no enrichment data (e.g. the legacy
+        int form, or a confirmation-call retry) never blanks out
+        already-known values, it just leaves them as they were.
         """
         import datetime as _dt
         with self._connect() as conn:
@@ -1514,32 +1733,45 @@ class SqliteStore:
                 reg = reg.strip()
                 if not reg:
                     continue
-                new_ts = int(val) if isinstance(val, (int, float)) else int(val.get("ts", 0))
+                is_dict = isinstance(val, dict)
+                new_ts = int(val.get("ts", 0)) if is_dict else int(val)
                 if not new_ts:
                     continue
+                mfr = val.get("manufacturer") if is_dict else None
+                airline = val.get("airline") if is_dict else None
+                ac_type = val.get("aircraft_type") if is_dict else None
+                airline_icao = val.get("airline_icao") if is_dict else None
                 existing = conn.execute(
                     "SELECT last_seen_ts FROM rego_sightings WHERE registration = ?",
                     (reg,)
                 ).fetchone()
                 if not existing:
                     conn.execute(
-                        "INSERT INTO rego_sightings(registration, last_seen_ts) VALUES (?, ?)",
-                        (reg, new_ts)
+                        "INSERT INTO rego_sightings(registration, last_seen_ts, manufacturer, "
+                        "airline, aircraft_type, airline_icao) VALUES (?, ?, ?, ?, ?, ?)",
+                        (reg, new_ts, mfr, airline, ac_type, airline_icao)
                     )
-                elif new_ts > existing["last_seen_ts"]:
-                    old_ts = existing["last_seen_ts"]
-                    old_date = _dt.datetime.fromtimestamp(old_ts).date()
-                    new_date = _dt.datetime.fromtimestamp(new_ts).date()
-                    if new_date != old_date:
-                        conn.execute(
-                            "UPDATE rego_sightings SET last_seen_ts=?, prev_seen_ts=? WHERE registration=?",
-                            (new_ts, old_ts, reg)
-                        )
-                    else:
-                        conn.execute(
-                            "UPDATE rego_sightings SET last_seen_ts=? WHERE registration=?",
-                            (new_ts, reg)
-                        )
+                else:
+                    conn.execute(
+                        "UPDATE rego_sightings SET manufacturer=COALESCE(?, manufacturer), "
+                        "airline=COALESCE(?, airline), aircraft_type=COALESCE(?, aircraft_type), "
+                        "airline_icao=COALESCE(?, airline_icao) WHERE registration=?",
+                        (mfr, airline, ac_type, airline_icao, reg)
+                    )
+                    if new_ts > existing["last_seen_ts"]:
+                        old_ts = existing["last_seen_ts"]
+                        old_date = _dt.datetime.fromtimestamp(old_ts).date()
+                        new_date = _dt.datetime.fromtimestamp(new_ts).date()
+                        if new_date != old_date:
+                            conn.execute(
+                                "UPDATE rego_sightings SET last_seen_ts=?, prev_seen_ts=? WHERE registration=?",
+                                (new_ts, old_ts, reg)
+                            )
+                        else:
+                            conn.execute(
+                                "UPDATE rego_sightings SET last_seen_ts=? WHERE registration=?",
+                                (new_ts, reg)
+                            )
 
     def get_last_seen(self, registration: str) -> Optional[int]:
         """Return the Unix timestamp of the last time this registration appeared in arrivals, or None."""
@@ -1591,7 +1823,10 @@ class SqliteStore:
         return None
 
     # ------------------------------------------------------------------
-    # Route type history
+    # Route type history — feeds the Search tab's "Route Equipment" lookup
+    # (/api/search/route-filters, /api/search/route in web.py). The
+    # equipment-swap ALERT filter that used to also read this table was
+    # removed; this table/method now exists purely for that Search feature.
     # ------------------------------------------------------------------
 
     def bulk_update_route_types(self, records: list) -> None:
@@ -1627,115 +1862,6 @@ class SqliteStore:
                     for fn, at, iata, ts in [r[:4]]
                 ],
             )
-
-    def get_established_route_type(
-        self,
-        flight_number: str,
-        airport_iata: str,
-        lookback_days: int,
-        min_days: int,
-        dominance_x: int,
-    ) -> Optional[tuple]:
-        """Return (established_type, count, first_seen_ts) if one type clearly dominates.
-
-        Returns None if there is insufficient history or no single dominant type.
-        Dominant type must have count >= dominance_x * count of the next most common type,
-        and must have first been seen at least min_days ago.
-        """
-        import time as _time
-        now_ts = int(_time.time())
-        cutoff_ts = now_ts - lookback_days * 86400
-        min_age_ts = now_ts - min_days * 86400
-
-        with self._connect() as conn:
-            rows = conn.execute(
-                """
-                SELECT aircraft_type, count, first_seen_ts
-                FROM route_type_tracker
-                WHERE flight_number = ? AND airport_iata = ? AND last_seen_ts >= ?
-                ORDER BY count DESC
-                """,
-                (flight_number.strip(), airport_iata.strip(), cutoff_ts),
-            ).fetchall()
-
-        if not rows:
-            return None
-
-        dominant = rows[0]
-        dom_type       = dominant["aircraft_type"]
-        dom_count      = dominant["count"]
-        dom_first_seen = dominant["first_seen_ts"]
-
-        # Must have enough history (established for at least min_days)
-        if dom_first_seen > min_age_ts:
-            return None
-
-        # Must clearly dominate — count >= dominance_x × next type's count
-        if len(rows) > 1:
-            second_count = rows[1]["count"]
-            if dom_count < dominance_x * second_count:
-                return None
-
-        return dom_type, dom_count, dom_first_seen
-
-    def should_notify_route_type_change(
-        self,
-        flight_number: str,
-        aircraft_type: str,
-        airport_iata: str,
-        renotify_days: int,
-    ) -> bool:
-        """Return True if this (flight, type) pairing hasn't been notified within the cooldown."""
-        import time as _time
-        cutoff_ts = int(_time.time()) - renotify_days * 86400
-        with self._connect() as conn:
-            row = conn.execute(
-                """
-                SELECT last_notified_ts FROM route_type_tracker
-                WHERE flight_number = ? AND aircraft_type = ? AND airport_iata = ?
-                """,
-                (flight_number.strip(), aircraft_type.strip(), airport_iata.strip()),
-            ).fetchone()
-        if not row:
-            return True
-        last_ts = row["last_notified_ts"]
-        return last_ts is None or last_ts < cutoff_ts
-
-    def mark_route_type_notified(
-        self,
-        flight_number: str,
-        aircraft_type: str,
-        airport_iata: str,
-        now_ts: int,
-    ) -> None:
-        with self._connect() as conn:
-            conn.execute(
-                """
-                UPDATE route_type_tracker SET last_notified_ts = ?
-                WHERE flight_number = ? AND aircraft_type = ? AND airport_iata = ?
-                """,
-                (now_ts, flight_number.strip(), aircraft_type.strip(), airport_iata.strip()),
-            )
-
-    def get_route_type_history(
-        self,
-        flight_number: str,
-        airport_iata: str,
-        lookback_days: int,
-    ) -> list:
-        """Return all type records for a flight number sorted by count desc."""
-        import time as _time
-        cutoff_ts = int(_time.time()) - lookback_days * 86400
-        with self._connect() as conn:
-            return list(conn.execute(
-                """
-                SELECT aircraft_type, count, first_seen_ts, last_seen_ts
-                FROM route_type_tracker
-                WHERE flight_number = ? AND airport_iata = ? AND last_seen_ts >= ?
-                ORDER BY count DESC
-                """,
-                (flight_number.strip(), airport_iata.strip(), cutoff_ts),
-            ).fetchall())
 
     # ------------------------------------------------------------------
     # Backup

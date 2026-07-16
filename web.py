@@ -9,9 +9,10 @@ import json
 import logging
 import os
 import platform
+import threading
 import time
 from pathlib import Path
-from typing import Any, List as _List
+from typing import Any, List as _List, Optional
 import os as _os
 
 VERSION = "1.0.0"
@@ -46,7 +47,7 @@ def _system_info() -> dict:
     info["connection"] = conn
     return info
 
-from fastapi import FastAPI, HTTPException, Query as _Query, Request, Response, BackgroundTasks, Depends
+from fastapi import FastAPI, HTTPException, Query as _Query, Request, Response, BackgroundTasks, Depends, UploadFile, File
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -57,20 +58,381 @@ log = logging.getLogger(__name__)
 STATIC_DIR = Path(__file__).parent / "static"
 
 # Settings keys a Pilot may edit for themselves (spotrec/livery/rare/routetype
-# groups in static/app.js's SETTINGS_SCHEMA — kept in sync with that list by
-# hand since this is the server-side enforcement backstop, not just a UI
-# affordance). Everything else (monitoring internals, military, notification,
-# airport identity) is Controller-only.
+# groups in static/app.js's SETTINGS_SCHEMA, plus the Collection Stat Keywords
+# and Session Panel Tags cards — kept in sync with the UI by hand since this
+# is the server-side enforcement backstop, not just a UI affordance).
+# Everything else (monitoring internals, military, notification, airport
+# identity, Custom Airports/Aircraft Types) is Controller-only.
+# SPECIAL_LIVERY_KEYWORDS is intentionally excluded even though it's in the
+# 'livery' group — it stays Controller-only (hidden from the Pilot's Settings
+# UI entirely, see PILOT_HIDDEN_SETTINGS in app.js), but is still kept
+# identical across every airport via PER_USER_GLOBAL_SETTINGS below (only the
+# 'controller' owner id is ever used for it, since Pilots can't set it). Every
+# key in this frozenset is seeded ONCE, at the moment a Pilot is set up as a
+# new user or granted a new airport, but the seed source differs by key:
+# COLLECTION_KW_STAT_1/2/3 and collection_session_tags (also in
+# PER_USER_GLOBAL_SETTINGS) always seed from the Controller's value (see
+# store.copy_controller_settings_to_owner); the SPOT_*/RARE_PLANE_MIN_ABSENCE_DAYS
+# keys (in PER_AIRPORT_PREFILL_SETTINGS) seed from that SAME Pilot's own value
+# on another airport they already have, falling back to the Controller's
+# value only for their first-ever airport (see
+# seed_new_airport_prefill_settings); SPECIAL_LIVERY_EXCLUDE_KEYWORDS is
+# never seeded from anywhere — always starts blank on a new airport. All of
+# this happens in controller_create_user/controller_update_user and the
+# startup backfill in main.py. After the one-time seed, each key's value is
+# fully independent per airport — no live fallback to the Controller's row
+# (_pilot_setting), and clearing a value stays cleared.
+# are additionally in PER_USER_GLOBAL_SETTINGS below.
 PILOT_EDITABLE_SETTINGS = frozenset({
-    "SPECIAL_LIVERY_KEYWORDS", "SPECIAL_LIVERY_EXCLUDE_KEYWORDS",
+    "SPECIAL_LIVERY_EXCLUDE_KEYWORDS",
     "RARE_PLANE_MIN_ABSENCE_DAYS",
     "SPOT_MAX_GAP_HOURS", "SPOT_LULL_MINS", "SPOT_MAX_LULLS", "SPOT_LIGHTING_GATE",
     "SPOT_MAX_SPOTTED", "SPOT_LIGHT_BUFFER_MINS", "SPOT_BAD_LIGHT_START", "SPOT_BAD_LIGHT_END",
-    "ROUTE_TYPE_MIN_DAYS", "ROUTE_TYPE_DOMINANCE_X", "ROUTE_TYPE_LOOKBACK_DAYS",
+    "COLLECTION_KW_STAT_1", "COLLECTION_KW_STAT_2", "COLLECTION_KW_STAT_3", "collection_session_tags",
 })
+
+# Controller-only settings that must be identical across every watched airport
+# rather than independent per airport-DB file — the Controller sets one, and
+# PUT /api/settings fans the write out to every airport instead of just the
+# selected one. These are unreachable for Pilots (never in
+# PILOT_EDITABLE_SETTINGS), so no per-user variation is possible for them.
+GLOBAL_INFRA_SETTINGS = frozenset({
+    "CHECK_INTERVAL_MINUTES", "FETCH_PAGES", "DEPARTURE_PATTERN_THRESHOLD",
+    "MONITOR_CANCEL_GRACE_MINS", "MONITOR_DIVERTED_GRACE_MINS",
+    "MONITOR_ABSENCE_CHECKS", "MONITOR_CONFIRM_CALL_CAP",
+    "MILITARY_CHECK_INTERVAL_MINUTES", "MILITARY_RADIUS_NM",
+    "MILITARY_MAX_ALT_FT", "MILITARY_RENOTIFY_HOURS", "LOGOSTREAM_API_KEY",
+    "BAIDU_TRANSLATE_APP_ID", "BAIDU_TRANSLATE_SECRET_KEY",
+})
+
+# Settings whose value must be identical across every airport a given user
+# accesses — unlike other settings (which are genuinely independent per
+# airport DB), these fan out to every airport's DB at save time, keyed by the
+# writing user's own owner id (Controller's or a Pilot's own), so the value
+# follows that user everywhere they go. SPECIAL_LIVERY_KEYWORDS is
+# Controller-only (not in PILOT_EDITABLE_SETTINGS), so in practice only the
+# 'controller' owner id is ever used for it here.
+PER_USER_GLOBAL_SETTINGS = frozenset({
+    "COLLECTION_KW_STAT_1", "COLLECTION_KW_STAT_2", "COLLECTION_KW_STAT_3", "collection_session_tags",
+    "SPECIAL_LIVERY_KEYWORDS",
+})
+
+# Genuinely per-airport settings (each airport keeps its own independent
+# value, e.g. because sunrise/sunset/lighting are physically airport-specific)
+# that are still seeded ONCE when a user gains a new airport — but the seed
+# source depends on whether this user already has a value anywhere else:
+#   - Existing user gaining an additional airport: copy THEIR OWN value from
+#     any airport they already have access to (not the Controller's).
+#   - Brand-new user's very first airport (or the Controller's own value when
+#     a brand-new airport is added to the server): fall back to the
+#     Controller's value on the new airport itself.
+# SPECIAL_LIVERY_EXCLUDE_KEYWORDS is deliberately NOT in this set — per user
+# feedback it should never be prefilled from anywhere, always starting blank
+# on a new airport grant.
+PER_AIRPORT_PREFILL_SETTINGS = frozenset({
+    "SPOT_MAX_GAP_HOURS", "SPOT_LULL_MINS", "SPOT_MAX_LULLS", "SPOT_LIGHTING_GATE",
+    "SPOT_MAX_SPOTTED", "SPOT_LIGHT_BUFFER_MINS", "SPOT_BAD_LIGHT_START", "SPOT_BAD_LIGHT_END",
+    "RARE_PLANE_MIN_ABSENCE_DAYS",
+})
+
+
+def seed_new_airport_prefill_settings(cfgs: dict, owner_user_id: str, new_iata: str) -> None:
+    """Called whenever owner_user_id (a Pilot, or the Controller via a
+    brand-new watched airport) gains access to new_iata. For each key in
+    PER_AIRPORT_PREFILL_SETTINGS, seeds new_iata's own row for owner_user_id
+    from wherever a value already exists for them: their own row on any
+    OTHER airport in cfgs first, falling back to the Controller's row on
+    new_iata itself only if they have no value anywhere yet. No-op per key
+    once owner_user_id already has their own row on new_iata (never
+    overwrites an edit made after the seed) — safe to call repeatedly."""
+    new_cfg = cfgs.get(new_iata)
+    if not new_cfg:
+        return
+    other_cfgs = [cfg for iata, cfg in cfgs.items() if iata != new_iata]
+    with new_cfg.store._connect() as new_conn:
+        for key in PER_AIRPORT_PREFILL_SETTINGS:
+            if new_conn.execute(
+                "SELECT 1 FROM settings WHERE user_id = ? AND key = ?", (owner_user_id, key)
+            ).fetchone():
+                continue
+            value = None
+            for other_cfg in other_cfgs:
+                with other_cfg.store._connect() as oconn:
+                    row = oconn.execute(
+                        "SELECT value FROM settings WHERE user_id = ? AND key = ?", (owner_user_id, key)
+                    ).fetchone()
+                if row is not None:
+                    value = row["value"]
+                    break
+            if value is None:
+                row = new_conn.execute(
+                    "SELECT value FROM settings WHERE user_id = 'controller' AND key = ?", (key,)
+                ).fetchone()
+                value = row["value"] if row is not None else None
+            if value is not None:
+                new_conn.execute(
+                    "INSERT OR REPLACE INTO settings(user_id, key, value) VALUES (?, ?, ?)",
+                    (owner_user_id, key, value),
+                )
 
 # Cache for /api/live-status — one shared airport page fetch, reused for 90s
 _live_status_cache: dict = {"ts": 0, "schedule": None}
+
+
+def _tz_abbr(tz_name: str) -> str:
+    """Real timezone abbreviation (AEST, JST, CEST, ...) for the airport-picker
+    card. Deliberately resolved server-side via stdlib zoneinfo rather than the
+    browser's Intl API — Intl's `timeZoneName: 'short'` falls back to a plain
+    GMT+offset for most non-US zones (CLDR avoids many letter abbreviations as
+    globally ambiguous), so it can't reliably produce e.g. "AEST"."""
+    if not tz_name:
+        return ""
+    try:
+        from zoneinfo import ZoneInfo
+        import datetime as _dt3
+        return _dt3.datetime.now(ZoneInfo(tz_name)).strftime("%Z")
+    except Exception:
+        return ""
+
+
+def _owner_id(user) -> str:
+    """Which owner's private per-user data governs this viewer's reads/writes —
+    exclusion lists, fleet cards, and anything else scoped independently per
+    Pilot. Controller and Passenger always share the Controller's own
+    ('controller' sentinel) row/list (Passenger inherits it, never has its own)."""
+    return user.user_id if user.role == "pilot" else "controller"
+
+
+def _push_owner_id(user) -> str:
+    """Which owner's push subscription / per-type toggle / spotting-reminder
+    settings / last-selected-airport rows this user's own device state lives
+    under. Deliberately NOT the same as _owner_id: _owner_id governs FILTER
+    ownership and collapses Controller+Passenger onto the shared 'controller'
+    sentinel (a Passenger has no filters of their own, so it inherits the
+    Controller's). Push settings are a different kind of data — every real
+    user has their own device, their own toggles, their own selected
+    airport — so collapsing Passenger onto 'controller' here would mean a
+    Passenger's phone silently shares (and can silently overwrite) the
+    Controller's own push subscription and preferences. Only the Controller
+    itself keeps the literal 'controller' key (preserves existing
+    subscriptions/prefs from before this was multi-user); every Pilot and
+    every Passenger gets their own real user_id."""
+    return "controller" if user.role == "controller" else user.user_id
+
+
+# For the 4 filter/watchlist tables, a Pilot always reads (and writes) their
+# own rows via _owner_id(user) — no live inheritance at read time. A Pilot's
+# list is seeded from the Controller's current rows ONCE, at the moment
+# they're set up as a new user or granted a new airport (see
+# store.copy_controller_filters_to_owner, called from
+# controller_create_user/controller_update_user and the startup backfill in
+# main.py); after that one-time copy, their list is fully independent
+# forever — further Controller edits never propagate, and an empty Pilot
+# list stays empty (never falls back to the Controller's again).
+
+
+def _repatch_spotted_gate(clusters: list, catalog, max_spotted: int, airport_iata: str) -> None:
+    """The background clustering pass (monitor.py) bakes 'qualifying' into
+    clusters_json using the CONTROLLER's own catalog — the only "ground
+    truth" a shared per-airport cache can use. A Pilot (or Controller)
+    viewing with their own catalog needs the already-photographed portion
+    of that flag re-evaluated against their own spotted-counts instead.
+    Mutates clusters in place; does not re-derive cluster/window boundaries
+    (recommended_start_local_min/end_local_min), which still reflect
+    whatever was qualifying at cache-build time — a known, accepted gap.
+    """
+    spotted_cache: dict = {}
+    def _get_spotted(reg: str, livery: str) -> int:
+        key = (reg, (livery or "").strip().lower())
+        if key not in spotted_cache:
+            try:
+                if catalog is None:
+                    spotted_cache[key] = 0
+                elif key[1]:
+                    spotted_cache[key] = catalog.get_livery_session_count_at_airport(reg, airport_iata, livery) or 0
+                else:
+                    spotted_cache[key] = catalog.get_session_count_at_airport(reg, airport_iata) or 0
+            except Exception:
+                spotted_cache[key] = 0
+        return spotted_cache[key]
+
+    for c in clusters:
+        for f in c.get("flights", []):
+            # Was this flight light-qualified at cache-build time? The only
+            # way to be non-qualifying with an EMPTY reason is the lighting
+            # gate — over_spotted always sets reason to "spotted_N".
+            light_ok = f.get("qualifying") or bool(f.get("reason"))
+            spotted = _get_spotted(f.get("registration", ""), f.get("extra_info", ""))
+            over_spotted = max_spotted > 0 and spotted > max_spotted
+            f["qualifying"] = light_ok and not over_spotted
+            f["reason"] = f"spotted_{spotted}" if over_spotted else ""
+
+
+def _pilot_setting(conn, user_id: str, key: str, default: str = "") -> str:
+    """This user_id's own row for a PILOT_EDITABLE_SETTINGS key. No live
+    fallback to the Controller's row: a Pilot's own row is seeded from the
+    Controller's current value ONCE, at setup/new-airport-grant time (see
+    store.copy_controller_settings_to_owner), and is fully independent from
+    then on — an empty value stays empty rather than reverting to whatever
+    the Controller currently has. `default` is only used if no row exists at
+    all (e.g. a key added to PILOT_EDITABLE_SETTINGS before the seed ran)."""
+    row = conn.execute(
+        "SELECT value FROM settings WHERE user_id = ? AND key = ?", (user_id, key)
+    ).fetchone()
+    return row["value"] if row is not None and row["value"] is not None else default
+
+
+def _viewer_livery_exclude_keywords(conn, user) -> list:
+    """This viewer's own Special Livery exclude-keyword list, lowercased.
+    A Pilot's value was seeded from the Controller's current one at setup
+    time (copy_controller_settings_to_owner) and is fully independent from
+    then on — no live fallback. Controller/Passenger both resolve to the
+    Controller's own row (via _owner_id)."""
+    owner = _owner_id(user)
+    raw = _pilot_setting(conn, owner, "SPECIAL_LIVERY_EXCLUDE_KEYWORDS", "")
+    return [kw.strip().lower() for kw in (raw or "").split(",") if kw.strip()]
+
+
+def _strip_excluded_livery_tag(notif_types: list, extra_info: str, exclude_kws: list) -> list:
+    """The 'Special Livery' tag is baked into flight_arrivals once at ingestion
+    time using only the Controller's own Keywords list (ingestion is a single
+    shared pass — see monitor.py's _is_special_livery_airline calls, which no
+    longer apply exclude-keywords at all). Each viewer's OWN Exclude Keywords
+    are instead re-applied here, per-viewer, at display time — stripping the
+    tag (not the whole flight; Feed/Search show every stored flight regardless
+    of tags) whenever the flight's extra_info matches one of their keywords."""
+    if not exclude_kws or "Special Livery" not in notif_types:
+        return notif_types
+    if any(kw in (extra_info or "").lower() for kw in exclude_kws):
+        return [t for t in notif_types if t != "Special Livery"]
+    return notif_types
+
+
+def _resolve_rare_plane_tag(notif_types: list, rare_absence_days, viewer_min_days: int) -> list:
+    """Same shared-ingestion-vs-per-viewer-threshold problem as Special Livery:
+    monitor.py stores the flight whenever it clears the MOST PERMISSIVE
+    RARE_PLANE_MIN_ABSENCE_DAYS across all owners, snapshotting the objective
+    days-absent value at that moment (rare_plane_cooldowns.last_seen_ts keeps
+    moving forward, so it can't be recomputed later). Each viewer's own
+    threshold is re-applied here to decide whether THEY should still see the
+    'Rare Plane/Airline' tag."""
+    if "Rare Plane/Airline" not in notif_types:
+        return notif_types
+    is_rare = rare_absence_days is None or rare_absence_days > viewer_min_days
+    if is_rare:
+        return notif_types
+    return [t for t in notif_types if t != "Rare Plane/Airline"]
+
+
+def _viewer_rare_plane_min_days(conn, user) -> int:
+    try:
+        return int(_pilot_setting(conn, _owner_id(user), "RARE_PLANE_MIN_ABSENCE_DAYS", "7") or 7)
+    except (TypeError, ValueError):
+        return 7
+
+
+def _viewer_watchlist_sets(store, user) -> dict:
+    """This viewer's own watchlist entries — Controller/Passenger resolve to the
+    Controller's own rows via _owner_id; a Pilot's watchlist is private, never
+    inherited from or merged with the Controller's or another Pilot's."""
+    return store.get_watchlist_sets(_owner_id(user))
+
+
+def _strip_unowned_watchlist_tags(notif_types: list, registration: str, aircraft_type: str,
+                                   airline_icao: str, viewer_sets: dict) -> list:
+    """Same shared-ingestion-vs-per-viewer-ownership problem as Special Livery/Rare
+    Plane, but worse: monitor.py's check_rego_watchlist/check_type_watchlist/
+    check_airline_watchlist match against ANY owner's filter_regos/filter_types/
+    filter_airlines rows, not just the Controller's (see those functions' "Exclusion
+    is applied per-viewer... not here" comments — that reasoning covers exclusions,
+    which are meant to suppress for everyone, but was never extended to watchlist
+    INCLUSION, which should be private per owner). A Pilot's own private watchlist
+    entry therefore creates a flight_arrivals row with that tag baked in for every
+    viewer, including the Controller and other Pilots who never added it. Strip the
+    tag here, per-viewer, unless it's present in the viewer's own watchlist.
+
+    Known gap: "Watchlist Aircraft Type"/"Watchlist Airline" re-check against
+    flight_arrivals.airline_icao (the marketing airline's ICAO code), but
+    check_type_watchlist/check_airline_watchlist's operator-entry branch actually
+    matched on the aircraft's OWNER/operator ICAO code, which isn't stored on the
+    row separately — a wet-leased flight matched via operator (not airline) could
+    still show the tag to a viewer whose watchlist only has the operator entry
+    under a different code. Accepted gap, same as Rare Plane's cache-staleness
+    note above."""
+    out = notif_types
+    if "Watchlist Registration" in out and registration not in viewer_sets["regos"]:
+        out = [t for t in out if t != "Watchlist Registration"]
+    if "Watchlist Aircraft Type" in out and (airline_icao, aircraft_type) not in viewer_sets["types"]:
+        out = [t for t in out if t != "Watchlist Aircraft Type"]
+    if "Watchlist Airline" in out and airline_icao not in viewer_sets["airline_icaos"]:
+        out = [t for t in out if t != "Watchlist Airline"]
+    return out
+
+
+def _recluster_for_pilot(raw_events: list, sunrise_ts: int, sunset_ts: int, tz,
+                          conn, user_id: str, catalog, airport_iata: str) -> list:
+    """Full per-viewer re-cluster for a Pilot, using their OWN algorithm
+    settings, exclusion list, and catalog — never the Controller's. Unlike
+    _repatch_spotted_gate (a cheap flag patch on an already-built cache),
+    exclusion removes events before clustering even runs, so a Pilot's empty
+    exclusion list can only be honored by re-running cluster_day_for_cache
+    from the raw (pre-exclusion) events cached alongside clusters_json."""
+    def _pset_int(key, default):
+        try: return int(_pilot_setting(conn, user_id, key, str(default)))
+        except Exception: return default
+
+    max_gap_secs   = _pset_int("SPOT_MAX_GAP_HOURS", 3) * 3600
+    lull_secs      = _pset_int("SPOT_LULL_MINS", 60) * 60
+    max_spotted    = _pset_int("SPOT_MAX_SPOTTED", 0)
+    light_buf_secs = _pset_int("SPOT_LIGHT_BUFFER_MINS", 30) * 60
+    max_lulls      = _pset_int("SPOT_MAX_LULLS", 2)
+    lighting_gate  = _pilot_setting(conn, user_id, "SPOT_LIGHTING_GATE", "true").lower() == "true"
+    bad_light_start = _pilot_setting(conn, user_id, "SPOT_BAD_LIGHT_START", "")
+    bad_light_end   = _pilot_setting(conn, user_id, "SPOT_BAD_LIGHT_END", "")
+
+    excluded_regs = {r["registration"] for r in conn.execute(
+        "SELECT registration FROM filter_exclusions WHERE owner_user_id = ?", (user_id,)
+    ).fetchall()}
+    _exclude_kws_raw = _pilot_setting(conn, user_id, "SPECIAL_LIVERY_EXCLUDE_KEYWORDS", "")
+    exclude_kws = [kw.strip().lower() for kw in _exclude_kws_raw.split(",") if kw.strip()]
+    # Same query shape as SqliteStore.get_watchlist_sets — inlined since this function
+    # only has a raw connection in hand, not the store object itself.
+    watchlist_sets = {
+        "regos": {r[0] for r in conn.execute(
+            "SELECT registration FROM filter_regos WHERE owner_user_id = ?", (user_id,)).fetchall()},
+        "types": {(r[0], r[1]) for r in conn.execute(
+            "SELECT airline, aircraft_type FROM filter_types WHERE owner_user_id = ?", (user_id,)).fetchall()},
+        "airline_icaos": {r[0] for r in conn.execute(
+            "SELECT icao_code FROM filter_airlines WHERE owner_user_id = ?", (user_id,)).fetchall()},
+    }
+
+    spotted_cache: dict = {}
+    def _get_spotted(reg: str, livery: str) -> int:
+        key = (reg, (livery or "").strip().lower())
+        if key not in spotted_cache:
+            try:
+                if catalog is None:
+                    spotted_cache[key] = 0
+                elif key[1]:
+                    spotted_cache[key] = catalog.get_livery_session_count_at_airport(reg, airport_iata, livery) or 0
+                else:
+                    spotted_cache[key] = catalog.get_session_count_at_airport(reg, airport_iata) or 0
+            except Exception:
+                spotted_cache[key] = 0
+        return spotted_cache[key]
+
+    events = [{**ev, "_spotted": _get_spotted(ev.get("registration", ""), ev.get("extra_info", ""))}
+              for ev in raw_events]
+
+    return cluster_day_for_cache(
+        events, sunrise_ts, sunset_ts, tz,
+        max_gap_secs=max_gap_secs, notable_lull_secs=lull_secs,
+        max_spotted=max_spotted, dep_threshold=0,
+        light_buf_secs=light_buf_secs, lighting_gate=lighting_gate,
+        bad_light_start=bad_light_start, bad_light_end=bad_light_end,
+        max_lulls=max_lulls, excluded_regs=excluded_regs, exclude_kws=exclude_kws,
+        watchlist_sets=watchlist_sets,
+    )
 
 # ---------------------------------------------------------------------------
 # Config/store loader for standalone mode
@@ -117,12 +479,27 @@ def cluster_day_for_cache(
     bad_light_end: str,
     max_lulls: int,
     excluded_regs: set,
+    exclude_kws: Optional[list] = None,
+    watchlist_sets: Optional[dict] = None,
 ) -> list:
     """Return cluster list for one day.
 
     Each event is an independent timestamped unit — either an arrival or a departure.
     Qualification and light zone use the event's own ts against this day's sunrise/sunset.
     No cross-day checks needed: the caller buckets events by their own date.
+
+    exclude_kws (this viewer's own Special Livery exclude-keywords, lowercased)
+    is applied the same way Feed/Search apply it: an event loses its 'Special
+    Livery' tag if extra_info matches a keyword, and is dropped from Spotting
+    entirely if that was its only qualifying tag — so a flight hidden from
+    Feed by an exclude keyword is consistently hidden from Spotting too,
+    instead of only registration-based exclusions (excluded_regs) applying.
+
+    watchlist_sets (this viewer's own filter_regos/filter_types/filter_airlines
+    entries, via _viewer_watchlist_sets/get_watchlist_sets) strips the shared
+    "Watchlist Registration"/"Watchlist Aircraft Type"/"Watchlist Airline" tags
+    the same way — see _strip_unowned_watchlist_tags for why ingestion can't
+    already scope these per-owner.
     """
     import datetime as _dt
 
@@ -148,6 +525,12 @@ def cluster_day_for_cache(
     evaluated = []
     for ev in sorted(events, key=lambda x: x["ts"]):
         if ev["registration"] in excluded_regs:
+            continue
+        _nt = ev.get("notif_types") or []
+        if exclude_kws and _nt and not _strip_excluded_livery_tag(_nt, ev.get("extra_info", ""), exclude_kws):
+            continue
+        if watchlist_sets and _nt and not _strip_unowned_watchlist_tags(
+                _nt, ev.get("registration", ""), ev.get("aircraft_type"), ev.get("airline_icao", ""), watchlist_sets):
             continue
         over_spotted = max_spotted > 0 and ev.get("_spotted", 0) > max_spotted
         reason = f"spotted_{ev.get('_spotted', 0)}" if over_spotted else ""
@@ -258,12 +641,18 @@ def cluster_day_for_cache(
                         key=lambda f: f["ts"])
     win_count = sum(1 for f in evaluated if f["qualifying"] and rec_start <= f["ts"] <= c_end_ts)
 
+    # Only 2 alternative-window search directions exist (front-first, back-first,
+    # plus the alternating front/back walk) but they can each surface distinct
+    # candidates — cap to the 2 shortest (closest to a "quick trip" alternative
+    # to the main window) rather than showing every unique candidate found.
+    alt_wins_capped = sorted(alt_wins, key=lambda w: w["end_ts"] - w["start_ts"])[:2]
+
     return [{"start_ts": min(e[0] for e in section), "end_ts": c_end_ts,
              "start_local_min": _local_min(min(e[0] for e in section)),
              "end_local_min":   _local_min(c_end_ts),
              "recommended_start_ts":        rec_start,
              "recommended_start_local_min": _local_min(rec_start),
-             "alternative_windows": alt_wins, "show_window": win_count >= 2,
+             "alternative_windows": alt_wins_capped, "show_window": win_count >= 2,
              "flights": out_events, "lulls": lulls}]
 
 
@@ -314,10 +703,29 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
 
     app.state.cfg_for_user = _cfg_for_user
 
+    def _get_user_catalog(user):
+        """Per-request catalog resolver — catalogs are private per user, never
+        airport-scoped. Passengers have no catalog concept at all, regardless
+        of any stale catalog_path (they can't upload one, but a role change
+        could otherwise leave one lying around)."""
+        if user.role == "passenger":
+            return None
+        row = app.state.control_store.get_user(user.user_id)
+        path = row["catalog_path"] if row else None
+        if not path:
+            return None
+        try:
+            from lightroom import LightroomCatalog
+            return LightroomCatalog(path)
+        except Exception:
+            return None
+
+    app.state.get_user_catalog = _get_user_catalog
+
     # Gate every /api/* route behind a valid session, except the handful needed to
     # log in / check auth status in the first place. No role restrictions yet — any
     # authenticated user passes; role-based access is layered in separately.
-    _AUTH_EXEMPT_PATHS = {"/api/auth/login", "/api/me"}
+    _AUTH_EXEMPT_PATHS = {"/api/auth/login", "/api/me", "/api/version"}
 
     @app.middleware("http")
     async def _require_session(request: Request, call_next):
@@ -328,15 +736,18 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         return await call_next(request)
 
     def _fleet_bg_refresh_loop() -> None:
-        """Refresh all fleet cards every 7 days regardless of user activity."""
+        """Refresh every owner's own fleet cards every 7 days regardless of user
+        activity — fleet cards are per-user (Controller/Pilot), so this iterates
+        every owner that currently has any, not one shared list."""
         import time as _time, system_status as _ss
         _FLEET_INTERVAL = 7 * 86400
         while True:
             try:
-                cards = app.state.store.get_fleet_cards()
-                stale = [c for c in cards if c.get('updated_at', 0) < _time.time() - _FLEET_INTERVAL]
-                for card in stale:
-                    _fleet_refresh_fr24_bg(card['icao'])
+                for owner in app.state.control_store.get_fleet_card_owners():
+                    cards = app.state.control_store.get_fleet_cards(owner)
+                    stale = [c for c in cards if c.get('updated_at', 0) < _time.time() - _FLEET_INTERVAL]
+                    for card in stale:
+                        _fleet_refresh_fr24_bg(owner, card['icao'])
                 _ss.record_task('fleet_update', True)
             except Exception as _e:
                 _ss.record_task('fleet_update', False, str(_e))
@@ -372,13 +783,57 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                 _bootstrap_password,
             )
         for _acfg in app.state.cfgs.values():
-            if not cstore.get_watched_airport(_acfg.airport_iata):
+            # _acfg.airport_iata can be blank if this particular boot's FR24
+            # lookup for this airport failed with no cache available yet
+            # (build_config()'s minimal-fallback path) — never register that,
+            # it would create an unrecoverable blank-code "phantom" row
+            # pointing at an already-watched airport's own DB file.
+            if _acfg.airport_iata and not cstore.get_watched_airport(_acfg.airport_iata):
                 cstore.register_airport(
                     airport_iata=_acfg.airport_iata, airport_code=_acfg.airport_code,
                     airport_name=_acfg.airport_name, airport_icao=_acfg.airport_icao,
                     airport_tz=_acfg.airport_tz, airport_lat=_acfg.airport_lat,
                     airport_lon=_acfg.airport_lon, db_path=_acfg.store.db_path,
                 )
+
+        # One-time migration: catalogs used to be a single shared file found via
+        # find_catalog() (the "lightroom/" folder). Point the first Controller
+        # account at that same file so upgrading doesn't silently lose Collection/
+        # Fleet/Search-Catalogue/already-photographed data — no file is moved or
+        # copied, just referenced. No-op once any Controller already has a
+        # catalog_path (either from this migration or a real upload).
+        if not any(u["catalog_path"] for u in cstore.list_users() if u["role"] == "controller"):
+            try:
+                from lightroom import find_catalog as _find_legacy_catalog
+                _legacy = _find_legacy_catalog()
+                if _legacy is not None:
+                    _first_controller = next((u for u in cstore.list_users() if u["role"] == "controller"), None)
+                    if _first_controller:
+                        cstore.set_catalog_path(_first_controller["user_id"], _legacy._path)
+                        log.info("Migrated legacy shared catalog (%s) to Controller '%s'",
+                                 _legacy._path, _first_controller["username"])
+            except Exception as _cat_exc:
+                log.warning("Legacy catalog migration skipped: %s", _cat_exc)
+
+        # One-time migration: fleet cards used to live in a single shared table in
+        # the (primary airport's) SqliteStore, unscoped by user. Copy them into
+        # control.db under the 'controller' sentinel — the SAME owner key every
+        # Controller/Passenger read/write already resolves to (see _owner_id) —
+        # so upgrading doesn't silently lose the Fleet subtab's data. No-op once
+        # control.db already has any fleet cards (from this migration or real
+        # per-user usage).
+        if not cstore.get_fleet_card_owners():
+            try:
+                _legacy_cards = app.state.store.get_fleet_cards() if app.state.store else []
+                if _legacy_cards:
+                    for _lc in _legacy_cards:
+                        cstore.upsert_fleet_card(
+                            "controller", _lc["icao"], _lc["iata"], _lc["airline"],
+                            _lc["aircraft"], updated_at=_lc.get("updated_at"),
+                        )
+                    log.info("Migrated %d legacy fleet card(s) to the Controller", len(_legacy_cards))
+            except Exception as _fc_exc:
+                log.warning("Legacy fleet card migration skipped: %s", _fc_exc)
 
         # Refresh ICAO type list in background (no-op if < 90 days old)
         import threading as _thr
@@ -390,6 +845,11 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         _thr.Thread(target=_fleet_bg_refresh_loop, daemon=True).start()
 
     # ── Auth / airport-selection routes ─────────────────────────────────────
+
+    @app.get("/api/version")
+    async def get_version():
+        """Unauthenticated — the login screen shows this before any session exists."""
+        return {"version": VERSION}
 
     @app.post("/api/auth/login")
     async def auth_login(request: Request, response: Response):
@@ -413,12 +873,9 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
 
     @app.post("/api/auth/change-password")
     async def auth_change_password(request: Request, user=Depends(_auth_current_user)):
-        from auth import verify_password, hash_password
+        from auth import hash_password
         body = await request.json()
         cstore = app.state.control_store
-        user_row = cstore.get_user(user.user_id)
-        if not verify_password(str(body.get("current_password") or ""), user_row["password_hash"]):
-            raise HTTPException(403, "Current password is incorrect")
         new_password = str(body.get("new_password") or "")
         if len(new_password) < 8:
             raise HTTPException(400, "New password must be at least 8 characters")
@@ -440,10 +897,23 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                         if a["airport_iata"] in allowed]
         return {
             "authenticated": True,
-            "user": {"id": user.user_id, "username": user.username, "role": user.role},
+            "user": {"id": user.user_id, "username": user.username, "role": user.role, "language": user.language},
             "airport": user.airport_iata,
-            "airports": [{"iata": a["airport_iata"], "name": a["airport_name"]} for a in airports],
+            "airports": [{
+                "iata": a["airport_iata"], "name": a["airport_name"],
+                "icao": a["airport_icao"], "tz": a["airport_tz"],
+                "country_code": a["country_code"] or "", "tz_abbr": _tz_abbr(a["airport_tz"]),
+            } for a in airports],
         }
+
+    @app.put("/api/me/language")
+    async def set_my_language(request: Request, user=Depends(_auth_current_user)):
+        body = await request.json()
+        language = str(body.get("language") or "")
+        if language not in ("en", "zh"):
+            raise HTTPException(400, "Unsupported language")
+        app.state.control_store.set_language(user.user_id, language)
+        return {"ok": True}
 
     @app.get("/api/airports/mine")
     async def airports_mine(user=Depends(_auth_current_user)):
@@ -454,7 +924,11 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
             allowed = set(cstore.get_user_airports(user.user_id))
             airports = [a for a in cstore.get_active_watched_airports()
                         if a["airport_iata"] in allowed]
-        return {"airports": [{"iata": a["airport_iata"], "name": a["airport_name"]} for a in airports]}
+        return {"airports": [{
+            "iata": a["airport_iata"], "name": a["airport_name"],
+            "icao": a["airport_icao"], "tz": a["airport_tz"],
+            "country_code": a["country_code"] or "", "tz_abbr": _tz_abbr(a["airport_tz"]),
+        } for a in airports]}
 
     @app.post("/api/airport/select")
     async def airport_select(request: Request, response: Response, user=Depends(_auth_current_user)):
@@ -469,6 +943,17 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         response.set_cookie(AIRPORT_COOKIE, iata, max_age=90 * 86400,
                             httponly=False, samesite="lax",
                             secure=(request.url.scheme == "https"))
+        # Each device keeps its own independent view via its own cookie (desktop
+        # and mobile can genuinely show different airports at once) — but push
+        # notifications only ever go to a phone, so the notification-relevant
+        # "last selected airport" is scoped to mobile requests specifically,
+        # never overwritten by a desktop selection. Without this, switching
+        # airports on desktop after switching on mobile would silently redirect
+        # notifications away from the airport actually being watched on the phone.
+        import re as _re
+        _ua = (request.headers.get("user-agent") or "")
+        if _re.search(r"Mobile|Android|iPhone|iPod", _ua, _re.I):
+            cstore.set_last_airport(_push_owner_id(user), iata)
         return {"ok": True}
 
     @app.post("/api/controller/airports")
@@ -485,55 +970,155 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
 
         import asyncio as _asyncio
         from store import SqliteStore
-        from main import build_config  # deferred: main.py imports create_app from
-                                        # this module at its own top level, so this
-                                        # import must stay lazy (resolved at call
-                                        # time, once both modules are fully loaded).
-        from monitor_runner import run_monitor, run_military, log_task_result
+        from main import build_config, _country_code_for_iata  # deferred: main.py
+                                        # imports create_app from this module at its
+                                        # own top level, so this import must stay
+                                        # lazy (resolved at call time, once both
+                                        # modules are fully loaded).
+        from monitor_runner import (
+            run_force_check_listener, log_task_result,
+            _run_arrivals_check, run_immediate_military_check,
+        )
 
         new_dir = os.path.join(app.state.data_dir, "airports")
         os.makedirs(new_dir, exist_ok=True)
         new_store = SqliteStore(os.path.join(new_dir, f"{airport_code.upper()}.db"))
         new_store.save_setting("AIRPORT_CODE", airport_code)
 
-        cfg = build_config(app.state.fr_api, new_store, app.state.catalog)
+        cfg = build_config(app.state.fr_api, new_store, app.state.catalog, app.state.control_store)
+        if not cfg.airport_iata:
+            # build_config()'s FR24 lookup failed with no cached fallback
+            # available (rate-limited, bad code, transient network issue) —
+            # _fetch_airport's minimal-fallback path returns an empty iata in
+            # that case. Registering that would create an unrecoverable
+            # "phantom" watched-airport row with no code at all, so refuse
+            # instead and let the Controller retry.
+            import glob
+            for path in glob.glob(new_store.db_path + "*"):
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
+            raise HTTPException(400, f"Could not fetch airport info for '{airport_code}' — try again in a moment")
         if cfg.airport_iata in app.state.cfgs:
             raise HTTPException(400, f"{cfg.airport_iata} is already being watched")
         cfg.check_now_event = _asyncio.Event()
+        cfg.check_lock = _asyncio.Lock()
+
+        # Seed the new airport's DB with the current global infra settings,
+        # every user's PER_USER_GLOBAL_SETTINGS values (Collection Stat
+        # Keywords, Session Panel Tags, and the Controller's Special Livery
+        # Keywords), and Controller-only custom airports/aircraft-types, so it
+        # starts in sync with every other watched airport rather than falling
+        # back to build_config()'s hardcoded in-memory defaults.
+        if app.state.cfgs:
+            _source_store = next(iter(app.state.cfgs.values())).store
+            with _source_store._connect() as _sconn:
+                for _key in GLOBAL_INFRA_SETTINGS:
+                    _row = _sconn.execute(
+                        "SELECT value FROM settings WHERE user_id = 'controller' AND key = ?", (_key,)
+                    ).fetchone()
+                    if _row is not None:
+                        new_store.set_setting("controller", _key, _row["value"])
+                _per_user_rows = _sconn.execute(
+                    "SELECT user_id, key, value FROM settings WHERE key IN (%s)"
+                    % ",".join("?" * len(PER_USER_GLOBAL_SETTINGS)),
+                    tuple(PER_USER_GLOBAL_SETTINGS),
+                ).fetchall()
+                _airport_rows = _sconn.execute(
+                    "SELECT iata, name, country_code FROM airports WHERE source = 'user'"
+                ).fetchall()
+                # Full table, not just source='user' — the bulk 'icaolist' reference
+                # rows (~2700 ICAO type-code -> manufacturer/model mappings) only ever
+                # get populated by a manual GitHub refresh against one store, so a
+                # brand-new airport's DB would otherwise start with zero rows and
+                # silently break manufacturer resolution (see main.py's
+                # _reconcile_global_settings_across_airports for the full story).
+                _type_rows = _sconn.execute(
+                    "SELECT icao, name, source, manufacturer FROM aircraft_types"
+                ).fetchall()
+            for _r in _per_user_rows:
+                new_store.set_setting(_r["user_id"], _r["key"], _r["value"])
+            for _r in _airport_rows:
+                new_store.upsert_airport(_r["iata"], _r["name"], _r["country_code"], source='user')
+            new_store.upsert_aircraft_types_bulk(
+                [(_r["icao"], _r["name"], _r["source"], _r["manufacturer"]) for _r in _type_rows])
 
         app.state.control_store.register_airport(
             airport_iata=cfg.airport_iata, airport_code=cfg.airport_code,
             airport_name=cfg.airport_name, airport_icao=cfg.airport_icao,
             airport_tz=cfg.airport_tz, airport_lat=cfg.airport_lat, airport_lon=cfg.airport_lon,
             db_path=new_store.db_path, added_by_user_id=user.user_id,
+            country_code=_country_code_for_iata(cfg.airport_iata),
         )
         app.state.cfgs[cfg.airport_iata] = cfg  # same dict _run_backup() iterates —
                                                  # mutating in place makes it visible there too
 
+        # Seed the Controller's own per-airport SPOT_*/RARE_PLANE_MIN_ABSENCE_DAYS
+        # values on this brand-new airport from their value on an airport they
+        # already have, if any (their very first-ever airport has nothing to
+        # seed from, so build_config()'s hardcoded defaults apply instead).
+        seed_new_airport_prefill_settings(app.state.cfgs, "controller", cfg.airport_iata)
+
         if not hasattr(app.state, "monitor_tasks"):
             app.state.monitor_tasks = {}
-        t1 = _asyncio.create_task(run_monitor(cfg), name=f"monitor-{cfg.airport_iata}")
+        # The shared run_monitor_rotation/run_military_shared_loop tasks (started
+        # once in main.py) read app.state.cfgs fresh every cycle, so this new
+        # airport is automatically folded into their scheduling from the NEXT
+        # cycle boundary onward — nothing to spawn for that here, and no per-
+        # airport military task either (run_military_shared_loop covers every
+        # airport with one shared fetch — see monitor_runner.py). What IS needed
+        # per airport is the always-on out-of-band force-check listener, plus an
+        # immediate one-off first check for both arrivals and military so the
+        # Controller sees data for it right away instead of waiting for the next
+        # cycle boundary.
+        t1 = _asyncio.create_task(run_force_check_listener(cfg), name=f"force-check-{cfg.airport_iata}")
         t1.add_done_callback(log_task_result)
-        t2 = _asyncio.create_task(run_military(cfg), name=f"military-{cfg.airport_iata}")
-        t2.add_done_callback(log_task_result)
-        app.state.monitor_tasks[cfg.airport_iata] = (t1, t2)
+        app.state.monitor_tasks[cfg.airport_iata] = (t1,)
+        t3 = _asyncio.create_task(_run_arrivals_check(cfg), name=f"first-check-{cfg.airport_iata}")
+        t3.add_done_callback(log_task_result)
+        t4 = _asyncio.create_task(run_immediate_military_check(cfg), name=f"first-military-check-{cfg.airport_iata}")
+        t4.add_done_callback(log_task_result)
 
         return JSONResponse({"ok": True, "airport_iata": cfg.airport_iata, "airport_name": cfg.airport_name})
 
     @app.delete("/api/controller/airports/{iata}")
     async def controller_remove_airport(iata: str, user=Depends(_auth_require_role("controller"))):
-        """Soft-delete: stops polling and hides the airport from pickers, but keeps
-        its DB file on disk (history preserved, matches other soft-delete patterns
-        already used elsewhere in this app)."""
+        """Hard delete, per explicit requirement: once removed, every file for
+        that airport is gone for every user — not a soft active=0 flag. Cancels
+        its monitor/military tasks, removes the watched_airports row and any
+        user_airport_access grants to it, then deletes the airport's own SQLite
+        DB file (plus WAL/SHM/journal sidecars and any backups) from disk."""
         iata = iata.upper()
         if iata not in app.state.cfgs:
             raise HTTPException(404, "Unknown airport")
-        app.state.control_store.deactivate_airport(iata)
+        if len(app.state.cfgs) <= 1:
+            raise HTTPException(400, "Cannot delete the only watched airport")
+
+        cfg = app.state.cfgs[iata]
+        db_path = cfg.store.db_path
+
         tasks = getattr(app.state, "monitor_tasks", {}).pop(iata, None)
         if tasks:
             for t in tasks:
                 t.cancel()
         app.state.cfgs.pop(iata, None)
+        app.state.control_store.delete_watched_airport(iata)
+
+        import glob
+        for path in glob.glob(db_path + "*"):
+            try:
+                os.remove(path)
+            except OSError as exc:
+                log.warning("Could not remove airport DB file %s: %s", path, exc)
+        backup_dir = os.path.join(os.path.dirname(db_path), "backups")
+        stem = os.path.splitext(os.path.basename(db_path))[0]
+        for path in glob.glob(os.path.join(backup_dir, f"{stem}_*")):
+            try:
+                os.remove(path)
+            except OSError as exc:
+                log.warning("Could not remove airport backup file %s: %s", path, exc)
+
         return JSONResponse({"ok": True})
 
     @app.get("/api/controller/users")
@@ -556,25 +1141,86 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         password = str(body.get("password") or "")
         role = str(body.get("role") or "")
         airport_iatas = body.get("airport_iatas") or []
-        if not username or len(password) < 8 or role not in ("controller", "pilot", "passenger"):
-            raise HTTPException(400, "username, a password of at least 8 characters, and a valid role are required")
+        if not username or len(password) < 8 or role not in ("pilot", "passenger"):
+            # There is exactly one Controller per server (set up outside this
+            # endpoint) — only Pilot/Passenger accounts can ever be created here.
+            raise HTTPException(400, "username, a password of at least 8 characters, and a role of pilot or passenger are required")
         cstore = app.state.control_store
         if cstore.get_user_by_username(username):
             raise HTTPException(409, "That username is already taken")
         new_id = cstore.create_user(username, hash_password(password), role, airport_iatas)
+        if role == "pilot":
+            # One-time snapshot of the Controller's current exclusion/watchlist
+            # rows AND pilot-editable settings values into this Pilot's own
+            # rows, per airport they've just been granted — after this
+            # they're fully independent, no further syncing. The per-airport
+            # SPOT_*/RARE_PLANE keys instead seed from this same Pilot's own
+            # value elsewhere first (see seed_new_airport_prefill_settings);
+            # SPECIAL_LIVERY_EXCLUDE_KEYWORDS is never seeded at all.
+            for iata in airport_iatas:
+                cfg = app.state.cfgs.get(iata)
+                if cfg:
+                    cfg.store.copy_controller_filters_to_owner(new_id)
+                    cfg.store.copy_controller_settings_to_owner(
+                        new_id, PER_USER_GLOBAL_SETTINGS - {"SPECIAL_LIVERY_KEYWORDS"})
+                    seed_new_airport_prefill_settings(app.state.cfgs, new_id, iata)
         return JSONResponse({"ok": True, "id": new_id})
 
     @app.put("/api/controller/users/{target_id}")
     async def controller_update_user(target_id: str, request: Request, user=Depends(_auth_require_role("controller"))):
         body = await request.json()
         cstore = app.state.control_store
-        if not cstore.get_user(target_id):
+        target = cstore.get_user(target_id)
+        if not target:
             raise HTTPException(404, "Unknown user")
         role = body.get("role")
         if role is not None and role not in ("controller", "pilot", "passenger"):
             raise HTTPException(400, "Invalid role")
+        if role is not None and role != target["role"]:
+            # There is exactly one Controller per server, so its role can never
+            # be changed here; a Pilot can never be changed either way (no
+            # downgrade to Passenger, no upgrade to Controller); the only
+            # allowed transition at all is Passenger -> Pilot.
+            if target["role"] != "passenger" or role != "pilot":
+                raise HTTPException(400, "That role change is not allowed")
+        username = body.get("username")
+        if username is not None:
+            username = str(username).strip()
+            if not username:
+                raise HTTPException(400, "Username is required")
+            existing = cstore.get_user_by_username(username)
+            if existing and existing["user_id"] != target_id:
+                raise HTTPException(409, "That username is already taken")
         airport_iatas = body.get("airport_iatas")
-        cstore.update_user(target_id, role=role, airport_iatas=airport_iatas)
+        effective_role = role if role is not None else target["role"]
+        new_airports = []
+        if effective_role == "pilot" and airport_iatas is not None:
+            old_airports = set(cstore.get_user_airports(target_id))
+            new_airports = [iata for iata in airport_iatas if iata not in old_airports]
+        cstore.update_user(target_id, role=role, airport_iatas=airport_iatas, username=username)
+        if username is not None and username != target["username"]:
+            # Username changed — invalidate every existing session for this
+            # account, same as a password change (set_password already does
+            # this for the reset-password endpoint).
+            cstore.bump_session_epoch(target_id)
+        if effective_role == "pilot":
+            # Snapshot the Controller's current filter/watchlist rows AND
+            # pilot-editable settings values into this Pilot's own rows for
+            # any newly granted airport (or, on a fresh promotion to Pilot
+            # with no airport_iatas in this request, every airport they
+            # already have access to) — one-time, per airport. The per-airport
+            # SPOT_*/RARE_PLANE keys instead seed from this same Pilot's own
+            # value on another airport they already have, if any (see
+            # seed_new_airport_prefill_settings); SPECIAL_LIVERY_EXCLUDE_KEYWORDS
+            # is never seeded at all.
+            targets = new_airports if airport_iatas is not None else cstore.get_user_airports(target_id)
+            for iata in targets:
+                cfg = app.state.cfgs.get(iata)
+                if cfg:
+                    cfg.store.copy_controller_filters_to_owner(target_id)
+                    cfg.store.copy_controller_settings_to_owner(
+                        target_id, PER_USER_GLOBAL_SETTINGS - {"SPECIAL_LIVERY_KEYWORDS"})
+                    seed_new_airport_prefill_settings(app.state.cfgs, target_id, iata)
         return JSONResponse({"ok": True})
 
     @app.post("/api/controller/users/{target_id}/reset-password")
@@ -621,10 +1267,77 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         cstore.delete_user(target_id)
         return JSONResponse({"ok": True})
 
+    @app.get("/api/catalog/status")
+    async def catalog_status(user=Depends(_auth_require_role("controller", "pilot"))):
+        row = app.state.control_store.get_user(user.user_id)
+        path = row["catalog_path"] if row else None
+        return JSONResponse({
+            "has_catalog": bool(path),
+            "filename": os.path.basename(path) if path else None,
+        })
+
+    @app.post("/api/catalog/upload")
+    async def catalog_upload(file: UploadFile = File(...), user=Depends(_auth_require_role("controller", "pilot"))):
+        """Streams the upload to disk in chunks (Lightroom catalogs can be
+        hundreds of MB to several GB — never buffer the whole thing in memory),
+        validates it actually looks like a Lightroom catalog before committing
+        the new catalog_path, and only then removes the user's previous catalog
+        file — so a bad upload never leaves them with no working catalog."""
+        safe_name = os.path.basename(file.filename or "catalog.lrcat")
+        user_dir = os.path.join(app.state.data_dir, "catalogs", f"user_{user.user_id}")
+        os.makedirs(user_dir, exist_ok=True)
+        new_path = os.path.join(user_dir, safe_name)
+        tmp_path = new_path + ".uploading"
+
+        try:
+            with open(tmp_path, "wb") as f:
+                while chunk := await file.read(1024 * 1024):
+                    f.write(chunk)
+        except Exception as exc:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+            raise HTTPException(400, f"Upload failed: {exc}")
+
+        from lightroom import LightroomCatalog
+        try:
+            candidate = LightroomCatalog(tmp_path)
+        except Exception:
+            candidate = None
+        if candidate is None or candidate._reg_spec_id is None:
+            os.remove(tmp_path)
+            raise HTTPException(400, "That file doesn't look like a valid Lightroom catalog")
+
+        os.replace(tmp_path, new_path)  # atomic rename, now that it's validated
+
+        cstore = app.state.control_store
+        old_row = cstore.get_user(user.user_id)
+        old_path = old_row["catalog_path"] if old_row else None
+        cstore.set_catalog_path(user.user_id, new_path)
+        if old_path and old_path != new_path and os.path.exists(old_path):
+            try:
+                os.remove(old_path)
+            except OSError as exc:
+                log.warning("Could not remove previous catalog for %s: %s", user.user_id, exc)
+
+        return JSONResponse({"ok": True, "filename": safe_name})
+
+    @app.delete("/api/catalog")
+    async def catalog_delete(user=Depends(_auth_require_role("controller", "pilot"))):
+        cstore = app.state.control_store
+        row = cstore.get_user(user.user_id)
+        path = row["catalog_path"] if row else None
+        if path and os.path.exists(path):
+            try:
+                os.remove(path)
+            except OSError as exc:
+                log.warning("Could not remove catalog file for %s: %s", user.user_id, exc)
+        cstore.set_catalog_path(user.user_id, None)
+        return JSONResponse({"ok": True})
+
     # ── API routes ──────────────────────────────────────────────────────────
 
     @app.post("/api/restart")
-    async def restart_backend():
+    async def restart_backend(user=Depends(_auth_require_role("controller"))):
         """Exit the process — Docker will auto-restart; on PC restart manually."""
         import asyncio, os
         async def _do_exit():
@@ -634,7 +1347,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         return JSONResponse({"ok": True, "msg": "Restarting…"})
 
     @app.post("/api/refresh-fr24")
-    async def refresh_fr24():
+    async def refresh_fr24(user=Depends(_auth_require_role("controller"))):
         """Re-seed FR24 cookies from disk (call after copying fresh .fr24_cookies.pkl to data/)."""
         from flightradar24api.request import reload_cookies
         ok = reload_cookies()
@@ -708,16 +1421,14 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
     async def get_aircraft(registration: str, user=Depends(_auth_current_user)):
         # Airport-specific data (flight_arrivals, departure_patterns predictions,
         # route lookup) must resolve to whichever airport the user has selected —
-        # catalog data (last-spotted/sessions) stays global/user-scoped regardless
-        # of airport, per the design (Phase 5 will make it per-user; for now it's
-        # still the single shared app.state.catalog).
+        # catalog data (last-spotted/sessions) is per-user regardless of airport.
         cfg   = _cfg_for_user(user)
         store = cfg.store
         airport_iata = cfg.airport_iata if cfg else (store.load_setting("AIRPORT_CODE") or "")
         result: dict = {}
 
         # Lightroom: last spotted + all sessions
-        catalog = (cfg.catalog if cfg else None) or getattr(app.state, 'catalog', None)
+        catalog = app.state.get_user_catalog(user)
         if catalog:
             try:
                 spotted = catalog.get_last_spotted(registration)
@@ -734,12 +1445,16 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
             except Exception as exc:
                 log.warning("Lightroom lookup failed for %s: %s", registration, exc)
 
-        # Next departure prediction — look up most recent flight_number from flight_arrivals
+        # Next departure prediction — look up most recent flight_number from flight_arrivals.
+        # Excludes Cancelled/Swapped rows: that arrival never actually happened under this
+        # identity, so predicting a departure off it doesn't make sense (Diverted is kept —
+        # the aircraft did arrive, and can still depart again later).
         if airport_iata:
             with store._connect() as conn:
                 row = conn.execute(
                     "SELECT flight_number, arrival_ts FROM flight_arrivals "
                     "WHERE registration = ? AND flight_number IS NOT NULL "
+                    "AND current_status NOT IN ('Cancelled', 'Swapped') "
                     "ORDER BY arrival_ts DESC LIMIT 1",
                     (registration,)
                 ).fetchone()
@@ -860,6 +1575,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                        fe.registration, fe.flight_number, fe.arrival_ts, fe.first_seen_ts,
                        fe.notif_types, fe.detail, fe.extra_info, fe.origin_iata, fe.origin_name,
                        fe.current_status, fe.arr_label, fe.airline_icao, fe.photo_url AS fe_photo_url,
+                       fe.aircraft_type, fe.rare_absence_days,
                        fd.dep_flight, fd.dep_ts, fd.dep_dest_iata, fd.dep_dest_name,
                        fd.is_prediction, fd.dep_label, fd.dep_confidence,
                        a.photo_url AS af_photo_url, a.manufacturer,
@@ -872,8 +1588,12 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                 LEFT JOIN airports ap_o      ON ap_o.iata = fe.origin_iata
                 LEFT JOIN airports ap_d      ON ap_d.iata = fd.dep_dest_iata
                 WHERE fe.first_seen_ts >= ? AND fe.flight_number IS NOT NULL
+                  AND fe.registration NOT IN (SELECT registration FROM filter_exclusions WHERE owner_user_id = ?)
                 ORDER BY fe.arrival_ts ASC
-            """, (cutoff_ts,)).fetchall()
+            """, (cutoff_ts, _owner_id(user))).fetchall()
+            _livery_excl = _viewer_livery_exclude_keywords(conn, user)
+            _rare_min_days = _viewer_rare_plane_min_days(conn, user)
+            _watchlist_sets = _viewer_watchlist_sets(store_, user)
 
         events = []
         for row in rows:
@@ -903,6 +1623,18 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                 notif_types = _json.loads(row["notif_types"] or "[]")
             except Exception:
                 notif_types = [row["notif_types"]] if row["notif_types"] else []
+            notif_types = _strip_excluded_livery_tag(notif_types, row["extra_info"], _livery_excl)
+            notif_types = _resolve_rare_plane_tag(notif_types, row["rare_absence_days"], _rare_min_days)
+            notif_types = _strip_unowned_watchlist_tags(
+                notif_types, row["registration"], row["aircraft_type"], row["airline_icao"], _watchlist_sets)
+            # If every tag this viewer would have cared about got stripped (their
+            # own exclude keywords / thresholds / private watchlists), this flight
+            # has no remaining reason to appear in their Feed at all — matches how
+            # registration exclusion already works (drop the row for this viewer
+            # entirely), and restores the pre-multi-user behavior where an excluded
+            # livery never created a visible card in the first place.
+            if not notif_types:
+                continue
 
             events.append({
                 "registration":         row["registration"],
@@ -1065,6 +1797,17 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
 
         cached = store_.get_timeline_cache(cache_dates)
 
+        # Passengers see the cached (Controller-baked) result as-is EXCEPT for the
+        # Already-Photographed-Limit gate, which is re-patched off below since
+        # Passengers have no catalog of their own to evaluate it against — that's
+        # their explicitly confirmed design otherwise ("inherits the Controller's
+        # settings"). A Pilot gets a full independent re-cluster: their own
+        # exclusion list, their own algorithm settings, their own catalog — never
+        # merged with the Controller's, and an empty Pilot exclusion list means
+        # nothing is excluded for them even if the Controller has excluded that
+        # registration.
+        _viewer_catalog = app.state.get_user_catalog(user) if user.role in ("controller", "pilot") else None
+
         days_result = []
         for date_str, label, is_today, i in day_meta:
             row = cached.get(date_str)
@@ -1073,7 +1816,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                 if i < 0:
                     continue
                 days_result.append({
-                    "date": date_str, "label": label, "is_today": is_today,
+                    "date": date_str, "label": label, "is_today": is_today, "is_tomorrow": i == -1,
                     "event_count": 0, "total_regs": 0,
                     "weather_code": 0, "weather_severe": False,
                     "temp_max": None, "temp_min": None,
@@ -1097,9 +1840,39 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
             if i < 0 and not clusters:
                 continue
 
+            if user.role == "pilot":
+                raw_events = None
+                try:
+                    raw_events = _json.loads(row["events_json"]) if row["events_json"] else None
+                except Exception:
+                    raw_events = None
+                if raw_events is not None:
+                    with store_._connect() as _pc:
+                        clusters = _recluster_for_pilot(
+                            raw_events, sw.get("sunrise_ts", 0), sw.get("sunset_ts", 0), tz,
+                            _pc, user.user_id, _viewer_catalog, airport_iata_,
+                        )
+                else:
+                    # Cache row predates events_json (written before the next monitor
+                    # cycle runs) — best-effort fallback: just re-patch the spotted
+                    # gate on the Controller-baked clusters until the next cycle.
+                    with store_._connect() as _sc:
+                        _max_spot = int(_pilot_setting(_sc, user.user_id, "SPOT_MAX_SPOTTED", "0") or 0)
+                    _repatch_spotted_gate(clusters, _viewer_catalog, _max_spot, airport_iata_)
+            elif user.role == "passenger":
+                # Passengers have no catalog concept at all (_viewer_catalog is
+                # already None above), so the Already-Photographed-Limit gate
+                # has nothing to evaluate against for them — re-patch with
+                # catalog=None to force spotted=0 for every flight, which
+                # disables the spotted-count gate while still preserving the
+                # Controller-baked lighting-based qualification untouched.
+                # Otherwise a Passenger would inherit whatever the Controller's
+                # own catalog counts happened to exclude at cache-build time.
+                _repatch_spotted_gate(clusters, None, 0, airport_iata_)
+
             q_regs = {f["registration"] for c in clusters for f in c.get("flights", []) if f.get("qualifying")}
             days_result.append({
-                "date": date_str, "label": label, "is_today": is_today,
+                "date": date_str, "label": label, "is_today": is_today, "is_tomorrow": i == -1,
                 "event_count":    len(q_regs),
                 "total_regs":     len(q_regs),
                 "weather_code":   sw.get("weather_code", 0),
@@ -1308,24 +2081,34 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
     }
 
     _COL_PLUGIN = 'ch.aviationphoto.aircraftmetadata'
-    _col_stats_cache: dict = {'data': None, 'ts': 0}
+    # Keyed by user_id ('controller' sentinel for the no-user background pass) —
+    # catalogs are private per user, so a single shared cache would leak one
+    # user's stats to everyone.
+    _col_stats_cache: dict = {}
 
-    def _col_catalog_path():
-        """Return the configured Lightroom catalog path as a string."""
-        cfg_ = app.state.cfg
-        # Try cfg.catalog._path first (integrated mode)
-        cat_obj = getattr(cfg_, 'catalog', None) if cfg_ else None
-        if cat_obj and hasattr(cat_obj, '_path'):
-            return str(cat_obj._path)
-        # Standalone: use find_catalog
-        try:
-            from lightroom import find_catalog
-            cat = find_catalog()
-            if cat and hasattr(cat, '_path'):
-                return str(cat._path)
-        except Exception:
-            pass
-        return None
+    def _resolve_catalog_path(user=None):
+        """Catalogs are private per user, never a shared/airport-wide default.
+        Background tasks with no specific viewer (fleet photo refresh, the
+        periodic collection-stats warm cache) fall back to the Controller's
+        own catalog — same "ground truth" convention used by monitor.py's
+        clustering pass."""
+        if user is not None:
+            cat_obj = app.state.get_user_catalog(user)
+            return str(cat_obj._path) if cat_obj else None
+        return app.state.control_store.get_controller_catalog_path()
+
+    def _col_catalog_path(user=None):
+        return _resolve_catalog_path(user)
+
+    def _catalog_path_for_owner(owner_user_id: str):
+        """Same per-owner catalog resolution as _resolve_catalog_path, but keyed
+        by owner_user_id string directly — for background fleet-card refresh
+        tasks, which have no full request-time user object, only the owner id
+        the cards are stored under."""
+        if owner_user_id == "controller":
+            return app.state.control_store.get_controller_catalog_path()
+        row = app.state.control_store.get_user(owner_user_id)
+        return row["catalog_path"] if row else None
 
     def _col_stats_ttl_secs():
         try:
@@ -1333,18 +2116,22 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         except Exception:
             return 1800
 
-    def _col_compute_stats():
-        """Compute catalog stats and store in cache. Returns the data dict."""
+    def _col_compute_stats(user=None):
+        """Compute catalog stats for one user (or the Controller, if user is
+        None — the background/no-viewer case) and store in that user's cache
+        slot. Returns the data dict."""
         import time as _time, system_status as _ss
+        key = user.user_id if user is not None else 'controller'
+        slot = _col_stats_cache.setdefault(key, {'data': None, 'ts': 0})
         try:
-            data = _col_stats_sync()
-            _col_stats_cache['data'] = data
-            _col_stats_cache['ts'] = _time.time()
+            data = _col_stats_sync(user)
+            slot['data'] = data
+            slot['ts'] = _time.time()
             _ss.record_task('collection_stats', True)
             return data
         except Exception as _e:
             _ss.record_task('collection_stats', False, str(_e))
-            return _col_stats_cache.get('data')
+            return slot.get('data')
 
     def _col_start_bg_refresh():
         import threading, time as _time
@@ -1353,19 +2140,25 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                 ttl = _col_stats_ttl_secs()
                 _time.sleep(ttl)
                 try:
-                    _col_compute_stats()
+                    # Refresh every catalog-having user's own cache slot, not
+                    # just one shared one — a Pilot's Collection tab must
+                    # reflect their own catalog's stats, not the Controller's.
+                    for u in app.state.control_store.list_users():
+                        if u["role"] in ("controller", "pilot") and u["catalog_path"]:
+                            from auth import UserCtx
+                            _col_compute_stats(UserCtx(u["user_id"], u["username"], u["role"], None))
                     log.info("Collection stats cache refreshed (periodic)")
                 except Exception as e:
                     log.warning("Collection stats bg refresh failed: %s", e)
         t = threading.Thread(target=_loop, daemon=True)
         t.start()
 
-    def _col_stats_sync():
+    def _col_stats_sync(user=None):
         """Run all catalog queries and return the stats dict. Called from cache layer."""
         from pathlib import Path as _Path
         from datetime import datetime as _dt, date as _date
         import sqlite3 as _sq
-        cat_str = _col_catalog_path()
+        cat_str = _col_catalog_path(user)
         if not cat_str:
             raise ValueError("No Lightroom catalog configured")
         cat = _Path(cat_str)
@@ -1427,7 +2220,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                                  'date': date_str, 'airport': airport or ''})
                 if last_session is None and d:
                     days_ago = (_date.today() - d.date()).days
-                    last_session = {'date_label': date_label, 'airport': airport or '',
+                    last_session = {'date_label': date_label, 'date': date_str, 'airport': airport or '',
                                     'airport_name': airport_name, 'flag': flag, 'days_ago': days_ago}
 
             top_airlines = prop_counts(con, 'airline', 100)
@@ -1576,28 +2369,34 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                 })
             return rows
 
-        # Keyword stat boxes
+        # Keyword stat boxes — this viewer's own choice if they've set one,
+        # else the Controller's, via the standard settings-inheritance
+        # precedence (PER_USER_GLOBAL_SETTINGS keeps it identical across every
+        # airport for a given user, so any airport's store works here).
         kw_stats = []
         try:
             _kw_con = _sq.connect(str(cat))
-            for _i in range(1, 4):
-                _kw = app.state.store.load_setting(f'COLLECTION_KW_STAT_{_i}') or ''
-                if _kw:
-                    try:
-                        _cnt = _kw_con.execute("""
-                            SELECT COUNT(DISTINCT reg.internalValue)
-                            FROM Adobe_images img
-                            JOIN AgSearchablePhotoProperty reg ON reg.photo = img.id_local
-                            JOIN AgPhotoPropertySpec reg_spec ON reg_spec.id_local = reg.propertySpec
-                                AND reg_spec.key = 'registration' AND reg_spec.sourcePlugin = ?
-                            JOIN AgLibraryKeywordImage ki ON ki.image = img.id_local
-                            JOIN AgLibraryKeyword kw ON kw.id_local = ki.tag AND kw.name = ?
-                        """, (_COL_PLUGIN, _kw)).fetchone()[0]
-                    except Exception:
-                        _cnt = 0
-                    kw_stats.append({'keyword': _kw, 'count': _cnt})
-                else:
-                    kw_stats.append({'keyword': '', 'count': 0})
+            _kw_store = _cfg_for_user(user).store if user is not None else app.state.store
+            _kw_owner = _owner_id(user) if user is not None else "controller"
+            with _kw_store._connect() as _kw_settings_conn:
+                for _i in range(1, 4):
+                    _kw = _pilot_setting(_kw_settings_conn, _kw_owner, f'COLLECTION_KW_STAT_{_i}', '') or ''
+                    if _kw:
+                        try:
+                            _cnt = _kw_con.execute("""
+                                SELECT COUNT(DISTINCT reg.internalValue)
+                                FROM Adobe_images img
+                                JOIN AgSearchablePhotoProperty reg ON reg.photo = img.id_local
+                                JOIN AgPhotoPropertySpec reg_spec ON reg_spec.id_local = reg.propertySpec
+                                    AND reg_spec.key = 'registration' AND reg_spec.sourcePlugin = ?
+                                JOIN AgLibraryKeywordImage ki ON ki.image = img.id_local
+                                JOIN AgLibraryKeyword kw ON kw.id_local = ki.tag AND kw.name = ?
+                            """, (_COL_PLUGIN, _kw)).fetchone()[0]
+                        except Exception:
+                            _cnt = 0
+                        kw_stats.append({'keyword': _kw, 'count': _cnt})
+                    else:
+                        kw_stats.append({'keyword': '', 'count': 0})
             _kw_con.close()
         except Exception:
             kw_stats = [{'keyword': '', 'count': 0}] * 3
@@ -1617,17 +2416,20 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         }
 
     @app.get("/api/catalog-stats")
-    async def get_catalog_stats(force: bool = False):
+    async def get_catalog_stats(force: bool = False, user=Depends(_auth_require_role("controller", "pilot"))):
         import time as _time
         import asyncio
+        if not _col_catalog_path(user):
+            return JSONResponse({"no_catalog": True})
+        slot = _col_stats_cache.get(user.user_id, {'data': None, 'ts': 0})
         if not force:
-            cached = _col_stats_cache.get('data')
-            if cached is not None and (_time.time() - _col_stats_cache['ts']) < _col_stats_ttl_secs():
+            cached = slot.get('data')
+            if cached is not None and (_time.time() - slot['ts']) < _col_stats_ttl_secs():
                 return JSONResponse(cached)
         # Compute in thread pool so we don't block the event loop
         loop = asyncio.get_event_loop()
         try:
-            data = await loop.run_in_executor(None, _col_compute_stats)
+            data = await loop.run_in_executor(None, _col_compute_stats, user)
         except Exception as e:
             raise HTTPException(500, str(e))
         if data is None:
@@ -1635,10 +2437,10 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         return JSONResponse(data)
 
     @app.get("/api/catalog-stats/airline")
-    async def get_catalog_airline_details(airline: str = ""):
+    async def get_catalog_airline_details(airline: str = "", user=Depends(_auth_current_user)):
         from pathlib import Path as _Path
         import sqlite3 as _sq
-        cat_str = _col_catalog_path()
+        cat_str = _col_catalog_path(user)
         if not cat_str or not airline: return JSONResponse({'airports': [], 'types': []})
         cat = _Path(cat_str)
         if not cat.exists(): return JSONResponse({'airports': [], 'types': []})
@@ -1681,10 +2483,10 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
             'types': [{'name': r[0], 'manufacturer': r[1] or '', 'photos': r[2]} for r in top_types]})
 
     @app.get("/api/catalog-stats/airport")
-    async def get_catalog_airport_details(airport: str = ""):
+    async def get_catalog_airport_details(airport: str = "", user=Depends(_auth_current_user)):
         from pathlib import Path as _Path
         import sqlite3 as _sq
-        cat_str = _col_catalog_path()
+        cat_str = _col_catalog_path(user)
         if not cat_str or not airport: return JSONResponse({'airlines': [], 'types': []})
         cat = _Path(cat_str)
         if not cat.exists(): return JSONResponse({'airlines': [], 'types': []})
@@ -1728,10 +2530,10 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
             'types': [{'name': r[0], 'manufacturer': r[1] or '', 'photos': r[2]} for r in top_types]})
 
     @app.get("/api/catalog-stats/type")
-    async def get_catalog_type_details(family: str = ""):
+    async def get_catalog_type_details(family: str = "", user=Depends(_auth_current_user)):
         from pathlib import Path as _Path
         import sqlite3 as _sq
-        cat_str = _col_catalog_path()
+        cat_str = _col_catalog_path(user)
         if not cat_str or not family: return JSONResponse({'airlines': [], 'airports': []})
         cat = _Path(cat_str)
         if not cat.exists(): return JSONResponse({'airlines': [], 'airports': []})
@@ -1786,10 +2588,10 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         return JSONResponse({'airlines': airlines_out, 'airports': airports_out})
 
     @app.get("/api/catalog-stats/rego")
-    async def get_catalog_rego_sessions(rego: str = ""):
+    async def get_catalog_rego_sessions(rego: str = "", user=Depends(_auth_current_user)):
         from pathlib import Path as _Path
         import sqlite3 as _sq
-        cat_str = _col_catalog_path()
+        cat_str = _col_catalog_path(user)
         if not cat_str or not rego: return JSONResponse({'sessions': []})
         cat = _Path(cat_str)
         if not cat.exists(): return JSONResponse({'sessions': []})
@@ -1821,10 +2623,10 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         return JSONResponse({'sessions': sessions})
 
     @app.get("/api/catalog-stats/tags")
-    async def get_catalog_session_tag_list():
+    async def get_catalog_session_tag_list(user=Depends(_auth_current_user)):
         from pathlib import Path as _Path
         import sqlite3 as _sq
-        cat_str = _col_catalog_path()
+        cat_str = _col_catalog_path(user)
         if not cat_str: return JSONResponse({'tags': []})
         cat = _Path(cat_str)
         if not cat.exists(): return JSONResponse({'tags': []})
@@ -1842,10 +2644,11 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         return JSONResponse({'tags': [r[0] for r in rows]})
 
     @app.get("/api/catalog-stats/session")
-    async def get_catalog_session_aircraft(date: str = "", airport: str = "", filter_tags: str = ""):
+    async def get_catalog_session_aircraft(date: str = "", airport: str = "", filter_tags: str = "",
+                                            user=Depends(_auth_current_user)):
         from pathlib import Path as _Path
         import sqlite3 as _sq
-        cat_str = _col_catalog_path()
+        cat_str = _col_catalog_path(user)
         if not cat_str or not date or not airport: return JSONResponse({'aircraft': []})
         cat = _Path(cat_str)
         if not cat.exists(): return JSONResponse({'aircraft': []})
@@ -1908,12 +2711,27 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
     @app.post("/api/aircraft-types/refresh")
     async def refresh_aircraft_types():
         import threading as _thr
-        _thr.Thread(target=lambda: app.state.store.refresh_icao_type_list(force=True), daemon=True).start()
+
+        def _refresh_and_fan_out():
+            # Only app.state.store actually hits GitHub — every other watched
+            # airport's DB starts with zero aircraft_types rows and never gets
+            # its own refresh, so copy the freshly-updated table into each of
+            # them afterward instead of re-fetching the same CSV N times.
+            app.state.store.refresh_icao_type_list(force=True)
+            with app.state.store._connect() as conn:
+                rows = conn.execute("SELECT icao, name, source, manufacturer FROM aircraft_types").fetchall()
+            rows_bulk = [(r["icao"], r["name"], r["source"], r["manufacturer"]) for r in rows]
+            for iata, cfg in app.state.cfgs.items():
+                if cfg.store is app.state.store:
+                    continue
+                cfg.store.upsert_aircraft_types_bulk(rows_bulk)
+
+        _thr.Thread(target=_refresh_and_fan_out, daemon=True).start()
         return JSONResponse({'ok': True, 'message': 'Refresh started in background'})
 
     @app.get("/api/aircraft-types")
-    async def list_aircraft_types():
-        with app.state.store._connect() as conn:
+    async def list_aircraft_types(user=Depends(_auth_current_user)):
+        with _cfg_for_user(user).store._connect() as conn:
             rows = conn.execute(
                 "SELECT icao, name FROM aircraft_types WHERE source='user' ORDER BY icao"
             ).fetchall()
@@ -1923,11 +2741,13 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
     _SEARCH_PLUGIN = 'ch.aviationphoto.aircraftmetadata'
     _SEARCH_SKIP_KW = {'Featured', 'SPTA', 'AircraftMetadata-RegNotFound', 'AircraftMetadata-WrongReg', 'Cleaned'}
 
-    def _search_catalog_path():
-        catalog = (cfg.catalog if cfg else None) or getattr(app.state, 'catalog', None)
-        if catalog and hasattr(catalog, '_path'):
-            return catalog._path
-        return None
+    def _search_catalog_path(user=None):
+        """NOTE: this previously referenced a bare `cfg` name that no longer
+        exists in this scope (a leftover from before create_app's cfg param
+        was renamed to cfgs for multi-airport support) — every call site was
+        silently raising NameError since that refactor. Fixed alongside the
+        per-user catalog rework."""
+        return _resolve_catalog_path(user)
 
     def _search_mfr(type_str: str) -> str:
         from monitor import _derive_manufacturer
@@ -1953,8 +2773,8 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
     ]
 
     @app.get("/api/collection/livery-stats")
-    async def collection_livery_stats():
-        cat_path = _search_catalog_path()
+    async def collection_livery_stats(user=Depends(_auth_current_user)):
+        cat_path = _search_catalog_path(user)
         if not cat_path or not _os.path.exists(cat_path):
             return JSONResponse({'alliances': []})
         PLUGIN = _SEARCH_PLUGIN
@@ -2000,13 +2820,16 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
     @app.get("/api/search/flights")
     async def search_flights(rego: str = "", user=Depends(_auth_current_user)):
         rego = rego.strip().upper()
-        store_ = _cfg_for_user(user).store
+        cfg_ = _cfg_for_user(user)
+        store_ = cfg_.store
+        airport_iata_ = cfg_.airport_iata if cfg_ else ""
         pat = f'%{rego}%' if rego else '%'
         with store_._connect() as conn:
             rows = conn.execute("""
                 SELECT fe.registration, fe.flight_number, fe.arrival_ts,
                        fe.origin_iata, fe.origin_name, fe.current_status, fe.detail,
                        fe.extra_info, fe.notif_types, fe.airline_icao,
+                       fe.aircraft_type, fe.rare_absence_days,
                        fd.dep_flight, fd.dep_ts, fd.dep_dest_iata, fd.dep_dest_name,
                        a.manufacturer, sh.last_seen_ts,
                        ac.country_code AS origin_country_code
@@ -2016,10 +2839,12 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                 LEFT JOIN rego_sightings sh ON sh.registration = fe.registration
                 LEFT JOIN airports ac ON ac.iata = fe.origin_iata
                 WHERE UPPER(TRIM(fe.registration)) LIKE ?
+                  AND fe.registration NOT IN (SELECT registration FROM filter_exclusions WHERE owner_user_id = ?)
                 ORDER BY fe.arrival_ts DESC
-            """, (pat,)).fetchall()
-
-            matched_regs = {row["registration"].upper() for row in rows}
+            """, (pat, _owner_id(user))).fetchall()
+            _livery_excl = _viewer_livery_exclude_keywords(conn, user)
+            _rare_min_days = _viewer_rare_plane_min_days(conn, user)
+            _watchlist_sets = _viewer_watchlist_sets(store_, user)
 
             # Regos seen at airport but never filter-matched
             sighting_rows = conn.execute("""
@@ -2035,6 +2860,14 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                 nt = _json.loads(row["notif_types"] or "[]")
             except Exception:
                 nt = []
+            nt = _strip_excluded_livery_tag(nt, row["extra_info"], _livery_excl)
+            nt = _resolve_rare_plane_tag(nt, row["rare_absence_days"], _rare_min_days)
+            nt = _strip_unowned_watchlist_tags(
+                nt, row["registration"], row["aircraft_type"], row["airline_icao"], _watchlist_sets)
+            # No remaining reason for this viewer to care about this flight —
+            # same "drop it, don't just de-badge it" rule as /api/feed.
+            if not nt:
+                continue
             results.append({
                 'registration':  row["registration"],
                 'flight_number': row["flight_number"] or '',
@@ -2054,6 +2887,12 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                 'origin_country_code': row["origin_country_code"] or '',
                 'airline_icao':        row["airline_icao"] or '',
             })
+
+        # Built from the POST-filter results, not the raw rows — a registration
+        # whose only match got dropped above (nothing left after this viewer's
+        # own exclude keywords/thresholds) should fall through to sighting_only
+        # instead of vanishing from search results entirely.
+        matched_regs = {r['registration'].upper() for r in results}
 
         sighting_only = [
             {
@@ -2256,8 +3095,8 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         return [{'iata': a, 'full_name': rows.get(a, a)} for a in iatas]
 
     @app.get("/api/search/autocomplete")
-    async def search_autocomplete():
-        cat_path = _search_catalog_path()
+    async def search_autocomplete(user=Depends(_auth_current_user)):
+        cat_path = _search_catalog_path(user)
         if not cat_path or not _os.path.exists(cat_path):
             return JSONResponse({'registrations': [], 'types': [], 'airlines': [], 'airports': [], 'keywords': []})
         PLUGIN = _SEARCH_PLUGIN
@@ -2350,6 +3189,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         manufacturer: _List[str] = _Query(default=[]),
         airport:      _List[str] = _Query(default=[]),
         keyword:      _List[str] = _Query(default=[]),
+        user=Depends(_auth_current_user),
     ):
         types         = [v for v in type         if v.strip()]
         airlines      = [v for v in airline      if v.strip()]
@@ -2360,7 +3200,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         if not any([rego, types, airlines, manufacturers, airports, keywords]):
             return JSONResponse({'results': [], 'total': 0})
 
-        cat_path = _search_catalog_path()
+        cat_path = _search_catalog_path(user)
         if not cat_path or not _os.path.exists(cat_path):
             return JSONResponse({'results': [], 'total': 0, 'error': 'No catalog'})
 
@@ -2470,12 +3310,12 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
 
     _FLEET_REFRESH_SECS = 7 * 86400  # 1 week
 
-    def _fleet_fetch_fr24(icao: str) -> list:
+    def _fleet_fetch_fr24(owner_user_id: str, icao: str) -> list:
         """Fetch current aircraft list for an airline from FR24. Returns list of aircraft dicts."""
         import re as _re, requests as _req
         from bs4 import BeautifulSoup as _BS
         from monitor import _derive_manufacturer as _dmfr
-        cards = app.state.store.get_fleet_cards()
+        cards = app.state.control_store.get_fleet_cards(owner_user_id)
         card = next((c for c in cards if c['icao'] == icao.upper()), None)
         if not card:
             return []
@@ -2503,32 +3343,32 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                 current_type = s
         return aircraft
 
-    def _fleet_refresh_fr24_bg(icao: str) -> None:
+    def _fleet_refresh_fr24_bg(owner_user_id: str, icao: str) -> None:
         """Background task: re-fetch FR24 fleet and update DB, then refresh photo counts."""
         import time as _time
         try:
-            aircraft = _fleet_fetch_fr24(icao)
+            aircraft = _fleet_fetch_fr24(owner_user_id, icao)
             if not aircraft:
                 return
-            _fleet_refresh_photos_bg([icao], aircraft_override={icao: aircraft})
-            cards = app.state.store.get_fleet_cards()
+            _fleet_refresh_photos_bg(owner_user_id, [icao], aircraft_override={icao: aircraft})
+            cards = app.state.control_store.get_fleet_cards(owner_user_id)
             card = next((c for c in cards if c['icao'] == icao), None)
             if card:
-                app.state.store.upsert_fleet_card(icao, card['iata'], card['airline'], aircraft,
-                                                  updated_at=int(_time.time()))
+                app.state.control_store.upsert_fleet_card(owner_user_id, icao, card['iata'], card['airline'],
+                                                           aircraft, updated_at=int(_time.time()))
             log.info("Fleet card %s refreshed from FR24 (%d aircraft)", icao, len(aircraft))
         except Exception as e:
             log.warning("Fleet FR24 refresh failed for %s: %s", icao, e)
 
-    def _fleet_refresh_photos_bg(icao_list: list, aircraft_override: dict = None) -> None:
+    def _fleet_refresh_photos_bg(owner_user_id: str, icao_list: list, aircraft_override: dict = None) -> None:
         """Background task: update photo counts for fleet cards from LR catalog."""
-        cat_path = _search_catalog_path()
+        cat_path = _catalog_path_for_owner(owner_user_id)
         if not cat_path or not _os.path.exists(cat_path):
             return
         try:
             import sqlite3 as _sq
             for icao in icao_list:
-                cards = app.state.store.get_fleet_cards()
+                cards = app.state.control_store.get_fleet_cards(owner_user_id)
                 card = next((c for c in cards if c['icao'] == icao), None)
                 if not card:
                     continue
@@ -2597,22 +3437,24 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                         last_ap_iata=(ls2 or {}).get('airport', '') or '',
                         last_airport=_short2(ap2.get('name', (ls2 or {}).get('airport', '') or '')) if ls2 else '',
                         last_ap_cc=ap2.get('cc', '') if ls2 else ''))
-                app.state.store.update_fleet_card_photos(icao, updated)
+                app.state.control_store.update_fleet_card_photos(owner_user_id, icao, updated)
         except Exception as e:
             log.warning("Fleet photo refresh failed: %s", e)
 
     @app.get("/api/fleet-cards")
-    async def get_fleet_cards(background_tasks: BackgroundTasks):
+    async def get_fleet_cards(background_tasks: BackgroundTasks,
+                               user=Depends(_auth_require_role("controller", "pilot"))):
         import time as _time
-        cards = app.state.store.get_fleet_cards()
+        owner = _owner_id(user)
+        cards = app.state.control_store.get_fleet_cards(owner)
         now = int(_time.time())
         for card in cards:
             if now - (card.get('updated_at') or 0) > _FLEET_REFRESH_SECS:
-                background_tasks.add_task(_fleet_refresh_fr24_bg, card['icao'])
+                background_tasks.add_task(_fleet_refresh_fr24_bg, owner, card['icao'])
         return JSONResponse(cards)
 
     @app.post("/api/fleet-cards")
-    async def save_fleet_card(request: Request):
+    async def save_fleet_card(request: Request, user=Depends(_auth_require_role("controller", "pilot"))):
         import time as _time
         body = await request.json()
         icao    = (body.get('icao') or '').strip().upper()
@@ -2621,12 +3463,13 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         aircraft = body.get('aircraft') or []
         if not icao:
             raise HTTPException(400, "icao required")
-        app.state.store.upsert_fleet_card(icao, iata, airline, aircraft, updated_at=int(_time.time()))
+        app.state.control_store.upsert_fleet_card(_owner_id(user), icao, iata, airline, aircraft,
+                                                   updated_at=int(_time.time()))
         return JSONResponse({'ok': True})
 
     @app.delete("/api/fleet-cards/{icao}")
-    async def delete_fleet_card(icao: str):
-        app.state.store.delete_fleet_card(icao)
+    async def delete_fleet_card(icao: str, user=Depends(_auth_require_role("controller", "pilot"))):
+        app.state.control_store.delete_fleet_card(_owner_id(user), icao)
         return JSONResponse({'ok': True})
 
     @app.get("/api/reg-prefix-cc")
@@ -2668,15 +3511,17 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
             return JSONResponse({'prefix': prefix, 'cc': '', 'name': ''})
 
     @app.post("/api/fleet-cards/refresh-photos")
-    async def refresh_fleet_photos(background_tasks: BackgroundTasks):
-        """Triggered after a catalog refresh to update photo counts for all fleet cards."""
-        cards = app.state.store.get_fleet_cards()
+    async def refresh_fleet_photos(background_tasks: BackgroundTasks,
+                                    user=Depends(_auth_require_role("controller", "pilot"))):
+        """Triggered after a catalog refresh to update photo counts for this viewer's own fleet cards."""
+        owner = _owner_id(user)
+        cards = app.state.control_store.get_fleet_cards(owner)
         if cards:
-            background_tasks.add_task(_fleet_refresh_photos_bg, [c['icao'] for c in cards])
+            background_tasks.add_task(_fleet_refresh_photos_bg, owner, [c['icao'] for c in cards])
         return JSONResponse({'ok': True})
 
     @app.get("/api/fleet-coverage")
-    async def fleet_coverage(code: str = ""):
+    async def fleet_coverage(code: str = "", user=Depends(_auth_current_user)):
         """
         Given an IATA (2-char) or ICAO (3-char) airline code, fetch the airline's
         current fleet from FR24 and cross-reference with the LR catalog to show
@@ -2762,7 +3607,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         fleet_regos = [a['registration'] for a in fr24_fleet]
         photo_counts = {}
         last_session = {}   # rego → {date, airport_iata}
-        cat_path = _search_catalog_path()
+        cat_path = _search_catalog_path(user)
         if cat_path and _os.path.exists(cat_path):
             try:
                 import sqlite3 as _sq
@@ -2851,26 +3696,61 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         })
 
     @app.post("/api/aircraft-types")
-    async def add_aircraft_type(request: Request):
+    async def add_aircraft_type(request: Request, user=Depends(_auth_require_role("controller"))):
         body = await request.json()
         icao = (body.get('icao') or '').strip().upper()
         name = (body.get('name') or '').strip()
         if not icao or not name:
             raise HTTPException(400, "icao and name required")
-        app.state.store.upsert_aircraft_type(icao, name, source='user')
+        # Global across all airports — Controller sets it once, it applies
+        # everywhere (fan out to every watched airport's DB).
+        for cfg in app.state.cfgs.values():
+            cfg.store.upsert_aircraft_type(icao, name, source='user')
         return JSONResponse({'ok': True})
 
     @app.delete("/api/aircraft-types/{icao}")
-    async def delete_aircraft_type(icao: str):
+    async def delete_aircraft_type(icao: str, user=Depends(_auth_require_role("controller"))):
         icao = icao.strip().upper()
-        with app.state.store._connect() as conn:
-            conn.execute("DELETE FROM aircraft_types WHERE icao=? AND source='user'", (icao,))
+        for cfg in app.state.cfgs.values():
+            with cfg.store._connect() as conn:
+                conn.execute("DELETE FROM aircraft_types WHERE icao=? AND source='user'", (icao,))
         return JSONResponse({'ok': True})
 
     def _logostream_api_key():
         with app.state.store._connect() as _conn:
             row = _conn.execute("SELECT value FROM settings WHERE key='LOGOSTREAM_API_KEY'").fetchone()
         return row[0] if row else ""
+
+    def _baidu_translate_creds():
+        with app.state.store._connect() as _conn:
+            rows = _conn.execute(
+                "SELECT key, value FROM settings WHERE key IN "
+                "('BAIDU_TRANSLATE_APP_ID','BAIDU_TRANSLATE_SECRET_KEY')"
+            ).fetchall()
+        vals = {k: v for k, v in rows}
+        return vals.get("BAIDU_TRANSLATE_APP_ID", ""), vals.get("BAIDU_TRANSLATE_SECRET_KEY", "")
+
+    from functools import lru_cache as _lru_cache
+
+    @_lru_cache(maxsize=256)
+    def _country_code_for_name(name: str) -> str:
+        """ISO-3166 alpha-2 code for a country NAME, via the pycountry library's
+        own bundled database (not a hardcoded table) — exact lookup first, then
+        pycountry's fuzzy search for less exact matches. Cached since the set of
+        distinct military-operator country names seen in practice is small."""
+        try:
+            import pycountry
+        except ImportError:
+            return ""
+        try:
+            return pycountry.countries.lookup(name).alpha_2
+        except LookupError:
+            pass
+        try:
+            results = pycountry.countries.search_fuzzy(name)
+            return results[0].alpha_2 if results else ""
+        except LookupError:
+            return ""
 
     def _airforce_roundel_filenames():
         """List of available roundel filenames in the World-Airforce-Insignia CDN repo,
@@ -2956,7 +3836,10 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         # Reject placeholder SVGs (logostream returns ~266b text-based fallbacks)
         if is_svg and len(r.content) < 1000:
             raise HTTPException(404, "Placeholder SVG excluded")
-        # For PNGs: reject if logo has almost no colorful content (all-white tails)
+        # For PNGs: reject if logo has almost no visible content (all-white tails).
+        # A logo counts as visible content if it has either colorful (saturated)
+        # pixels or dark pixels — monochrome black-on-white logos (e.g. Air New
+        # Zealand's koru) have 0% saturated pixels but are clearly not blank.
         if is_png:
             try:
                 from PIL import Image as _Img
@@ -2966,7 +3849,8 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                 visible = [(rr, gg, bb) for rr, gg, bb, aa in pixels if aa > 30]
                 if visible:
                     colorful = sum(1 for rr, gg, bb in visible if max(rr, gg, bb) - min(rr, gg, bb) > 40)
-                    if colorful / len(visible) < 0.03:
+                    dark = sum(1 for rr, gg, bb in visible if max(rr, gg, bb) < 200)
+                    if colorful / len(visible) < 0.03 and dark / len(visible) < 0.03:
                         raise HTTPException(404, "Effectively white logo excluded")
             except HTTPException:
                 raise
@@ -2996,6 +3880,21 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         from fastapi.responses import FileResponse
         return FileResponse(str(cache_path), media_type=media,
                             headers={"Cache-Control": "public, max-age=2592000"})
+
+    @app.get("/api/country-code/{name}")
+    async def get_country_code(name: str):
+        """Resolve a country NAME (e.g. from military.py's ICAO-hex-block-derived
+        'country' text, the same authoritative source already used for the
+        airforce roundel) to its ISO-3166 alpha-2 code, via the pycountry
+        library's own bundled database — not a guess from the registration
+        string, which is unreliable for military serial numbers."""
+        name = name.strip()
+        if not name:
+            raise HTTPException(404, "Not found")
+        code = _country_code_for_name(name)
+        if not code:
+            raise HTTPException(404, "Country not found")
+        return JSONResponse({"code": code})
 
     @app.get("/api/airline-logo/{icao}")
     async def get_airline_logo(icao: str):
@@ -3072,30 +3971,169 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         return FileResponse(str(cache_path), media_type=media,
                             headers={"Cache-Control": "public, max-age=2592000"})
 
+    _TRANSLATE_CACHE_PATH = Path(__file__).parent / "static" / "translations" / "names_zh.json"
+    _TRANSLATE_CACHE_LOCK = threading.Lock()
+
+    def _load_translate_cache() -> dict:
+        if not _TRANSLATE_CACHE_PATH.exists():
+            return {}
+        try:
+            return json.loads(_TRANSLATE_CACHE_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+
+    def _save_translate_cache(cache: dict):
+        # Deliberately NOT sort_keys=True — kept in insertion order (order of
+        # first translation) rather than alphabetical, so newest entries land
+        # at the bottom of the file and are easy to find/review after a batch
+        # of new names gets translated. dict preserves insertion order (3.7+),
+        # and _load_translate_cache()'s json.loads preserves the file's order
+        # on read, so existing entries keep their position across restarts.
+        _TRANSLATE_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _TRANSLATE_CACHE_PATH.write_text(
+            json.dumps(cache, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+
+    def _clean_baidu_airline_name(name: str) -> str:
+        """Baidu often appends a redundant '公司' ("company/corporation") suffix
+        to airline names (e.g. '新西兰航空公司') that Chinese-language aviation
+        convention drops (just '新西兰航空') — trim it off if present."""
+        name = (name or "").strip()
+        if name.endswith("公司"):
+            name = name[:-2].strip()
+        return name
+
+    def _baidu_translate_batch(names: list) -> dict:
+        """Translate a batch of English names to Chinese via Baidu, chunked to stay
+        under Baidu's query-length cap. Returns {name: translated} for whatever
+        chunks succeeded; silently omits names from any chunk that failed."""
+        import hashlib, random, requests as _req
+        app_id, secret = _baidu_translate_creds()
+        if not app_id or not secret:
+            return {}
+        result = {}
+        chunk: list = []
+        chunk_bytes = 0
+        chunks = []
+        for name in names:
+            b = len((name + "\n").encode("utf-8"))
+            if chunk and chunk_bytes + b > 5500:
+                chunks.append(chunk)
+                chunk, chunk_bytes = [], 0
+            chunk.append(name)
+            chunk_bytes += b
+        if chunk:
+            chunks.append(chunk)
+        def _call(url: str, q: str, domain: str = None) -> dict:
+            salt = str(random.randint(32768, 65536))
+            # fieldtranslate's sign includes `domain` between salt and secret
+            # (per Baidu's official sample); general translate's sign doesn't
+            # have a domain segment at all — this is the one difference between
+            # the two endpoints' auth, everything else about the request is the same.
+            sign_raw = f"{app_id}{q}{salt}{domain}{secret}" if domain else f"{app_id}{q}{salt}{secret}"
+            sign = hashlib.md5(sign_raw.encode("utf-8")).hexdigest()
+            params = {"q": q, "from": "en", "to": "zh", "appid": app_id, "salt": salt, "sign": sign}
+            if domain:
+                params["domain"] = domain
+            r = _req.get(url, params=params, timeout=10)
+            return r.json()
+
+        for c in chunks:
+            q = "\n".join(c)
+            try:
+                # Field/domain translation (aerospace-tuned terminology) — falls
+                # back to the general endpoint if the account doesn't have field
+                # translation enabled, the domain code is rejected, or any other
+                # error comes back, so a bad/unapproved domain never breaks
+                # translation outright, just loses the domain-specific tuning.
+                data = _call("http://api.fanyi.baidu.com/api/trans/vip/fieldtranslate", q, domain="aerospace")
+                if "trans_result" not in data:
+                    data = _call("http://api.fanyi.baidu.com/api/trans/vip/translate", q)
+                if "trans_result" in data:
+                    for src_name, item in zip(c, data["trans_result"]):
+                        result[src_name] = _clean_baidu_airline_name(item.get("dst", ""))
+                    import system_status as _ss; _ss.record_api('baidu_translate', True)
+                else:
+                    import system_status as _ss
+                    _ss.record_api('baidu_translate', False, str(data.get("error_msg", data)))
+            except Exception as e:
+                import system_status as _ss; _ss.record_api('baidu_translate', False, str(e))
+        return result
+
+    @app.post("/api/translate-names")
+    async def translate_names(request: Request, user=Depends(_auth_current_user)):
+        body = await request.json()
+        names = body.get("names") or []
+        if not isinstance(names, list):
+            raise HTTPException(400, "names must be a list")
+        names = [n.strip() for n in names if isinstance(n, str) and n.strip()]
+        seen = set()
+        deduped = []
+        for n in names:
+            if n not in seen:
+                seen.add(n)
+                deduped.append(n)
+        deduped = deduped[:200]
+        with _TRANSLATE_CACHE_LOCK:
+            cache = _load_translate_cache()
+            # Case-insensitive lookup — the same airline/airport name shows up in
+            # different casing across data sources (FR24 payloads, Lightroom
+            # catalogs, user-entered filters, etc.); without this, "Qantas" and
+            # "QANTAS" would each burn a separate Baidu call and grow the cache
+            # file with duplicate entries. Cache stays stored under whatever
+            # casing first got translated — only the lookup is normalized —
+            # and a hit is returned under the REQUESTED casing so the client's
+            # own cache keys line up with what it asked for.
+            cache_ci = {k.lower(): k for k in cache}
+            def _cache_hit(n: str):
+                if n in cache:
+                    return cache[n]
+                stored_key = cache_ci.get(n.lower())
+                return cache[stored_key] if stored_key is not None else None
+            hits = {}
+            misses = []
+            for n in deduped:
+                v = _cache_hit(n)
+                if v is not None:
+                    hits[n] = v
+                else:
+                    misses.append(n)
+            if not misses:
+                return JSONResponse({"translations": hits})
+            new_map = _baidu_translate_batch(misses)
+            if new_map:
+                cache.update(new_map)
+                _save_translate_cache(cache)
+        return JSONResponse({"translations": {**hits, **new_map}})
+
     @app.get("/api/airports")
-    async def list_airports():
-        with app.state.store._connect() as conn:
+    async def list_airports(user=Depends(_auth_current_user)):
+        with _cfg_for_user(user).store._connect() as conn:
             rows = conn.execute(
                 "SELECT iata, name, country_code, source FROM airports WHERE source='user' ORDER BY iata"
             ).fetchall()
         return JSONResponse([{'iata': r[0], 'name': r[1], 'country_code': r[2]} for r in rows])
 
     @app.post("/api/airports")
-    async def add_airport(request: Request):
+    async def add_airport(request: Request, user=Depends(_auth_require_role("controller"))):
         body = await request.json()
         iata = (body.get('iata') or '').strip().upper()
         name = (body.get('name') or '').strip()
         cc   = (body.get('country_code') or '').strip().upper()
         if not iata or not name:
             raise HTTPException(400, "iata and name required")
-        app.state.store.upsert_airport(iata, name, cc, source='user')
+        # Global across all airports — Controller sets it once, it applies
+        # everywhere (fan out to every watched airport's DB).
+        for cfg in app.state.cfgs.values():
+            cfg.store.upsert_airport(iata, name, cc, source='user')
         return JSONResponse({'ok': True})
 
     @app.delete("/api/airports/{iata}")
-    async def delete_airport(iata: str):
+    async def delete_airport(iata: str, user=Depends(_auth_require_role("controller"))):
         iata = iata.strip().upper()
-        with app.state.store._connect() as conn:
-            conn.execute("DELETE FROM airports WHERE iata=? AND source='user'", (iata,))
+        for cfg in app.state.cfgs.values():
+            with cfg.store._connect() as conn:
+                conn.execute("DELETE FROM airports WHERE iata=? AND source='user'", (iata,))
         return JSONResponse({'ok': True})
 
     @app.get("/api/status")
@@ -3154,26 +4192,35 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
     @app.get("/api/system-tasks")
     async def get_system_tasks(user=Depends(_auth_current_user)):
         import system_status as _ss, time as _time
-        # NOTE: system_status itself is a process-wide singleton (not per-airport
-        # yet) — task health below always reflects whichever airport's store it was
-        # initialized with in main.py, not necessarily the one currently selected.
         cfg_  = _cfg_for_user(user)
         store_ = cfg_.store if cfg_ else app.state.store
         now   = int(_time.time())
         check_int = getattr(cfg_, 'check_interval', 1800) if cfg_ else 1800
         mil_int   = getattr(cfg_, 'military_check_interval', 900) if cfg_ else 900
+        # Per-airport tasks/APIs are scoped to whichever airport is currently
+        # selected — each watched airport polls FR24/adsb.fi independently
+        # (staggered across the interval, see monitor_runner.py), so their
+        # last-run/next-run state is tracked per airport instead of one shared
+        # global slot that the last-checked airport would silently overwrite.
+        airport_scope = cfg_.airport_iata if cfg_ else None
 
-        def _t(key):
-            return _ss.get_task(key)
-        def _a(key):
-            return _ss.get_api(key)
+        def _t(key, scoped=False):
+            return _ss.get_task(key, scope=airport_scope if scoped else None)
+        def _a(key, scoped=False):
+            return _ss.get_api(key, scope=airport_scope if scoped else None)
 
-        def _entry(d, name, desc, interval=None):
+        def _entry(d, name, desc, interval=None, scoped=False, task_key=None):
             last_ts = d.get('ts')
+            # Prefer the scheduler's own announced next-run time (accounts for
+            # startup staggering and rapid-tracking's shortened military
+            # interval) — falls back to last_ts + interval for tasks that don't
+            # explicitly announce one.
+            next_ts = _ss.get_next_run(task_key, scope=airport_scope) if (scoped and task_key) else None
+            if next_ts is None:
+                next_ts = last_ts + interval if (last_ts and interval) else None
             return {
                 'name': name, 'desc': desc, 'interval': interval,
-                'last_ts': last_ts,
-                'next_ts': last_ts + interval if (last_ts and interval) else None,
+                'last_ts': last_ts, 'next_ts': next_ts,
                 'ok': d.get('ok'), 'error': d.get('error'),
             }
 
@@ -3187,8 +4234,8 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                 pass
 
         tasks = [
-            _entry(_t('arrivals_check'),    'Airport Scan',       'FR24 airport feed → filter matching → store flights + clusters', check_int),
-            _entry(_t('military_check'),    'Military Scan',      'adsb.fi query for military traffic near airport', mil_int),
+            _entry(_t('arrivals_check', scoped=True), 'Airport Scan',  'FR24 airport feed → filter matching → store flights + clusters', check_int, scoped=True, task_key='arrivals_check'),
+            _entry(_t('military_check', scoped=True), 'Military Scan', 'adsb.fi query for military traffic near airport', mil_int, scoped=True, task_key='military_check'),
             _entry(_t('feed_cleanup'),      'Flight Cleanup',     'Prune flight records older than 30 days', check_int),
             _entry(_t('collection_stats'),  'Collection Stats',   'Lightroom catalog stats cache refresh', check_int),
             _entry(_t('db_backup'),         'DB Backup',          'SQLite database backup to disk', 86400),
@@ -3198,9 +4245,9 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
              'ok': True if icao_ts else None},
         ]
         apis = [
-            _entry(_a('fr24_airport'),      'FR24 Airport Feed',  'Arrivals/departures board (positive + negative pages)', check_int),
-            _entry(_a('open_meteo'),        'Open-Meteo',         'Weather + sunrise/sunset for timeline clusters', check_int),
-            _entry(_a('adsb_fi'),           'adsb.fi Military',   'Military aircraft positions near airport', mil_int),
+            _entry(_a('fr24_airport', scoped=True), 'FR24 Airport Feed', 'Arrivals/departures board (positive + negative pages)', check_int),
+            _entry(_a('open_meteo', scoped=True),   'Open-Meteo',        'Weather + sunrise/sunset for timeline clusters', check_int),
+            _entry(_a('adsb_fi', scoped=True),      'adsb.fi Military',  'Military aircraft positions near airport', mil_int),
             {**_entry(_a('icaolist_github'), 'ICAOList (GitHub)', 'Aircraft type database (90-day refresh)', 90 * 86400),
              'last_ts': icao_ts, 'next_ts': icao_ts + 90 * 86400 if icao_ts else None,
              'ok': True if icao_ts else None},
@@ -3226,9 +4273,17 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                 own = conn.execute(
                     "SELECT key, value FROM settings WHERE user_id = ?", (user.user_id,)
                 ).fetchall()
-                for r in own:
-                    if r["key"] in PILOT_EDITABLE_SETTINGS:
-                        result[r["key"]] = r["value"]
+                own_by_key = {r["key"]: r["value"] for r in own}
+                for k, v in own_by_key.items():
+                    if k in PILOT_EDITABLE_SETTINGS:
+                        result[k] = v
+        # Passengers are read-only and must never see the raw API credential,
+        # even though every other Controller-only key is fine to display
+        # (read-only) for them.
+        if user.role == "passenger":
+            result.pop("LOGOSTREAM_API_KEY", None)
+            result.pop("BAIDU_TRANSLATE_APP_ID", None)
+            result.pop("BAIDU_TRANSLATE_SECRET_KEY", None)
         return JSONResponse(result)
 
     @app.put("/api/settings")
@@ -3243,24 +4298,34 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         store = _cfg_for_user(user).store
         owner = _owner_for(user)
         for key, value in body.items():
-            store.set_setting(owner, str(key), str(value))
+            # GLOBAL_INFRA_SETTINGS (Controller-only) and PER_USER_GLOBAL_SETTINGS
+            # (this user's own value) must read identically no matter which
+            # airport is selected, so the write fans out to every watched
+            # airport's DB instead of just the currently selected one.
+            if key in GLOBAL_INFRA_SETTINGS or key in PER_USER_GLOBAL_SETTINGS:
+                for cfg in app.state.cfgs.values():
+                    cfg.store.set_setting(owner, str(key), str(value))
+            else:
+                store.set_setting(owner, str(key), str(value))
         return JSONResponse({"ok": True})
 
     @app.get("/api/filters")
     async def get_filters(user=Depends(_auth_current_user)):
         store = _cfg_for_user(user).store
-        # Passengers have no filter list of their own — they see the Controller's
-        # (read-only, per "inherit the Controller's settings"). A Pilot's list is
-        # fully independent, never merged with the Controller's.
-        owner = "controller" if user.role in ("controller", "passenger") else user.user_id
-        def _fetch_rows(sql, *args):
+        # Passengers always see the Controller's list (read-only, since
+        # _owner_id resolves them to the 'controller' sentinel). A Pilot
+        # always reads their own rows — seeded from the Controller's list
+        # once at setup time (see copy_controller_filters_to_owner), fully
+        # independent afterward.
+        owner = _owner_id(user)
+        def _fetch_rows(sql):
             with store._connect() as conn:
-                return [dict(r) for r in conn.execute(sql, *args).fetchall()]
+                return [dict(r) for r in conn.execute(sql, (owner,)).fetchall()]
         return JSONResponse({
-            "filter_exclusions":  _fetch_rows("SELECT id, registration, description FROM filter_exclusions WHERE owner_user_id = ? ORDER BY id", (owner,)),
-            "filter_regos":  _fetch_rows("SELECT id, registration, description FROM filter_regos WHERE owner_user_id = ? ORDER BY id", (owner,)),
-            "filter_types":  _fetch_rows("SELECT id, airline, aircraft_type FROM filter_types WHERE owner_user_id = ? ORDER BY id", (owner,)),
-            "filter_airlines": _fetch_rows("SELECT id, icao_code, entry_type, name FROM filter_airlines WHERE owner_user_id = ? ORDER BY id", (owner,)),
+            "filter_exclusions":  _fetch_rows("SELECT id, registration, description FROM filter_exclusions WHERE owner_user_id = ? ORDER BY id"),
+            "filter_regos":  _fetch_rows("SELECT id, registration, description FROM filter_regos WHERE owner_user_id = ? ORDER BY id"),
+            "filter_types":  _fetch_rows("SELECT id, airline, aircraft_type FROM filter_types WHERE owner_user_id = ? ORDER BY id"),
+            "filter_airlines": _fetch_rows("SELECT id, icao_code, entry_type, name FROM filter_airlines WHERE owner_user_id = ? ORDER BY id"),
         })
 
     @app.post("/api/filters/exclusion")
@@ -3326,12 +4391,15 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
             )
         return JSONResponse({"ok": True})
 
+    # Universal — every role can subscribe, each under their own push identity
+    # (_push_owner_id, never _owner_id — see that function's docstring for why
+    # a Passenger must never share a row with the Controller's own).
     @app.post("/api/push/subscribe")
-    async def push_subscribe(request: Request):
+    async def push_subscribe(request: Request, user=Depends(_auth_current_user)):
         body = await request.json()
-        store = app.state.store
         keys = body.get("keys", {})
-        store.add_push_subscription(
+        app.state.control_store.add_push_subscription(
+            user_id=_push_owner_id(user),
             endpoint=body["endpoint"],
             p256dh=keys.get("p256dh", ""),
             auth=keys.get("auth", ""),
@@ -3341,24 +4409,73 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         return JSONResponse({"ok": True})
 
     @app.delete("/api/push/unsubscribe")
-    async def push_unsubscribe(request: Request):
+    async def push_unsubscribe(request: Request, user=Depends(_auth_current_user)):
         body = await request.json()
-        store = app.state.store
-        store.remove_push_subscription(body["endpoint"])
+        app.state.control_store.remove_push_subscription(body["endpoint"])
         return JSONResponse({"ok": True})
 
     @app.get("/api/push/vapid-public-key")
-    async def vapid_public_key():
-        key = os.environ.get("VAPID_PUBLIC_KEY") or ""
-        if not key:
+    async def vapid_public_key(user=Depends(_auth_current_user)):
+        from push import get_vapid_keys
+        _, pub = get_vapid_keys()
+        return JSONResponse({"key": pub})
+
+    # Kept as a plain literal list (not imported from monitor.py) — same 5
+    # notif_types monitor.py's _FILTERS/_PUSH_TITLE_LABELS produce, duplicated
+    # here to avoid a web.py -> monitor.py import for something this small and
+    # stable (these exact strings already appear as literals throughout both
+    # files with no single shared constant).
+    _PUSH_NOTIF_TYPES = [
+        "Special Livery", "Watchlist Registration", "Watchlist Aircraft Type",
+        "Watchlist Airline", "Rare Plane/Airline", "Military", "Spotting Reminder",
+    ]
+
+    _SPOTTING_REMINDER_WEATHER_GATES = {"none", "ignore_severe", "sunny_only"}
+
+    @app.get("/api/push/notification-prefs")
+    async def get_push_notification_prefs(user=Depends(_auth_current_user)):
+        disabled = set(app.state.control_store.get_disabled_push_notif_types(_push_owner_id(user)))
+        return JSONResponse({t: (t not in disabled) for t in _PUSH_NOTIF_TYPES})
+
+    @app.post("/api/push/notification-prefs")
+    async def set_push_notification_pref(request: Request, user=Depends(_auth_current_user)):
+        body = await request.json()
+        notif_type = str(body.get("notif_type") or "")
+        if notif_type not in _PUSH_NOTIF_TYPES:
+            raise HTTPException(400, "Unknown notification type")
+        app.state.control_store.set_push_notif_enabled(_push_owner_id(user), notif_type, bool(body.get("enabled")))
+        return JSONResponse({"ok": True})
+
+    @app.get("/api/push/spotting-reminder-prefs")
+    async def get_spotting_reminder_prefs(user=Depends(_auth_current_user)):
+        prefs = app.state.control_store.get_spotting_reminder_prefs(_push_owner_id(user))
+        return JSONResponse(prefs)
+
+    @app.post("/api/push/spotting-reminder-prefs")
+    async def set_spotting_reminder_prefs(request: Request, user=Depends(_auth_current_user)):
+        import re as _re
+        body = await request.json()
+        kwargs = {}
+        if "send_time" in body:
+            send_time = str(body["send_time"] or "")
+            if not _re.match(r"^([01]\d|2[0-3]):[0-5]\d$", send_time):
+                raise HTTPException(400, "send_time must be HH:MM (24-hour)")
+            kwargs["send_time"] = send_time
+        if "weather_gate" in body:
+            weather_gate = str(body["weather_gate"] or "")
+            if weather_gate not in _SPOTTING_REMINDER_WEATHER_GATES:
+                raise HTTPException(400, "Unknown weather_gate")
+            kwargs["weather_gate"] = weather_gate
+        if "min_aircraft" in body:
             try:
-                from environs import Env
-                _env = Env()
-                _env.read_env("config/config.env")
-                key = _env.str("VAPID_PUBLIC_KEY", default="")
-            except Exception:
-                pass
-        return JSONResponse({"key": key})
+                min_aircraft = int(body["min_aircraft"])
+            except (TypeError, ValueError):
+                raise HTTPException(400, "min_aircraft must be an integer")
+            if min_aircraft < 2:
+                raise HTTPException(400, "min_aircraft must be at least 2")
+            kwargs["min_aircraft"] = min_aircraft
+        app.state.control_store.set_spotting_reminder_prefs(_push_owner_id(user), **kwargs)
+        return JSONResponse({"ok": True})
 
     # ── Static file serving ─────────────────────────────────────────────────
     # Mount static files; index.html served at root

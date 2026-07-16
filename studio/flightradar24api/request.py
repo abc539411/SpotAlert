@@ -8,8 +8,9 @@ import json
 
 import os
 import pickle
+import time as _time
 
-from curl_cffi import requests as _cc_requests
+import cloudscraper
 import requests.structures
 
 from .errors import CloudflareError
@@ -17,7 +18,7 @@ from .errors import CloudflareError
 _COOKIE_FILE = os.path.join("data", ".fr24_cookies.pkl")
 _cookie_file_mtime: float = 0.0
 
-def _save_cookies(s: "_cc_requests.Session") -> None:
+def _save_cookies(s: cloudscraper.CloudScraper) -> None:
     try:
         os.makedirs(os.path.dirname(_COOKIE_FILE) or '.', exist_ok=True)
         with open(_COOKIE_FILE, "wb") as f:
@@ -41,17 +42,10 @@ def reload_cookies() -> bool:
     except Exception:
         return False
 
-# curl_cffi ships its own bundled BoringSSL/TLS stack rather than linking the
-# host's system OpenSSL, so its "impersonate=chrome" TLS ClientHello fingerprint
-# is identical regardless of which OS/OpenSSL build the process runs on.
-# cloudscraper (previously used here) instead builds its fingerprint on top of
-# Python's own `ssl` module, which links whatever OpenSSL the host ships —
-# this produced a fingerprint Cloudflare accepted from the Steam Deck's
-# OpenSSL 3.4.0 but 403'd from python:3.12-slim's OpenSSL 3.5.6 (same code,
-# same IP, same moment — confirmed by testing both side by side). curl_cffi
-# is already used elsewhere in this codebase (jetphotos.py) for the same
-# reason and is proven reliable in this exact Docker/NAS deployment.
-_scraper = _cc_requests.Session(impersonate="chrome")
+# Create scraper pinned to Chrome/Windows fingerprint, then load persisted cookies
+_scraper = cloudscraper.create_scraper(
+    browser={'browser': 'chrome', 'platform': 'windows', 'mobile': False}
+)
 reload_cookies()
 
 
@@ -80,8 +74,7 @@ class APIRequest:
 
         # Reload cookies from disk if the file has been updated (hot-seed without restart)
         reload_cookies()
-        # Do not pass custom headers — curl_cffi's impersonation profile must own
-        # all headers for the Cloudflare bypass to hold together.
+        # Do not pass custom headers — cloudscraper must own all headers for Cloudflare bypass
         self.__response = request_method(url, cookies=cookies, data=data)
         if self.__response.ok:
             _save_cookies(_scraper)
@@ -110,12 +103,12 @@ class APIRequest:
         return content
 
     def get_cookies(self) -> Dict:
-        return dict(self.__response.cookies)
+        return self.__response.cookies.get_dict()
 
     def get_headers(self) -> requests.structures.CaseInsensitiveDict:
         return self.__response.headers
 
-    def get_response_object(self):
+    def get_response_object(self) -> requests.models.Response:
         return self.__response
 
     def get_status_code(self) -> int:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import math
 from datetime import datetime
@@ -18,6 +19,15 @@ log = logging.getLogger(__name__)
 MILITARY_RAPID_INTERVAL_SECS = 60
 MILITARY_STATIONARY_EXIT_SECS = 600   # 10 min
 MILITARY_MOVING_GS_THRESHOLD = 5      # knots; below this while on the ground counts as stopped
+
+# adsb.fi's /api/v2/mil returns GLOBAL military traffic, not scoped to any one
+# airport — every watched airport just filters the SAME response client-side
+# via _is_on_approach(). So there's exactly ONE fetch per cycle, shared by
+# every airport (see monitor_runner.run_military_shared_loop), rather than
+# each airport independently polling the same endpoint — N independent
+# pollers would just be N uncoordinated calls to one shared endpoint, easily
+# exceeding adsb.fi's ~1 req/sec limit even though each individual airport's
+# own polling rate is well under it.
 
 # ICAO hex address ranges → country name
 # Sorted by lower bound; derived from ICAO Annex 10 allocations.
@@ -99,6 +109,24 @@ def _fetch_military() -> List[dict]:
     return resp.json().get("ac") or []
 
 
+async def fetch_military_with_retry() -> List[dict]:
+    """Called once per cycle by monitor_runner.run_military_shared_loop, not
+    per-airport. On a 429 (rate limited), wait 30s and retry once before
+    giving up — a transient rate-limit shouldn't cost every rapid-tracking
+    airport a full cycle's worth of track updates. Gives up (re-raises)
+    after 2 total attempts."""
+    for attempt in range(2):
+        try:
+            return await asyncio.to_thread(_fetch_military)
+        except requests.HTTPError as exc:
+            if exc.response is not None and exc.response.status_code == 429 and attempt == 0:
+                log.warning("adsb.fi rate limited (429) — retrying once in 30s")
+                await asyncio.sleep(30)
+                continue
+            raise
+    raise AssertionError("unreachable")
+
+
 def _is_on_approach(ac: dict, airport_lat: float, airport_lon: float,
                     radius_nm: int, max_alt_ft: int) -> bool:
     try:
@@ -145,17 +173,14 @@ def _format_notification(ac: dict, airport_iata: str, dist_nm: float) -> str:
     ]))
 
 
-async def check_military(context: ContextTypes.DEFAULT_TYPE) -> None:
+async def check_military(context: ContextTypes.DEFAULT_TYPE, military: List[dict]) -> None:
+    """Processes ONE cfg's (airport's) view of an already-fetched, shared
+    military list — the actual adsb.fi fetch happens once per cycle in
+    monitor_runner.run_military_shared_loop, not here (see that function and
+    fetch_military_with_retry for why: the endpoint is global, not scoped to
+    any one airport)."""
     cfg = context.bot_data["cfg"]
     now_ts = int(datetime.now().timestamp())
-
-    try:
-        military = _fetch_military()
-        import system_status as _ss; _ss.record_api('adsb_fi', True)
-    except Exception as exc:
-        import system_status as _ss; _ss.record_api('adsb_fi', False, str(exc))
-        log.warning("adsb.fi military query failed: %s", exc)
-        return
 
     for ac in military:
         if (ac.get("seen") or 999) > 60:
@@ -189,14 +214,14 @@ async def check_military(context: ContextTypes.DEFAULT_TYPE) -> None:
             existing_frame = cfg.store.get_airframe(registration)
             if not existing_frame or not existing_frame.get("photo_url"):
                 try:
-                    photo_url = jetphotos.fetch_photo_url(registration)
+                    photo_url = await asyncio.to_thread(jetphotos.fetch_photo_url, registration)
                     if photo_url:
                         cfg.store.upsert_airframe_from_fr24(registration, photo_url=photo_url)
                 except Exception as exc:
                     log.debug("JetPhotos photo fetch failed for %s: %s", registration, exc)
 
             visit_flight_number = f"{callsign or registration}#{now_ts}"
-            arrival_id = cfg.store.record_filter_match(
+            arrival_id, _is_new_visit = cfg.store.record_filter_match_ex(
                 registration, visit_flight_number, ["Military"], now_ts, now_ts,
                 detail=detail, extra_info=extra_info,
             )
@@ -209,6 +234,46 @@ async def check_military(context: ContextTypes.DEFAULT_TYPE) -> None:
                 "arrival_id": arrival_id,
             }
             log.info("Military visit started: %s", registration)
+
+            # Push notification — fires once per genuinely new Feed card (this
+            # visit's flight_number is unique, so _is_new_visit is effectively
+            # always True here), NOT on the Telegram cooldown below — every
+            # other push type fires once per new card, not on a renotify timer,
+            # and Military shouldn't be the odd one out. Fans out to every
+            # eligible user (Controller + every Pilot/Passenger granted this
+            # airport — see monitor._iter_push_recipients), each gated on
+            # their own subscription/selected-airport/enabled-types, same as
+            # every other push type. No per-owner content re-filtering is
+            # needed here (unlike monitor.py's filter-match push) — there's no
+            # per-Pilot military watchlist, so every recipient sees the same
+            # detection. Tapping it deep-links to this registration's Feed
+            # card — Military is already a first-class notif_type there.
+            if _is_new_visit and cfg.control_store:
+                from monitor import _iter_push_recipients, _push_recipient_lang
+                import push as _push
+                for _push_owner_id, _role in _iter_push_recipients(cfg):
+                    try:
+                        if cfg.control_store.get_last_airport(_push_owner_id) != cfg.airport_iata:
+                            continue
+                        _disabled = set(cfg.control_store.get_disabled_push_notif_types(_push_owner_id))
+                        if "Military" in _disabled:
+                            continue
+                        _lang = _push_recipient_lang(cfg.control_store, _push_owner_id, _role)
+                        _title = "军机接近中" if _lang == "zh" else "Military Aircraft Approaching"
+                        # Country + bare type code (no dash) reads better than the
+                        # manufacturer/model string here — e.g. "Australia (PC21)"
+                        # instead of "Pilatus Pc-21 (PC-21)".
+                        _type_code = (ac_type or "").replace("-", "")
+                        _mid = f"{country} ({_type_code})" if _type_code else country
+                        _dist_label = f"距{cfg.airport_iata} {dist_nm:.0f}海里" if _lang == "zh" else f"{dist_nm:.0f}nm from {cfg.airport_iata}"
+                        _body = f"{registration} · {_mid} · {_dist_label}"
+                        _push.send_push_to_user(
+                            cfg.control_store, _push_owner_id, title=_title, body=_body,
+                            data={"registration": registration},
+                        )
+                    except Exception as exc:
+                        log.warning("Military push notification failed for %s (owner=%s): %s",
+                                   registration, _push_owner_id, exc)
 
         if not cfg.store.should_notify_military(registration, now_ts, cfg.military_renotify_hours):
             continue

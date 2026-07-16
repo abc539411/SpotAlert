@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="theme-color" content="#111111">
@@ -27,6 +27,21 @@
       --r: 7px;
     }
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    /* Disables WebKit/Blink's automatic text-inflation heuristic, which boosts
+       font-size on mobile based on viewport width/zoom/OS text-size settings to
+       "improve legibility" — the exact reason the same px value can render at
+       different visual sizes across devices (or even the same device at a
+       different OS Text Size / Safari Page Zoom setting). Every font-size in
+       this file is already hand-tuned for mobile at 100%, so the browser's own
+       adjustment only ever fights that; this makes every device render text at
+       the literal px size specified, matching whatever the CSS says regardless
+       of the visiting device's accessibility text-size or zoom settings. Can't
+       do anything about a user manually pinch-zooming or setting Safari's own
+       per-site Page Zoom (viewport-fit=cover's maximum-scale/user-scalable=no
+       above only blocks pinch gestures, not that separate browser setting) —
+       that's an explicit user override no page can block.
+    */
+    html { text-size-adjust: 100%; -webkit-text-size-adjust: 100%; }
     html { background: var(--surface); }
     body {
       background: var(--bg); color: var(--text);
@@ -63,9 +78,10 @@
     .btn-refresh.btn-danger { border-color: var(--danger); color: var(--danger); }
     .btn-refresh.btn-danger:hover { border-color: var(--danger); color: var(--danger); }
     .btn-refresh.btn-danger-armed { background: var(--danger); color: #fff; border-color: var(--danger); }
+    .btn-refresh.hidden { display: none; }
 
     /* ── Nav — desktop: top tabs ─────────────────────────────────────────── */
-    .nav-tabs { display: flex; align-items: stretch; gap: 0; overflow-x: auto; }
+    .nav-tabs { display: flex; align-items: stretch; gap: 0; overflow-x: auto; flex-shrink: 0; }
     .nav-tabs::-webkit-scrollbar { display: none; }
     .nav-tab {
       background: none; border: none; border-bottom: 2px solid transparent;
@@ -86,6 +102,14 @@
       .nav-tab[data-tab="collection"]     { order: 3; }
       .nav-tab[data-tab="search"]         { order: 4; }
       .nav-tab[data-tab="settings"]       { order: 5; }
+    }
+
+    /* iOS Safari auto-zooms the whole page on focus for any text input/select/textarea
+       with a computed font-size under 16px — this is independent of the viewport meta
+       tag's user-scalable=no/maximum-scale, which only blocks manual pinch-zoom. Force
+       every form field to 16px on mobile (desktop sizing elsewhere is untouched). */
+    @media (max-width: 767px) {
+      input, select, textarea { font-size: 16px !important; }
     }
 
     /* ── Nav — mobile: fixed bottom bar ──────────────────────────────────── */
@@ -279,10 +303,43 @@
         border-radius: var(--r); max-width: 480px; width: 90%;
       }
     }
-    /* Auth gate: login + airport-picker, above everything (detail-modal is z-index 200) */
+    /* Auth gate: login + airport-picker, above everything (detail-modal is z-index 200).
+       overflow-y:auto is a safety net for a Controller with several watched airports
+       (or the add-airport/reorder controls open), whose .auth-card can occasionally
+       be taller than a very short mobile viewport — without it, content could be
+       clipped with no way to reach it. align-items:center centers the card vertically.
+
+       height is set explicitly (not left to inset:0's top:0/bottom:0 stretch) because
+       mobile Safari's dynamic address bar makes plain inset:0 size the element against
+       the LARGER viewport as if the bar were hidden, even while it's currently showing
+       — align-items:center then centers against that phantom extra height, visually
+       shoving the card up with dead space left below on screen. 100vh is a fallback
+       for browsers without dvh support; -webkit-fill-available and 100dvh (last =
+       highest priority, ignored by browsers that don't understand it) both track the
+       actual visible viewport instead, so later rules only take effect where supported. */
+    /* padding-top/bottom include env(safe-area-inset-*) — viewport-fit=cover (see the
+       <meta name=viewport> tag) opts every fixed/absolute element into extending under
+       the iPhone status bar/notch and home-indicator area by default; without adding
+       the inset back in explicitly here (same pattern already used by `header` and
+       other fixed chrome elsewhere in this file), the card's top edge renders partly
+       BEHIND the status bar — clipped by a fixed amount regardless of card height,
+       affecting even the small login card. */
     .auth-view {
       position: fixed; inset: 0; z-index: 500; background: var(--bg, #111);
-      display: flex; align-items: center; justify-content: center; padding: 20px;
+      display: flex; align-items: center; justify-content: center;
+      padding: calc(20px + env(safe-area-inset-top)) 20px calc(20px + env(safe-area-inset-bottom));
+      overflow-y: auto;
+      height: 100vh;
+      height: -webkit-fill-available;
+      height: 100dvh;
+    }
+    /* Mobile: the picker card (below) is deliberately forced to near-full height, so
+       align-items:center's usual "clips overflow equally from top AND bottom, with the
+       top half unreachable even via overflow-y:auto" gotcha would now trigger on
+       essentially every load instead of rarely. flex-start avoids that entirely — with
+       the card already filling the screen there's no meaningful centering left to lose. */
+    @media (max-width: 767px) {
+      .auth-view { align-items: flex-start; }
     }
     /* This codebase has no generic bare ".hidden{display:none}" utility class — every
        other component pairs it with its own class (.page.hidden, .detail-modal.hidden,
@@ -299,8 +356,25 @@
       width: 100%; max-width: 320px; background: var(--surface2); border: 1px solid var(--border);
       border-radius: var(--r); padding: 24px 20px; display: flex; flex-direction: column; gap: 10px;
     }
-    .auth-card-wide { max-width: 420px; }
-    .auth-logo { font-size: 18px; font-weight: 700; text-align: center; margin-bottom: 4px; }
+    .auth-card-wide { max-width: 480px; }
+    /* Mobile: rather than fight mobile Safari's dynamic-address-bar viewport-height
+       quirks to get pixel-perfect vertical centering (unreliable in practice), just
+       make the (taller) airport-picker card fill almost the full screen height,
+       matching .auth-view's own padding (20px + safe-area insets) on all sides — no
+       more dead space to visually mis-center. Scoped to .auth-card-wide (the picker
+       only) — the plain login card is short and centers fine on its own; forcing it
+       to full height too just stretches a small form across the whole screen with a
+       giant empty gap. */
+    @media (max-width: 767px) {
+      .auth-card-wide {
+        min-height: calc(100dvh - 40px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+      }
+    }
+    .auth-logo {
+      font-size: 18px; font-weight: 700; text-align: center; margin-bottom: 4px;
+      display: flex; align-items: center; justify-content: center; gap: 8px;
+    }
+    .auth-logo-img { height: 32px; width: 32px; border-radius: 8px; }
     .auth-title { font-size: 13px; color: var(--dim); text-align: center; margin-bottom: 8px; }
     .auth-input {
       background: var(--surface); border: 1px solid var(--border); color: var(--text);
@@ -315,19 +389,156 @@
       background: rgba(239,68,68,0.12); color: #ef4444; font-size: 12px;
       padding: 8px 10px; border-radius: var(--r);
     }
-    .airport-picker-list { display: flex; flex-direction: column; gap: 8px; }
-    .airport-pick-btn {
-      background: var(--surface); border: 1px solid var(--border); color: var(--text);
-      padding: 12px 14px; border-radius: var(--r); font-size: 14px; text-align: left; cursor: pointer;
+    .airport-picker-list {
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+      gap: 10px; max-height: 500px; overflow-y: auto; overscroll-behavior: contain;
+      scrollbar-width: thin; scrollbar-color: var(--border) transparent; padding-right: 4px;
     }
-    .airport-pick-btn:hover { border-color: var(--accent); }
-    .airport-picker-empty { font-size: 12px; color: var(--dim); text-align: center; }
+    /* Mobile is 2 columns wide (150px min-width doesn't fit 3 in a ~350px card) — cap
+       at exactly 2 rows (4 cards: 160px card height x2 + 10px gap) before scrolling,
+       vs. desktop's roomier 500px (3 columns, ~9 cards before scroll). */
+    @media (max-width: 767px) {
+      .airport-picker-list { max-height: 330px; }
+    }
+    .airport-picker-list::-webkit-scrollbar { width: 4px; }
+    .airport-picker-list::-webkit-scrollbar-track { background: transparent; }
+    .airport-picker-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+    .airport-pick-card {
+      position: relative; background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--r); padding: 18px 10px 14px; cursor: pointer;
+      display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center;
+      height: 160px; justify-content: center; overflow: hidden;
+    }
+    .airport-pick-card:hover { border-color: var(--accent); }
+    .airport-pick-flag { height: 32px; width: auto; border-radius: 4px; }
+    .airport-pick-code-pill {
+      display: inline-block; padding: 5px 16px; border-radius: 20px;
+      font-size: 16px; font-weight: 700; letter-spacing: .02em; white-space: nowrap;
+      max-width: 100%; overflow: hidden; text-overflow: ellipsis;
+    }
+    .airport-pick-name {
+      font-size: 11px; color: var(--dim); line-height: 1.3; width: 100%;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .airport-pick-time {
+      font-size: 12px; color: var(--text); font-variant-numeric: tabular-nums; margin-top: 2px;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%;
+    }
+    .airport-pick-del {
+      position: absolute; top: 6px; right: 6px; width: 20px; height: 20px; border-radius: 50%;
+      background: rgba(239,68,68,0.12); color: #ef4444; border: none; cursor: pointer;
+      font-size: 12px; line-height: 20px; padding: 0; display: flex; align-items: center; justify-content: center;
+    }
+    .airport-pick-del:hover { background: rgba(239,68,68,0.25); }
+    .airport-pick-del.armed { background: #ef4444; color: #fff; }
+    .airport-picker-empty { font-size: 12px; color: var(--dim); text-align: center; grid-column: 1 / -1; }
+    .airport-pick-card.reorder-mode { cursor: grab; border-style: dashed; }
+    .airport-pick-card.reorder-mode:active { cursor: grabbing; }
+    .airport-pick-card.drag-over { border-color: var(--accent); background: var(--surface2); }
+    .airport-pick-card.swap-selected { border-color: var(--accent); background: var(--surface2); box-shadow: 0 0 0 1px var(--accent) inset; }
+    .picker-whoami { display: flex; flex-direction: column; align-items: center; gap: 4px; margin: -8px 0 6px; }
+    .picker-whoami-user { font-size: 12px; color: var(--dim); }
+    .picker-role-pill {
+      font-size: 11px; font-weight: 700; letter-spacing: 0.4px; color: #fff;
+      border: 1.5px solid; border-radius: 999px; padding: 2px 10px;
+    }
+    .picker-role-pill.role-controller { border-color: var(--accent); background: rgba(59,130,246,0.18); }
+    .picker-role-pill.role-pilot { border-color: var(--warn); background: rgba(245,158,11,0.18); }
+    .picker-role-pill.role-passenger { border-color: var(--dim); background: rgba(148,163,184,0.18); }
+    .user-mgmt-row .picker-role-pill { font-size: 9px; padding: 1px 8px; }
+    /* The parent flex row (header's right-side button group) has its own
+       gap:8px, which stacks on top of margin-right below — so margin-right
+       is deliberately 8px less than padding-right to make the two sides of
+       the divider visually equal (padding-right + border vs. margin-right +
+       parent's 8px gap). */
+    .header-whoami { display: flex; align-items: center; gap: 8px; margin-right: 10px; padding-right: 17px; border-right: 1px solid var(--border); min-width: 0; flex-shrink: 1; }
+    .header-whoami-user { font-size: 12px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+    .header-whoami .picker-role-pill { font-size: 9px; padding: 1px 8px; }
+    .header-whoami-airport { display: flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 600; color: var(--text); flex-shrink: 0; white-space: nowrap; }
+    .header-whoami-divider { width: 1px; align-self: stretch; background: var(--border); flex-shrink: 0; margin: 0 9px; }
+    @media (max-width: 767px) {
+      .header-whoami { display: none; }
+    }
+    /* Uploading a Lightroom .lrcat catalog only makes sense from a PC (the file lives
+       on desktop Lightroom's own machine) — hide the upload card on mobile entirely
+       rather than show a file picker that can't realistically be used there. */
+    @media (max-width: 767px) {
+      #my-catalog-block { display: none; }
+    }
+    .role-pill-group { display: flex; gap: 8px; flex-wrap: wrap; }
+    .role-pick-pill {
+      font-size: 11px; font-weight: 700; letter-spacing: 0.4px; color: #fff;
+      border: 1.5px solid; border-radius: 999px; padding: 4px 12px; cursor: pointer;
+      background: transparent; opacity: 0.45; transition: opacity .15s, background .15s;
+    }
+    .role-pick-pill.role-controller { border-color: var(--accent); }
+    .role-pick-pill.role-pilot { border-color: var(--warn); }
+    .role-pick-pill.role-passenger { border-color: var(--dim); }
+    .role-pick-pill.selected { opacity: 1; }
+    .role-pick-pill.role-controller.selected { background: rgba(59,130,246,0.3); }
+    .role-pick-pill.role-pilot.selected { background: rgba(245,158,11,0.3); }
+    .role-pick-pill.role-passenger.selected { background: rgba(148,163,184,0.3); }
+    .role-pick-pill.disabled { opacity: 0.2; cursor: not-allowed; pointer-events: none; }
+    .airport-pill-select { display: flex; flex-wrap: wrap; gap: 6px; }
+    .airport-pick-pill {
+      font-size: 11px; font-weight: 700; color: var(--dim);
+      border: 1.5px solid var(--border); border-radius: 999px; padding: 4px 12px; cursor: pointer;
+      background: transparent; transition: all .15s;
+    }
+    .airport-pick-pill.selected { color: #fff; background: rgba(59,130,246,0.3); border-color: var(--accent); }
+    .airport-pill-note { font-size: 12px; color: var(--dim); }
+    .picker-icon-btns { display: flex; justify-content: center; gap: 10px; margin-top: 10px; }
+    /* Pin the +/reorder/delete icon row (and, via .auth-card's own flex gap, the
+       Change Password/Logout footer right after it) to the bottom of the card
+       instead of floating directly under a short airport list — most noticeable
+       on mobile now that .auth-card-wide is forced to near-full screen height.
+       #picker-panel-airports must grow to fill the leftover space in .auth-card
+       for the icon row's own margin-top:auto to have anything to push against;
+       min-height:0 is the standard fix for a flex child with scrollable content
+       (#airport-picker-list) otherwise refusing to shrink below its content size. */
+    #picker-panel-airports { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+    /* #picker-panel-airports's own display:flex (an ID selector) otherwise beats
+       .auth-view .hidden's display:none (lower-specificity class selector) — without
+       this override, switching to the Manage Users subtab (which toggles .hidden on
+       this element) silently failed to actually hide the Airports panel underneath. */
+    #picker-panel-airports.hidden { display: none; }
+    #picker-icon-btns { margin-top: auto; padding-top: 14px; }
+    .picker-icon-btn {
+      width: 32px; height: 32px; border-radius: 8px; border: 1.5px solid; cursor: pointer;
+      display: flex; align-items: center; justify-content: center; background: transparent; flex-shrink: 0;
+    }
+    .picker-icon-btn svg { width: 14px; height: 14px; }
+    .picker-icon-btn-add { color: var(--accent); border-color: rgba(59,130,246,0.4); }
+    .picker-icon-btn-add:hover { background: rgba(59,130,246,0.12); }
+    .picker-icon-btn-reorder { color: var(--warn); border-color: rgba(245,158,11,0.4); }
+    .picker-icon-btn-reorder:hover { background: rgba(245,158,11,0.12); }
+    .picker-icon-btn-delete { color: var(--danger); border-color: rgba(239,68,68,0.4); }
+    .picker-icon-btn-delete:hover { background: rgba(239,68,68,0.12); }
+    .picker-icon-btn.active { background: currentColor; }
+    .picker-icon-btn.active svg { color: #fff; }
     #add-airport-block { margin-top: 4px; padding-top: 12px; border-top: 1px solid var(--border); }
     .add-airport-row { display: flex; gap: 8px; }
+    #change-password-block { margin-top: -2px; display: flex; flex-direction: column; gap: 8px; }
+    #change-password-block.hidden { display: none; }
+    #add-user-form, #edit-user-form { display: flex; flex-direction: column; gap: 14px; margin: 14px 0 8px; }
+    #add-user-form.hidden, #edit-user-form.hidden { display: none; }
+    .cp-row { display: flex; gap: 8px; }
+    .cp-row .auth-input { flex: 1; min-width: 0; }
+    .auth-hint { font-size: 11px; color: var(--dim); margin-top: -4px; }
+    .cp-submit-btn { align-self: center; width: auto; padding-left: 28px; padding-right: 28px; }
+    .picker-footer-row { display: flex; gap: 8px; }
+    .picker-footer-row .auth-btn { flex: 1; }
     .picker-subtabs { display: flex; gap: 4px; margin-bottom: 12px; background: var(--surface); border-radius: var(--r); padding: 3px; }
     .picker-subtab { flex: 1; background: transparent; border: none; color: var(--dim); font-size: 12px; font-weight: 600; padding: 7px; border-radius: 5px; cursor: pointer; }
     .picker-subtab.active { background: var(--accent); color: #fff; }
-    .user-mgmt-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; max-height: 320px; overflow-y: auto; }
+    .user-mgmt-list {
+      display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px;
+      max-height: 424px; overflow-y: auto; overscroll-behavior: contain;
+      scrollbar-width: thin; scrollbar-color: var(--border) transparent; padding-right: 4px;
+    }
+    .user-mgmt-list::-webkit-scrollbar { width: 4px; }
+    .user-mgmt-list::-webkit-scrollbar-track { background: transparent; }
+    .user-mgmt-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
     .user-mgmt-row { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); padding: 10px 12px; }
     .user-mgmt-row-hdr { display: flex; align-items: center; gap: 8px; }
     .user-mgmt-username { font-weight: 600; font-size: 13px; flex: 1; }
@@ -340,6 +551,7 @@
     }
     .user-mgmt-actions button:hover { color: var(--text); }
     .user-mgmt-actions button.danger:hover { color: #ef4444; border-color: #ef4444; }
+    .user-mgmt-actions button.danger.armed { background: #ef4444; color: #fff; border-color: #ef4444; }
     .user-mgmt-airport-checks { display: flex; flex-wrap: wrap; gap: 8px; font-size: 12px; margin-bottom: 8px; }
     .user-mgmt-airport-checks label { display: flex; align-items: center; gap: 4px; }
     .add-airport-row .auth-input { flex: 1; }
@@ -360,6 +572,19 @@
     .dc .lbl { display: block; font-size: 10px; text-transform: uppercase; letter-spacing: .07em; color: var(--dim); margin-bottom: 3px; }
     .dc .val { font-size: 13px; display: block; }
     .dc-row { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+    /* ── Detail panel quick actions (exclude / add-to-watchlist) ────────────── */
+    .detail-quick-btn {
+      width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center;
+      justify-content: center; border: 1px solid var(--border); background: var(--surface2);
+      cursor: pointer; padding: 0; transition: background-color .12s, border-color .12s;
+    }
+    .detail-quick-btn svg { width: 13px; height: 13px; }
+    .detail-quick-exclude { color: var(--danger); border-color: rgba(239,68,68,0.35); }
+    .detail-quick-exclude:hover { background: rgba(239,68,68,0.14); border-color: var(--danger); }
+    .detail-quick-exclude.detail-quick-armed { background: var(--danger); color: #fff; border-color: var(--danger); }
+    .detail-quick-watchlist { color: var(--accent); border-color: rgba(59,130,246,0.35); }
+    .detail-quick-watchlist:hover { background: rgba(59,130,246,0.14); border-color: var(--accent); }
+    .detail-quick-watchlist.detail-quick-armed { background: var(--accent); color: #fff; border-color: var(--accent); }
     /* ── Route bar ───────────────────────────────────────────────────────── */
     .rb { display: flex; align-items: flex-start; margin: 10px 0 0; padding: 12px 0; border-top: 1px solid var(--border); }
     .flight-bars-scroll { overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
@@ -401,7 +626,6 @@
     .chip-type    { background: rgba(168,85,247,.15);  color: #d8b4fe; }
     .chip-airline { background: rgba(239,68,68,.15);   color: #fca5a5; }
     .chip-military{ background: rgba(239,68,68,.2);    color: #f87171; }
-    .chip-route   { background: rgba(99,102,241,.18);  color: #a5b4fc; }
     .chip-unknown { background: var(--surface2); color: var(--dim); }
 
     /* ── Label style (section headers in cards) ──────────────────────────── */
@@ -469,6 +693,7 @@
     }
     .del-btn:hover { opacity: 1; }
     .add-row { display: flex; gap: 6px; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border); }
+    .add-row.hidden { display: none; }
     .add-row input {
       flex: 1; background: var(--surface2); border: 1px solid var(--border);
       color: var(--text); padding: 6px 8px; border-radius: var(--r); font-size: 13px; min-width: 0;
@@ -497,6 +722,7 @@
       background: var(--surface); border: 1px solid var(--border);
       border-radius: var(--r); padding: 12px;
     }
+    .page-col-block.hidden { display: none; }
     .page-col-block .section-heading {
       margin-top: 0 !important; margin-bottom: 8px;
     }
@@ -650,11 +876,12 @@
          shrinking at all, forcing them to their natural content height. */
       #subtab-info .page-col-block { flex: none; }
       .page-card-title          { order: 1; }
-      .page-card-general        { order: 2; }
-      .page-card-serverstatus   { order: 3; }
-      .page-card-scheduledtasks { order: 4; }
-      .page-card-api            { order: 5; }
-      .page-card-disclaimer     { order: 6; }
+      .page-card-language       { order: 2; }
+      .page-card-general        { order: 3; }
+      .page-card-serverstatus   { order: 4; }
+      .page-card-scheduledtasks { order: 5; }
+      .page-card-api            { order: 6; }
+      .page-card-disclaimer     { order: 7; }
       .page-col-block { padding: 14px; }
       /* Settings subtab nav (General/Spotting/Feed/Filters/...) had no mobile handling at all —
          7 buttons with no wrap/scroll either overflowed or squeezed together. */
@@ -784,6 +1011,18 @@
       background: rgba(0,0,0,0.45); color: rgba(255,255,255,0.7);
       font-size: 9px; font-weight: 700; padding: 2px 5px; border-radius: 4px;
       backdrop-filter: blur(3px); letter-spacing: .03em;
+    }
+
+    /* Mobile Feed scroll stutter: each .sq card carries up to 4 backdrop-filter:
+       blur() badges (.sq-rego, .sq-ts, .sq-card-status, .sq-count), and the Feed
+       list renders many cards at once, unvirtualized. Compositing that many
+       independent blur layers is a well-known mobile Safari/WebKit performance
+       cliff — fine on desktop GPUs, visibly janky on mobile during momentum
+       scroll. The badges' background is already opaque enough (0.45-0.55 alpha)
+       to stay legible without the blur, so just drop it here rather than
+       touching layout/logic. Desktop keeps the blur (unaffected, not the issue). */
+    @media (max-width: 767px) {
+      .sq-rego, .sq-ts, .sq-card-status, .sq-count { backdrop-filter: none; }
     }
 
     /* ── Recommendation timeline ─────────────────────────────────────────── */
@@ -1099,6 +1338,7 @@
       display: flex; align-items: center; gap: 10px; flex-shrink: 0;
     }
     #install-banner.hidden { display: none; }
+    #spotting-reminder-prefs.hidden { display: none; }
     #install-banner .close-banner { margin-left: auto; background: none; border: none; color: var(--dim); font-size: 16px; cursor: pointer; padding: 0; }
 
     /* ── Status pill + live dot on cards ────────────────────────────────── */
@@ -1124,6 +1364,9 @@
     #tab-collection { display: grid; grid-template-rows: auto 1fr; overflow: hidden; padding: 0; gap: 0; }
     .col-subtab-page { overflow: hidden; min-height: 0; display: flex; flex-direction: column; }
     .col-subtab-page.hidden { display: none; }
+    .col-no-catalog { display: flex; align-items: center; justify-content: center; flex: 1; padding: 24px; text-align: center; color: var(--dim); }
+    .col-no-catalog.hidden { display: none; }
+    .col-dashboard.hidden { display: none; }
     /* ── Fleet cards ─────────────────────────────────────────────────────── */
     .flt-wrap { display: flex; flex-direction: row; flex: 1; overflow-x: auto; overflow-y: hidden; padding: 12px; gap: 12px; align-items: center; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
     /* Empty state */
@@ -1442,17 +1685,27 @@
     .srch-input:focus { border-color: var(--accent); }
     .srch-select { flex: 1; min-width: 120px; background: var(--surface2); border: 1px solid var(--border); border-radius: var(--r); padding: 7px 10px; color: var(--text); font-size: 13px; outline: none; cursor: pointer; appearance: none; }
     .srch-select:focus { border-color: var(--accent); }
+    /* Mobile only — desktop keeps live-as-you-type/select search (see app.js's
+       window.innerWidth < 768 gate on _srchRun/_srchFlRun/_srchRtRun/_srchFlFilter),
+       so results only render (and the field-collapse below only kicks in) once this
+       is tapped, not after the first parameter entered. */
+    .srch-search-btn { display: none; }
     @media (max-width: 767px) {
-      /* Once results are shown, collapse filter fields down to just the Clear button */
-      .srch-page.srch-has-results .srch-field-label { display: none; }
+      /* Once results are shown, collapse filter fields (and the Search button
+         itself — nothing left to submit until Clear brings the fields back)
+         down to just the Clear button */
+      .srch-page.srch-has-results .srch-field-label,
+      .srch-page.srch-has-results .srch-search-btn { display: none; }
       /* Each search input/dropdown gets its own full-width row */
       .srch-bar { flex-direction: column; align-items: stretch; }
       .srch-field-label { width: 100%; min-width: 0; }
+      .srch-search-btn { display: block; width: 100%; text-align: center; }
       .srch-clear { width: 100%; text-align: center; }
       .srch-clear.srch-clear-hidden { display: none; }
       /* Dropdown panel matches the width of its input bar */
       .srch-dd-panel { width: 100%; min-width: 0; }
     }
+    .srch-search-btn { padding: 9px 14px; background: var(--accent); border: 1px solid var(--accent); border-radius: var(--r); color: #fff; font-size: 13px; font-weight: 600; cursor: pointer; white-space: nowrap; }
     .srch-clear { padding: 7px 14px; background: var(--surface2); border: 1px solid var(--border); border-radius: var(--r); color: var(--dim); font-size: 12px; cursor: pointer; white-space: nowrap; }
     .srch-clear:hover { color: var(--text); border-color: var(--accent); }
     .srch-status { padding: 8px 14px; font-size: 12px; color: var(--dim); min-height: 32px; border-bottom: 1px solid var(--border); }
@@ -1491,18 +1744,19 @@
 <header>
   <div class="header-logo"><span>✈</span>SpotAlert</div>
   <nav class="nav-tabs" id="nav-tabs">
-    <button class="nav-tab" data-tab="recommendation"><span class="tab-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 21s-7-6.6-7-12a7 7 0 0 1 14 0c0 5.4-7 12-7 12z"/><circle cx="12" cy="9" r="2.4"/></svg></span>Spotting</button>
-    <button class="nav-tab" data-tab="collection"><span class="tab-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 8.5a1.5 1.5 0 0 1 1.5-1.5h2l1-2h7l1 2h2A1.5 1.5 0 0 1 20 8.5v9A1.5 1.5 0 0 1 18.5 19h-13A1.5 1.5 0 0 1 4 17.5z"/><circle cx="12" cy="12.5" r="3.3"/></svg></span>Collection</button>
-    <button class="nav-tab active" data-tab="history"><span class="tab-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 11a8 8 0 0 1 16 0"/><path d="M7.5 11a4.5 4.5 0 0 1 9 0"/><circle cx="12" cy="11" r="1.6" fill="currentColor" stroke="none"/><path d="M12 12.6V21"/><path d="M8.5 21h7"/></svg></span>Feed</button>
-    <button class="nav-tab" data-tab="search"><span class="tab-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.3 15.3 20 20"/></svg></span>Search</button>
-    <button class="nav-tab" data-tab="settings"><span class="tab-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="2.8"/><path d="M12 3.5v2.4M12 18.1v2.4M20.5 12h-2.4M5.9 12H3.5M17.8 6.2l-1.7 1.7M7.9 16.1l-1.7 1.7M17.8 17.8l-1.7-1.7M7.9 7.9 6.2 6.2"/></svg></span>Settings</button>
+    <button class="nav-tab" data-tab="recommendation"><span class="tab-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 21s-7-6.6-7-12a7 7 0 0 1 14 0c0 5.4-7 12-7 12z"/><circle cx="12" cy="9" r="2.4"/></svg></span><span data-i18n="nav.spotting">Spotting</span></button>
+    <button class="nav-tab" data-tab="collection"><span class="tab-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 8.5a1.5 1.5 0 0 1 1.5-1.5h2l1-2h7l1 2h2A1.5 1.5 0 0 1 20 8.5v9A1.5 1.5 0 0 1 18.5 19h-13A1.5 1.5 0 0 1 4 17.5z"/><circle cx="12" cy="12.5" r="3.3"/></svg></span><span data-i18n="nav.collection">Collection</span></button>
+    <button class="nav-tab active" data-tab="history"><span class="tab-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 11a8 8 0 0 1 16 0"/><path d="M7.5 11a4.5 4.5 0 0 1 9 0"/><circle cx="12" cy="11" r="1.6" fill="currentColor" stroke="none"/><path d="M12 12.6V21"/><path d="M8.5 21h7"/></svg></span><span data-i18n="nav.feed">Feed</span></button>
+    <button class="nav-tab" data-tab="search"><span class="tab-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.3 15.3 20 20"/></svg></span><span data-i18n="nav.search">Search</span></button>
+    <button class="nav-tab" data-tab="settings"><span class="tab-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="2.8"/><path d="M12 3.5v2.4M12 18.1v2.4M20.5 12h-2.4M5.9 12H3.5M17.8 6.2l-1.7 1.7M7.9 16.1l-1.7 1.7M17.8 17.8l-1.7-1.7M7.9 7.9 6.2 6.2"/></svg></span><span data-i18n="nav.settings">Settings</span></button>
   </nav>
-  <div style="margin-left:auto;display:flex;align-items:center;gap:8px;flex-shrink:0">
-    <div id="rapid-badge">RAPID</div>
-    <button class="btn-refresh" id="btn-switch-airport" onclick="showAirportPicker()" title="Switch airport">
+  <div style="margin-left:auto;display:flex;align-items:center;gap:8px;min-width:0">
+    <div id="header-whoami" class="header-whoami"></div>
+    <div id="rapid-badge" style="flex-shrink:0">RAPID</div>
+    <button class="btn-refresh" id="btn-switch-airport" onclick="showAirportPicker()" title="Switch airport" style="flex-shrink:0">
       <span>✈</span>
     </button>
-    <button class="btn-refresh" id="btn-refresh" onclick="forceCheck()" title="Force FR24 check now">
+    <button class="btn-refresh" id="btn-refresh" onclick="forceCheck()" title="Force FR24 check now" style="flex-shrink:0">
       <span id="btn-refresh-icon">↻</span><span id="btn-refresh-label" class="btn-refresh-label">Refresh Feed</span>
     </button>
   </div>
@@ -1511,54 +1765,96 @@
 <!-- Auth gate: login + airport-picker overlays, sit above everything else -->
 <div id="view-login" class="auth-view hidden">
   <div class="auth-card">
-    <div class="auth-logo">✈ SpotAlert</div>
-    <div class="auth-title">Sign in</div>
+    <div class="auth-logo"><img src="/static/icons/icon-192.png" alt="" class="auth-logo-img">SpotAlert</div>
+    <div class="auth-title" data-i18n="login.signIn">Sign in</div>
     <div id="login-error" class="auth-error hidden"></div>
-    <input id="login-username" class="auth-input" type="text" placeholder="Username" autocomplete="username">
-    <input id="login-password" class="auth-input" type="password" placeholder="Password" autocomplete="current-password">
-    <button class="auth-btn" onclick="doLogin()">Sign in</button>
+    <input id="login-username" class="auth-input" type="text" placeholder="Username" data-i18n-placeholder="picker.username" autocomplete="username">
+    <input id="login-password" class="auth-input" type="password" placeholder="Password" data-i18n-placeholder="login.password" autocomplete="current-password">
+    <button class="auth-btn" onclick="doLogin()" data-i18n="login.signIn">Sign in</button>
+    <div id="login-version" class="auth-hint" style="text-align:center"></div>
   </div>
 </div>
 
 <div id="view-airport-picker" class="auth-view hidden">
   <div class="auth-card auth-card-wide">
-    <div class="auth-logo">✈ SpotAlert</div>
+    <div class="auth-logo"><img src="/static/icons/icon-192.png" alt="" class="auth-logo-img">SpotAlert</div>
+    <div id="picker-whoami" class="picker-whoami"></div>
     <div id="picker-subtabs" class="picker-subtabs hidden">
-      <button class="picker-subtab active" data-picker-tab="airports" onclick="_pickerSubtab('airports')">Airports</button>
-      <button class="picker-subtab" data-picker-tab="users" onclick="_pickerSubtab('users')">Manage Users</button>
+      <button class="picker-subtab active" data-picker-tab="airports" onclick="_pickerSubtab('airports')" data-i18n="picker.airports">Airports</button>
+      <button class="picker-subtab" data-picker-tab="users" onclick="_pickerSubtab('users')" data-i18n="picker.manageUsers">Manage Users</button>
     </div>
 
     <div id="picker-panel-airports">
-      <div class="auth-title">Choose an airport</div>
+      <div class="auth-title" data-i18n="picker.chooseAirport">Choose an airport</div>
       <div id="airport-picker-list" class="airport-picker-list"></div>
+      <div id="picker-icon-btns" class="picker-icon-btns hidden">
+        <button id="picker-icon-btn-add" class="picker-icon-btn picker-icon-btn-add" title="Add airport" data-i18n-title="picker.addAirport" onclick="_showAddAirportForm()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+        </button>
+        <button id="picker-icon-btn-reorder" class="picker-icon-btn picker-icon-btn-reorder" title="Reorder airports" data-i18n-title="picker.reorderAirports" onclick="_toggleReorderMode()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 7l-3 3 3 3M16 17l3-3-3-3M5 10h6M13 14h6"/></svg>
+        </button>
+        <button id="picker-icon-btn-delete" class="picker-icon-btn picker-icon-btn-delete" title="Show delete buttons" data-i18n-title="picker.showDeleteButtons" onclick="_toggleDeleteMode()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M9 6V4h6v2M6 6l1 14h10l1-14"/></svg>
+        </button>
+      </div>
       <div id="add-airport-block" class="hidden">
         <div class="add-airport-row">
-          <input id="add-airport-code" class="auth-input" type="text" placeholder="Airport code, e.g. MEL" autocomplete="off">
-          <button class="auth-btn" onclick="addAirport()">Add</button>
+          <input id="add-airport-code" class="auth-input" type="text" placeholder="Airport IATA code, e.g. MEL" data-i18n-placeholder="picker.addAirportPlaceholder" autocomplete="off">
+          <button class="auth-btn" onclick="addAirport()" data-i18n="picker.add">Add</button>
         </div>
         <div id="add-airport-error" class="auth-error hidden"></div>
       </div>
     </div>
 
     <div id="picker-panel-users" class="hidden">
-      <div class="auth-title">Manage users</div>
+      <div class="auth-title" data-i18n="picker.manageUsersTitle">Manage users</div>
       <div id="user-mgmt-list" class="user-mgmt-list"></div>
-      <button class="auth-btn auth-btn-secondary" style="margin-bottom:8px" onclick="_showAddUserForm()">+ Add user</button>
+      <div class="picker-icon-btns">
+        <button id="picker-icon-btn-add-user" class="picker-icon-btn picker-icon-btn-add" title="Add user" data-i18n-title="picker.addUser" onclick="_showAddUserForm()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+        </button>
+      </div>
       <div id="add-user-form" class="hidden">
-        <input id="add-user-username" class="auth-input" type="text" placeholder="Username" autocomplete="off" style="margin-bottom:6px">
-        <input id="add-user-password" class="auth-input" type="password" placeholder="Password (min 8 characters)" autocomplete="new-password" style="margin-bottom:6px">
-        <select id="add-user-role" class="auth-input" style="margin-bottom:6px">
-          <option value="pilot">Pilot</option>
-          <option value="passenger">Passenger</option>
-          <option value="controller">Controller</option>
-        </select>
-        <div id="add-user-airports" class="user-mgmt-airport-checks"></div>
+        <input id="add-user-username" class="auth-input" type="text" placeholder="Username" data-i18n-placeholder="picker.username" autocomplete="off">
+        <input id="add-user-password" class="auth-input" type="password" placeholder="Password (min 8 characters)" data-i18n-placeholder="picker.passwordMin8" autocomplete="new-password">
+        <div id="add-user-role-group" class="role-pill-group">
+          <button type="button" class="role-pick-pill role-pilot" data-role="pilot" onclick="_selectRolePill('add-user','pilot')" data-i18n="picker.role.pilot">PILOT</button>
+          <button type="button" class="role-pick-pill role-passenger" data-role="passenger" onclick="_selectRolePill('add-user','passenger')" data-i18n="picker.role.passenger">PASSENGER</button>
+        </div>
+        <input type="hidden" id="add-user-role" value="pilot">
+        <div id="add-user-airports" class="airport-pill-select"></div>
         <div id="add-user-error" class="auth-error hidden"></div>
-        <button class="auth-btn" onclick="createUser()">Create user</button>
+        <button class="auth-btn" onclick="createUser()" data-i18n="picker.createUser">Create user</button>
+      </div>
+      <div id="edit-user-form" class="hidden">
+        <input id="edit-user-username" class="auth-input" type="text" placeholder="Username" data-i18n-placeholder="picker.username" autocomplete="off">
+        <input id="edit-user-password" class="auth-input" type="password" placeholder="New password (leave blank to keep current)" data-i18n-placeholder="picker.newPasswordOptional" autocomplete="new-password">
+        <div id="edit-user-role-group" class="role-pill-group">
+          <button type="button" class="role-pick-pill role-controller" data-role="controller" onclick="_selectRolePill('edit-user','controller')" data-i18n="picker.role.controller">CONTROLLER</button>
+          <button type="button" class="role-pick-pill role-pilot" data-role="pilot" onclick="_selectRolePill('edit-user','pilot')" data-i18n="picker.role.pilot">PILOT</button>
+          <button type="button" class="role-pick-pill role-passenger" data-role="passenger" onclick="_selectRolePill('edit-user','passenger')" data-i18n="picker.role.passenger">PASSENGER</button>
+        </div>
+        <input type="hidden" id="edit-user-role" value="">
+        <div id="edit-user-airports" class="airport-pill-select"></div>
+        <div id="edit-user-error" class="auth-error hidden"></div>
+        <button class="auth-btn" onclick="saveEditUser()" data-i18n="picker.saveChanges">Save changes</button>
       </div>
     </div>
 
-    <button class="auth-btn auth-btn-secondary" onclick="doLogout()">Log out</button>
+    <div id="picker-footer-row" class="picker-footer-row">
+      <button id="change-password-toggle-btn" class="auth-btn auth-btn-secondary" onclick="_showChangePasswordForm()" data-i18n="picker.changePassword">Change Password</button>
+      <button class="auth-btn auth-btn-secondary" onclick="doLogout()" data-i18n="picker.logout">Logout</button>
+    </div>
+    <div id="change-password-block" class="hidden">
+      <div class="cp-row">
+        <input id="cp-new" class="auth-input" type="password" placeholder="New Password" data-i18n-placeholder="picker.newPassword" autocomplete="new-password">
+        <input id="cp-confirm" class="auth-input" type="password" placeholder="Confirm New Password" data-i18n-placeholder="picker.confirmNewPassword" autocomplete="new-password">
+      </div>
+      <div class="auth-hint" data-i18n="picker.min8Chars">Minimum 8 Characters</div>
+      <div id="cp-error" class="auth-error hidden"></div>
+      <button class="auth-btn cp-submit-btn" onclick="changePassword()" data-i18n="picker.updatePassword">Update Password</button>
+    </div>
   </div>
 </div>
 
@@ -1577,19 +1873,20 @@
   <!-- Collection -->
   <div class="page hidden" id="tab-collection">
     <div class="srch-subtab-bar">
-      <button class="srch-subtab active" data-col-subtab="summary" onclick="_colSubtab('summary')">Summary</button>
-      <button class="srch-subtab" data-col-subtab="fleet" onclick="_colSubtab('fleet')">Fleet</button>
+      <button class="srch-subtab active" data-col-subtab="summary" onclick="_colSubtab('summary')" data-i18n="col.summary">Summary</button>
+      <button class="srch-subtab" data-col-subtab="fleet" onclick="_colSubtab('fleet')" data-i18n="col.fleet">Fleet</button>
     </div>
     <!-- Summary subtab -->
     <div class="col-subtab-page" id="col-subtab-summary">
-    <div class="col-dashboard">
+    <div class="col-no-catalog hidden" id="col-no-catalog-msg" data-i18n="col.noCatalog">Upload a catalog under Settings → Recommendation to use this feature.</div>
+    <div class="col-dashboard" id="col-dashboard">
       <div class="col-hero-page">
       <div class="col-hero-row">
-        <div class="col-stat-hero"><div class="col-sh-num" id="col-sh-photos">—</div><div class="col-sh-label">Photos</div></div>
-        <div class="col-stat-hero"><div class="col-sh-num" id="col-sh-aircraft">—</div><div class="col-sh-label">Aircraft</div></div>
-        <div class="col-stat-hero"><div class="col-sh-num" id="col-sh-airlines">—</div><div class="col-sh-label">Airlines</div></div>
-        <div class="col-stat-hero"><div class="col-sh-num" id="col-sh-airports">—</div><div class="col-sh-label">Airports</div></div>
-        <div class="col-stat-hero"><div class="col-sh-num" id="col-sh-sessions">—</div><div class="col-sh-label">Sessions</div></div>
+        <div class="col-stat-hero"><div class="col-sh-num" id="col-sh-photos">—</div><div class="col-sh-label" data-i18n="col.photos">Photos</div></div>
+        <div class="col-stat-hero"><div class="col-sh-num" id="col-sh-aircraft">—</div><div class="col-sh-label" data-i18n="col.aircraft">Aircraft</div></div>
+        <div class="col-stat-hero"><div class="col-sh-num" id="col-sh-airlines">—</div><div class="col-sh-label" data-i18n="col.airlines">Airlines</div></div>
+        <div class="col-stat-hero"><div class="col-sh-num" id="col-sh-airports">—</div><div class="col-sh-label" data-i18n="col.airports">Airports</div></div>
+        <div class="col-stat-hero"><div class="col-sh-num" id="col-sh-sessions">—</div><div class="col-sh-label" data-i18n="col.sessions">Sessions</div></div>
       </div>
       <div class="col-last-session-bar" id="col-last-session-bar">—</div>
       <div class="col-kw-stats" id="col-kw-stats">
@@ -1599,32 +1896,32 @@
       </div>
       </div><!-- /col-hero-page -->
       <div class="col-stats-panel" id="col-panel-sessions">
-        <div class="col-stats-panel-header"><span class="col-stats-panel-title">Sessions</span></div>
-        <div class="col-stats-panel-body" id="col-sessions"><div class="empty">Loading…</div></div>
+        <div class="col-stats-panel-header"><span class="col-stats-panel-title" data-i18n="col.sessions">Sessions</span></div>
+        <div class="col-stats-panel-body" id="col-sessions"><div class="empty" data-i18n="col.loading">Loading…</div></div>
       </div>
       <div class="col-stats-panel" id="col-panel-airlines">
-        <div class="col-stats-panel-header"><span class="col-stats-panel-title">Top Airlines</span></div>
-        <div class="col-stats-panel-body" id="col-airlines"><div class="empty">Loading…</div></div>
+        <div class="col-stats-panel-header"><span class="col-stats-panel-title" data-i18n="col.topAirlines">Top Airlines</span></div>
+        <div class="col-stats-panel-body" id="col-airlines"><div class="empty" data-i18n="col.loading">Loading…</div></div>
       </div>
       <div class="col-stats-panel" id="col-panel-airports">
-        <div class="col-stats-panel-header"><span class="col-stats-panel-title">Top Airports</span></div>
-        <div class="col-stats-panel-body" id="col-airports"><div class="empty">Loading…</div></div>
+        <div class="col-stats-panel-header"><span class="col-stats-panel-title" data-i18n="col.topAirports">Top Airports</span></div>
+        <div class="col-stats-panel-body" id="col-airports"><div class="empty" data-i18n="col.loading">Loading…</div></div>
       </div>
       <div class="col-stats-panel" id="col-panel-types">
-        <div class="col-stats-panel-header"><span class="col-stats-panel-title">Top Aircraft Types</span></div>
-        <div class="col-stats-panel-body" id="col-types"><div class="empty">Loading…</div></div>
+        <div class="col-stats-panel-header"><span class="col-stats-panel-title" data-i18n="col.topTypes">Top Aircraft Types</span></div>
+        <div class="col-stats-panel-body" id="col-types"><div class="empty" data-i18n="col.loading">Loading…</div></div>
       </div>
       <div class="col-stats-panel" id="col-panel-hoppers">
-        <div class="col-stats-panel-header"><span class="col-stats-panel-title">Airport Hoppers</span></div>
-        <div class="col-stats-panel-body" id="col-hoppers"><div class="empty">Loading…</div></div>
+        <div class="col-stats-panel-header"><span class="col-stats-panel-title" data-i18n="col.hoppers">Airport Hoppers</span></div>
+        <div class="col-stats-panel-body" id="col-hoppers"><div class="empty" data-i18n="col.loading">Loading…</div></div>
       </div>
       <div class="col-stats-panel" id="col-panel-most-photos">
-        <div class="col-stats-panel-header"><span class="col-stats-panel-title">Most Photos</span></div>
-        <div class="col-stats-panel-body" id="col-most-photos"><div class="empty">Loading…</div></div>
+        <div class="col-stats-panel-header"><span class="col-stats-panel-title" data-i18n="col.mostPhotos">Most Photos</span></div>
+        <div class="col-stats-panel-body" id="col-most-photos"><div class="empty" data-i18n="col.loading">Loading…</div></div>
       </div>
       <div class="col-stats-panel" id="col-panel-most-sessions">
-        <div class="col-stats-panel-header"><span class="col-stats-panel-title">Most Sessions</span></div>
-        <div class="col-stats-panel-body" id="col-most-sessions"><div class="empty">Loading…</div></div>
+        <div class="col-stats-panel-header"><span class="col-stats-panel-title" data-i18n="col.mostSessions">Most Sessions</span></div>
+        <div class="col-stats-panel-body" id="col-most-sessions"><div class="empty" data-i18n="col.loading">Loading…</div></div>
       </div>
     </div>
     <div id="col-airline-popover" class="col-airline-popover hidden"><div id="col-ap-content"></div></div>
@@ -1642,19 +1939,20 @@
   <!-- Search -->
   <div class="page hidden" id="tab-search">
     <div class="srch-subtab-bar">
-      <button class="srch-subtab active" data-srch-subtab="flights" onclick="_srchSubtab('flights')">Last Seen</button>
-      <button class="srch-subtab" data-srch-subtab="route" onclick="_srchSubtab('route')">Route Equipment</button>
-      <button class="srch-subtab" data-srch-subtab="catalog" onclick="_srchSubtab('catalog')">Catalogue</button>
+      <button class="srch-subtab active" data-srch-subtab="flights" onclick="_srchSubtab('flights')" data-i18n="srch.tab.flights">Last Seen</button>
+      <button class="srch-subtab" data-srch-subtab="route" onclick="_srchSubtab('route')" data-i18n="srch.tab.route">Route Equipment</button>
+      <button class="srch-subtab" data-srch-subtab="catalog" onclick="_srchSubtab('catalog')" data-i18n="srch.tab.catalog">Catalogue</button>
     </div>
 
     <!-- Registration subtab -->
     <div id="srch-page-flights" class="srch-page">
       <div class="srch-bar">
-        <label class="srch-field-label">Registration<input id="srch-fl-rego" class="srch-input" type="text" placeholder="e.g. VH-OGB, ZK-NNA" autocomplete="off" oninput="_srchFlRun()" onkeydown="if(event.key==='Enter')_srchFlRun(true)" style="width:100%"></label>
-        <label class="srch-field-label">Manufacturer<div class="srch-dd" id="srch-dd-mfr"></div></label>
-        <label class="srch-field-label">Airline<div class="srch-dd" id="srch-dd-airline"></div></label>
-        <label class="srch-field-label">Type<div class="srch-dd" id="srch-dd-type"></div></label>
-        <button class="srch-clear" onclick="_srchFlClear()">Clear</button>
+        <label class="srch-field-label"><span data-i18n="srch.field.registration">Registration</span><input id="srch-fl-rego" class="srch-input" type="text" placeholder="e.g. VH-OGB, ZK-NNA" data-i18n-placeholder="srch.field.registration.placeholder" autocomplete="off" oninput="_srchFlRun()" onkeydown="if(event.key==='Enter')_srchFlRun(true)" style="width:100%"></label>
+        <label class="srch-field-label"><span data-i18n="srch.field.manufacturer">Manufacturer</span><div class="srch-dd" id="srch-dd-mfr"></div></label>
+        <label class="srch-field-label"><span data-i18n="srch.field.airline">Airline</span><div class="srch-dd" id="srch-dd-airline"></div></label>
+        <label class="srch-field-label"><span data-i18n="srch.field.type">Type</span><div class="srch-dd" id="srch-dd-type"></div></label>
+        <button class="srch-search-btn" onclick="_srchFlRun(true)" data-i18n="srch.search">Search</button>
+        <button class="srch-clear" onclick="_srchFlClear()" data-i18n="srch.clear">Clear</button>
       </div>
       <div id="srch-fl-status" class="srch-status"></div>
       <div id="srch-fl-results"></div>
@@ -1663,11 +1961,12 @@
     <!-- Route Type subtab -->
     <div id="srch-page-route" class="srch-page hidden">
       <div class="srch-bar">
-        <label class="srch-field-label">Flight Number<input id="srch-rt-fn" class="srch-input" type="text" placeholder="e.g. QF1, NZ101" autocomplete="off" oninput="_srchRtRun()" onkeydown="if(event.key==='Enter')_srchRtRun(true)" style="width:100%"></label>
-        <label class="srch-field-label">Arrival From<div class="srch-dd" id="srch-dd-rt-origin"></div></label>
-        <label class="srch-field-label">Depart To<div class="srch-dd" id="srch-dd-rt-dest"></div></label>
-        <label class="srch-field-label">Airline<div class="srch-dd" id="srch-dd-rt-airline"></div></label>
-        <button class="srch-clear" onclick="_srchRtClear()">Clear</button>
+        <label class="srch-field-label"><span data-i18n="srch.field.flightnumber">Flight Number</span><input id="srch-rt-fn" class="srch-input" type="text" placeholder="e.g. QF1, NZ101" data-i18n-placeholder="srch.field.flightnumber.placeholder" autocomplete="off" oninput="_srchRtRun()" onkeydown="if(event.key==='Enter')_srchRtRun(true)" style="width:100%"></label>
+        <label class="srch-field-label"><span data-i18n="srch.field.arrivalfrom">Arrival From</span><div class="srch-dd" id="srch-dd-rt-origin"></div></label>
+        <label class="srch-field-label"><span data-i18n="srch.field.departto">Depart To</span><div class="srch-dd" id="srch-dd-rt-dest"></div></label>
+        <label class="srch-field-label"><span data-i18n="srch.field.airline">Airline</span><div class="srch-dd" id="srch-dd-rt-airline"></div></label>
+        <button class="srch-search-btn" onclick="_srchRtRun(true)" data-i18n="srch.search">Search</button>
+        <button class="srch-clear" onclick="_srchRtClear()" data-i18n="srch.clear">Clear</button>
       </div>
       <div id="srch-rt-status" class="srch-status"></div>
       <div id="srch-rt-results"></div>
@@ -1676,13 +1975,14 @@
     <!-- Catalogue subtab -->
     <div id="srch-page-catalog" class="srch-page hidden">
       <div class="srch-bar">
-        <label class="srch-field-label">Registration<input id="srch-rego" class="srch-input" type="text" placeholder="e.g. VH-OGB, ZK-NNA" autocomplete="off" oninput="_srchRun()" onkeydown="if(event.key==='Enter')_srchRun(true)" style="width:100%"></label>
-        <label class="srch-field-label">Manufacturer<div class="srch-dd" id="srch-dd-cat-mfr"></div></label>
-        <label class="srch-field-label">Type<div class="srch-dd" id="srch-dd-cat-type"></div></label>
-        <label class="srch-field-label">Airline<div class="srch-dd" id="srch-dd-cat-airline"></div></label>
-        <label class="srch-field-label">Airport<div class="srch-dd" id="srch-dd-cat-airport"></div></label>
-        <label class="srch-field-label">Keyword<div class="srch-dd" id="srch-dd-cat-keyword"></div></label>
-        <button class="srch-clear" onclick="_srchClear()">Clear</button>
+        <label class="srch-field-label"><span data-i18n="srch.field.registration">Registration</span><input id="srch-rego" class="srch-input" type="text" placeholder="e.g. VH-OGB, ZK-NNA" data-i18n-placeholder="srch.field.registration.placeholder" autocomplete="off" oninput="_srchRun()" onkeydown="if(event.key==='Enter')_srchRun(true)" style="width:100%"></label>
+        <label class="srch-field-label"><span data-i18n="srch.field.manufacturer">Manufacturer</span><div class="srch-dd" id="srch-dd-cat-mfr"></div></label>
+        <label class="srch-field-label"><span data-i18n="srch.field.type">Type</span><div class="srch-dd" id="srch-dd-cat-type"></div></label>
+        <label class="srch-field-label"><span data-i18n="srch.field.airline">Airline</span><div class="srch-dd" id="srch-dd-cat-airline"></div></label>
+        <label class="srch-field-label"><span data-i18n="srch.field.airport">Airport</span><div class="srch-dd" id="srch-dd-cat-airport"></div></label>
+        <label class="srch-field-label"><span data-i18n="srch.field.keyword">Keyword</span><div class="srch-dd" id="srch-dd-cat-keyword"></div></label>
+        <button class="srch-search-btn" onclick="_srchRun(true)" data-i18n="srch.search">Search</button>
+        <button class="srch-clear" onclick="_srchClear()" data-i18n="srch.clear">Clear</button>
       </div>
       <div id="srch-status" class="srch-status"></div>
       <div id="srch-results"></div>
@@ -1692,13 +1992,13 @@
   <!-- Settings (merged: Filters + Config subtabs) -->
   <div class="page hidden" id="tab-settings">
     <div class="srch-subtab-bar">
-      <button class="srch-subtab active" data-subtab="info" onclick="switchSubtab('info')">General</button>
-      <button class="srch-subtab" data-subtab="recommendation" onclick="switchSubtab('recommendation')">Spotting</button>
-      <button class="srch-subtab" data-subtab="config" onclick="switchSubtab('config')">Feed</button>
-      <button class="srch-subtab" data-subtab="filters" onclick="switchSubtab('filters')">Filters</button>
-      <button class="srch-subtab" data-subtab="airports" onclick="switchSubtab('airports')">Collection</button>
-      <button class="srch-subtab" data-subtab="notification" onclick="switchSubtab('notification')">Notification</button>
-      <button class="srch-subtab" data-subtab="logs" onclick="switchSubtab('logs')">Logs</button>
+      <button class="srch-subtab active" data-subtab="info" onclick="switchSubtab('info')" data-i18n="settings.tab.general">General</button>
+      <button class="srch-subtab" data-subtab="recommendation" onclick="switchSubtab('recommendation')" data-i18n="settings.tab.spotting">Spotting</button>
+      <button class="srch-subtab" data-subtab="config" onclick="switchSubtab('config')" data-i18n="settings.tab.feed">Feed</button>
+      <button class="srch-subtab" data-subtab="filters" onclick="switchSubtab('filters')" data-i18n="settings.tab.filters">Filters</button>
+      <button class="srch-subtab" data-subtab="airports" onclick="switchSubtab('airports')" data-i18n="settings.tab.collection">Collection</button>
+      <button class="srch-subtab" data-subtab="notification" onclick="switchSubtab('notification')" data-i18n="settings.tab.notification">Notification</button>
+      <button class="srch-subtab" data-subtab="logs" onclick="switchSubtab('logs')" data-i18n="settings.tab.logs">Logs</button>
     </div>
 
     <!-- Info subtab -->
@@ -1721,40 +2021,61 @@
               </div>
             </div>
           </div>
-          <!-- Airport & timezone card -->
-          <div class="page-col-block page-card-general">
-            <div class="section-heading">General</div>
+          <!-- Language card -->
+          <div class="page-col-block page-card-language">
+            <div class="section-heading" data-i18n="settings.language.heading">Language</div>
             <div class="settings-group">
               <div class="setting-row">
-                <span class="setting-label"><span class="setting-key">Monitored Airport</span><span class="setting-desc">Airport IATA code. To change this, create a new instance.</span></span>
+                <span class="setting-label"><span class="setting-key" data-i18n="settings.language.key">Display Language</span><span class="setting-desc" data-i18n="settings.language.desc">Changes the app's interface text for your account, synced across all your devices. Does not affect flight data.</span></span>
+                <select id="lang-select" class="setting-input" style="width:240px;text-align:left" onchange="setLanguage(this.value)">
+                  <option value="en">English</option>
+                  <option value="zh">简体中文</option>
+                </select>
+              </div>
+            </div>
+          </div>
+          <!-- Airport & timezone card -->
+          <div class="page-col-block page-card-general">
+            <div class="section-heading" data-i18n="settings.general.heading">General</div>
+            <div class="settings-group">
+              <div class="setting-row">
+                <span class="setting-label"><span class="setting-key" data-i18n="settings.general.airport.key">Monitored Airport</span><span class="setting-desc" data-i18n="settings.general.airport.desc">Airport IATA code. To change this, create a new instance.</span></span>
                 <input id="info-airport-code" class="setting-input" disabled style="opacity:0.45;cursor:default;width:240px;text-align:left" placeholder="—">
               </div>
               <div class="setting-row">
-                <span class="setting-label"><span class="setting-key">Timezone</span><span class="setting-desc">Tied to the monitored airport's location — not separately settable.</span></span>
+                <span class="setting-label"><span class="setting-key" data-i18n="settings.general.tz.key">Timezone</span><span class="setting-desc" data-i18n="settings.general.tz.desc">Tied to the monitored airport's location — not separately settable.</span></span>
                 <input id="info-timezone-input" class="setting-input" disabled style="opacity:0.45;cursor:default;width:240px;text-align:left" placeholder="—">
               </div>
             </div>
           </div>
           <!-- API keys card -->
           <div class="page-col-block page-card-api">
-            <div class="section-heading">API</div>
+            <div class="section-heading" data-i18n="settings.api.heading">API</div>
             <div class="settings-group">
               <div class="setting-row">
-                <span class="setting-label"><span class="setting-key">Logostream API Key</span><span class="setting-desc">API key for fetching airline tail logos. Without this, logo images won't load.</span></span>
+                <span class="setting-label"><span class="setting-key" data-i18n="settings.api.logostream.key">Logostream API Key</span><span class="setting-desc" data-i18n="settings.api.logostream.desc">API key for fetching airline tail logos. Without this, logo images won't load.</span></span>
                 <input class="setting-input" data-key="LOGOSTREAM_API_KEY" id="info-logostream-key" style="width:240px;text-align:left" placeholder="your-api-key">
+              </div>
+              <div class="setting-row">
+                <span class="setting-label"><span class="setting-key" data-i18n="settings.api.baidu.appid.key">Baidu Translate App ID</span><span class="setting-desc" data-i18n="settings.api.baidu.appid.desc">App ID for translating airline/airport names to Chinese. Without this, names stay in English.</span></span>
+                <input class="setting-input" data-key="BAIDU_TRANSLATE_APP_ID" id="info-baidu-appid" style="width:240px;text-align:left" placeholder="your-app-id">
+              </div>
+              <div class="setting-row">
+                <span class="setting-label"><span class="setting-key" data-i18n="settings.api.baidu.secret.key">Baidu Translate Secret Key</span><span class="setting-desc" data-i18n="settings.api.baidu.secret.desc">Secret key paired with the App ID above.</span></span>
+                <input class="setting-input" data-key="BAIDU_TRANSLATE_SECRET_KEY" id="info-baidu-secret" style="width:240px;text-align:left" placeholder="your-secret-key">
               </div>
             </div>
           </div>
           <!-- Disclaimer card -->
           <div class="page-col-block page-card-disclaimer">
-            <div class="section-heading">Disclaimer</div>
-            <p class="info-disclaimer">
+            <div class="section-heading" data-i18n="settings.disclaimer.heading">Disclaimer</div>
+            <p class="info-disclaimer" data-i18n-html="disclaimer.fr24">
               <strong>FlightRadar24 data</strong> — This project accesses FlightRadar24's unofficial API.
               FlightRadar24's <a href="https://www.flightradar24.com/terms-and-conditions" target="_blank">Terms of Service</a>
               restrict use of their data to <strong>personal, non-commercial purposes only</strong>.
               Do not use this project in any commercial context without obtaining a proper data licence from FlightRadar24.
             </p>
-            <p class="info-disclaimer">
+            <p class="info-disclaimer" data-i18n-html="disclaimer.adsbfi">
               <strong>adsb.fi open data</strong> — Military aircraft data is sourced from
               <a href="https://opendata.adsb.fi" target="_blank">opendata.adsb.fi</a>.
               This data is provided for <strong>personal, non-commercial use only</strong>.
@@ -1767,12 +2088,12 @@
         <div class="page-col">
           <!-- Server status card -->
           <div class="page-col-block page-card-serverstatus">
-            <div class="section-heading">Server Status</div>
+            <div class="section-heading" data-i18n="settings.serverstatus.heading">Server Status</div>
             <div id="info-status-grid"><span style="color:var(--dim);font-size:12px">Loading…</span></div>
           </div>
           <!-- Scheduled tasks card -->
           <div class="page-col-block page-card-scheduledtasks">
-            <div class="section-heading">Scheduled Tasks</div>
+            <div class="section-heading" data-i18n="settings.scheduledtasks.heading">Scheduled Tasks</div>
             <div id="sys-tasks-body"><span style="color:var(--dim);font-size:12px">Loading…</span></div>
           </div>
         </div>
@@ -1786,12 +2107,12 @@
         <!-- Col 1: Exclusion List -->
         <div class="page-col">
           <div class="page-col-block">
-            <div class="section-heading">Exclusion List</div>
+            <div class="section-heading" data-i18n="filters.exclusion.heading">Exclusion List</div>
             <div class="filter-section" id="fl-exclusion"></div>
-            <div class="add-row">
-              <input id="excl-rego" placeholder="Registration" style="max-width:110px">
-              <input id="excl-desc" placeholder="Description">
-              <button class="add-btn" onclick="addExclusion()">Add</button>
+            <div class="add-row filter-add-row">
+              <input id="excl-rego" placeholder="Registration" data-i18n-placeholder="filters.ph.registration" style="max-width:110px">
+              <input id="excl-desc" placeholder="Description" data-i18n-placeholder="filters.ph.description">
+              <button class="add-btn" onclick="addExclusion()" data-i18n="filters.add">Add</button>
             </div>
           </div>
         </div>
@@ -1799,36 +2120,36 @@
         <!-- Col 2: Watchlists -->
         <div class="page-col">
           <div class="page-col-block">
-            <div class="section-heading">Registration Watchlist</div>
+            <div class="section-heading" data-i18n="filters.rego.heading">Registration Watchlist</div>
             <div class="filter-section" id="fl-rego"></div>
-            <div class="add-row">
-              <input id="rego-rego" placeholder="Registration" style="max-width:110px">
-              <input id="rego-desc" placeholder="Description">
-              <button class="add-btn" onclick="addRego()">Add</button>
+            <div class="add-row filter-add-row">
+              <input id="rego-rego" placeholder="Registration" data-i18n-placeholder="filters.ph.registration" style="max-width:110px">
+              <input id="rego-desc" placeholder="Description" data-i18n-placeholder="filters.ph.description">
+              <button class="add-btn" onclick="addRego()" data-i18n="filters.add">Add</button>
             </div>
           </div>
 
           <div class="page-col-block">
-            <div class="section-heading">Aircraft Type Watchlist</div>
+            <div class="section-heading" data-i18n="filters.type.heading">Aircraft Type Watchlist</div>
             <div class="filter-section" id="fl-type"></div>
-            <div class="add-row">
-              <input id="type-airline" placeholder="Airline ICAO Code">
-              <input id="type-ac" placeholder="Aircraft Type Code">
-              <button class="add-btn" onclick="addType()">Add</button>
+            <div class="add-row filter-add-row">
+              <input id="type-airline" placeholder="Airline ICAO Code" data-i18n-placeholder="filters.ph.airlineIcao">
+              <input id="type-ac" placeholder="Aircraft Type Code" data-i18n-placeholder="filters.ph.acType">
+              <button class="add-btn" onclick="addType()" data-i18n="filters.add">Add</button>
             </div>
           </div>
 
           <div class="page-col-block">
-            <div class="section-heading">Airline / Operator Watchlist</div>
+            <div class="section-heading" data-i18n="filters.airline.heading">Airline / Operator Watchlist</div>
             <div class="filter-section" id="fl-airline"></div>
-            <div class="add-row">
-              <input id="al-icao" placeholder="ICAO Code" style="max-width:120px">
+            <div class="add-row filter-add-row">
+              <input id="al-icao" placeholder="ICAO Code" data-i18n-placeholder="filters.ph.icao" style="max-width:120px">
               <select id="al-type" style="max-width:130px">
-                <option value="airline">Airline</option>
-                <option value="operator">Operator</option>
+                <option value="airline" data-i18n="filters.airline.optAirline">Airline</option>
+                <option value="operator" data-i18n="filters.airline.optOperator">Operator</option>
               </select>
-              <input id="al-name" placeholder="Description">
-              <button class="add-btn" onclick="addAirline()">Add</button>
+              <input id="al-name" placeholder="Description" data-i18n-placeholder="filters.ph.description">
+              <button class="add-btn" onclick="addAirline()" data-i18n="filters.add">Add</button>
             </div>
           </div>
         </div>
@@ -1836,18 +2157,13 @@
         <!-- Col 3: Detection settings -->
         <div class="page-col">
           <div class="page-col-block">
-            <div class="section-heading">Special Livery</div>
+            <div class="section-heading" data-i18n="filters.livery.heading">Special Livery</div>
             <div class="settings-group" id="settings-livery"></div>
           </div>
 
           <div class="page-col-block">
-            <div class="section-heading">Rare Plane</div>
+            <div class="section-heading" data-i18n="filters.rare.heading">Rare Plane</div>
             <div class="settings-group" id="settings-rare"></div>
-          </div>
-
-          <div class="page-col-block">
-            <div class="section-heading">Route Type</div>
-            <div class="settings-group" id="settings-routetype"></div>
           </div>
         </div>
       </div>
@@ -1860,15 +2176,15 @@
         <!-- Monitoring column -->
         <div class="page-col">
           <div class="page-col-block">
-            <div class="section-heading">Polling</div>
+            <div class="section-heading" data-i18n="config.polling.heading">Polling</div>
             <div class="settings-group" id="settings-mon-polling"></div>
           </div>
           <div class="page-col-block">
-            <div class="section-heading">Departure Prediction</div>
+            <div class="section-heading" data-i18n="config.departure.heading">Departure Prediction</div>
             <div class="settings-group" id="settings-mon-departure"></div>
           </div>
           <div class="page-col-block">
-            <div class="section-heading">Cancellation / Diversion</div>
+            <div class="section-heading" data-i18n="config.cancel.heading">Cancellation / Diversion</div>
             <div class="settings-group" id="settings-mon-cancel"></div>
           </div>
         </div>
@@ -1876,7 +2192,7 @@
         <!-- Military column -->
         <div class="page-col">
           <div class="page-col-block">
-            <div class="section-heading">Military</div>
+            <div class="section-heading" data-i18n="config.military.heading">Military</div>
             <div class="settings-group" id="settings-mil-scan"></div>
           </div>
         </div>
@@ -1889,7 +2205,7 @@
       <div class="page-cols">
         <div class="page-col">
           <div class="page-col-block">
-            <div class="section-heading">Spotting Recommendations</div>
+            <div class="section-heading" data-i18n="config.spotrec.heading">Spotting Recommendations</div>
             <div class="settings-group" id="settings-spotrec"></div>
           </div>
         </div>
@@ -1901,43 +2217,54 @@
       <div class="page-cols">
 
         <!-- Col 1 -->
-        <div class="page-col">
-          <div class="page-col-block">
-            <div class="section-heading">Custom Airports</div>
-            <div class="card-desc">Add airports not in the FR24 database. User entries always take priority.</div>
+        <div class="page-col" id="airports-subtab-col1">
+          <div class="page-col-block" id="settings-card-custom-airports">
+            <div class="section-heading" data-i18n="collection.customAirports.heading">Custom Airports</div>
+            <div class="card-desc" data-i18n="collection.customAirports.desc">Add airports not in the FR24 database. User entries always take priority.</div>
             <div class="filter-section" id="ap-list"></div>
             <div class="add-row">
-              <input id="ap-code" placeholder="Airport Code" style="max-width:120px">
-              <input id="ap-name" placeholder="Airport Name">
-              <input id="ap-country" placeholder="Country Code" style="max-width:120px">
-              <button class="add-btn" onclick="apAdd()">Add</button>
+              <input id="ap-code" placeholder="Airport Code" data-i18n-placeholder="collection.ph.airportCode" style="max-width:120px">
+              <input id="ap-name" placeholder="Airport Name" data-i18n-placeholder="collection.ph.airportName">
+              <input id="ap-country" placeholder="Country Code" data-i18n-placeholder="collection.ph.countryCode" style="max-width:120px">
+              <button class="add-btn" onclick="apAdd()" data-i18n="filters.add">Add</button>
             </div>
           </div>
 
-          <div class="page-col-block">
-            <div class="section-heading">Custom Aircraft Types</div>
-            <div class="card-desc">Full names sourced from <a href="https://github.com/rikgale/ICAOList" target="_blank">ICAOList</a>, auto-updated every 3 months. User entries always take priority.</div>
+          <div class="page-col-block" id="settings-card-custom-aircraft-types">
+            <div class="section-heading" data-i18n="collection.customTypes.heading">Custom Aircraft Types</div>
+            <div class="card-desc"><span data-i18n="collection.customTypes.descPre">Full names sourced from</span> <a href="https://github.com/rikgale/ICAOList" target="_blank">ICAOList</a><span data-i18n="collection.customTypes.descPost">, auto-updated every 3 months. User entries always take priority.</span></div>
             <div class="filter-section" id="at-list"></div>
             <div class="add-row">
-              <input id="at-code" placeholder="Aircraft Type Code" style="max-width:160px">
-              <input id="at-name" placeholder="Full Name">
-              <button class="add-btn" onclick="atAdd()">Add</button>
+              <input id="at-code" placeholder="Aircraft Type Code" data-i18n-placeholder="collection.ph.acTypeCode" style="max-width:160px">
+              <input id="at-name" placeholder="Full Name" data-i18n-placeholder="collection.ph.fullName">
+              <button class="add-btn" onclick="atAdd()" data-i18n="filters.add">Add</button>
             </div>
           </div>
         </div>
 
         <!-- Col 2 -->
-        <div class="page-col">
-          <div class="page-col-block">
-            <div class="section-heading">Collection Stat Keywords</div>
-            <div class="card-desc">Choose 3 Lightroom keywords to display unique registration counts in the collection dashboard.</div>
+        <div class="page-col" id="airports-subtab-col2">
+          <div class="page-col-block" id="my-catalog-block">
+            <div class="section-heading" data-i18n="collection.myCatalog.heading">My Catalog</div>
+            <div class="card-desc" data-i18n="collection.myCatalog.desc">Your own private Lightroom catalog — used to compute your Collection stats and figure out which aircraft you've already photographed for the Spotting tab's "Already-Photographed Limit" filter. Never shared with other users.</div>
+            <div id="my-catalog-status" style="margin:8px 0;font-size:13px;color:var(--text-dim,#888)">Loading…</div>
+            <div class="add-row">
+              <input type="file" id="my-catalog-file" accept=".lrcat">
+              <button class="add-btn" onclick="uploadMyCatalog()" data-i18n="collection.upload">Upload</button>
+              <button class="add-btn" id="my-catalog-remove-btn" onclick="removeMyCatalog()" style="display:none" data-i18n="collection.remove">Remove</button>
+            </div>
+          </div>
+
+          <div class="page-col-block" id="settings-card-collection-stat-keywords">
+            <div class="section-heading" data-i18n="collection.statKeywords.heading">Collection Stat Keywords</div>
+            <div class="card-desc" data-i18n="collection.statKeywords.desc">Choose 3 Lightroom keywords to display unique registration counts in the collection dashboard.</div>
             <div id="kw-stat-selects" style="display:flex;flex-direction:column;gap:8px"></div>
           </div>
 
-          <div class="page-col-block">
-            <div class="section-heading">Session Panel Tags</div>
-            <div class="card-desc">Choose which Lightroom keywords trigger display in the Sessions expanded panel. All tags selected (or none deselected) shows everything.</div>
-            <div id="st-tags-list" style="display:flex;flex-wrap:wrap;gap:6px;min-height:28px"><span class="detail">Open this tab to load…</span></div>
+          <div class="page-col-block" id="settings-card-session-panel-tags">
+            <div class="section-heading" data-i18n="collection.sessionTags.heading">Session Panel Tags</div>
+            <div class="card-desc" data-i18n="collection.sessionTags.desc">Choose which Lightroom keywords trigger display in the Sessions expanded panel. All tags selected (or none deselected) shows everything.</div>
+            <div id="st-tags-list" style="display:flex;flex-wrap:wrap;gap:6px;min-height:28px"><span class="detail" data-i18n="collection.openToLoad">Open this tab to load…</span></div>
           </div>
         </div>
 
@@ -1946,16 +2273,64 @@
 
     <!-- Notification subtab -->
     <div class="set-subtab-page hidden" id="subtab-notification">
+      <div class="page-cols">
+        <div class="page-col">
+          <div class="page-col-block" id="push-notif-block">
+            <div class="section-heading" data-i18n="notif.push.heading">Push Notifications</div>
+            <div class="card-desc" data-i18n="notif.push.desc">Get a notification on this device when a new card is added to the Feed.</div>
+            <div id="push-notif-status" style="margin:8px 0;font-size:13px;color:var(--text-dim,#888)">Loading…</div>
+            <button id="push-notif-toggle-btn" class="pill-btn pill-btn-accent" onclick="togglePushNotifications()" data-i18n="notif.push.enableBtn">Enable Notifications</button>
+          </div>
+        </div>
+        <div class="page-col">
+          <div class="page-col-block" id="push-notif-prefs-block">
+            <div class="section-heading" data-i18n="notif.filters.heading">Filters</div>
+            <div class="settings-group" id="push-notif-prefs-list"></div>
+          </div>
+          <div class="page-col-block" id="spotting-reminder-block">
+            <div class="section-heading" data-i18n="notif.spotrem.heading">Spotting Reminder</div>
+            <div class="card-desc" data-i18n="notif.spotrem.desc">A push about tomorrow's spotting window, sent at your chosen time.</div>
+            <div class="settings-group" style="margin-top:10px">
+              <div class="setting-row">
+                <span class="setting-label"><span class="setting-key" data-i18n="notif.spotrem.enable">Enable</span></span>
+                <input type="checkbox" id="sr-enabled-toggle"
+                       onchange="_togglePushNotifTypePref('Spotting Reminder', this.checked)"
+                       style="width:18px;height:18px;cursor:pointer">
+              </div>
+            </div>
+            <div id="spotting-reminder-prefs" class="hidden" style="margin-top:10px">
+              <div class="settings-group">
+                <div class="setting-row">
+                  <span class="setting-label"><span class="setting-key" data-i18n="notif.spotrem.sendTime.key">Send Time</span><span class="setting-desc" data-i18n="notif.spotrem.sendTime.desc">Airport-local time the reminder fires, if tomorrow qualifies.</span></span>
+                  <input id="sr-send-time" type="time" class="setting-input" style="width:160px" onchange="_saveSpottingReminderPrefs()">
+                </div>
+                <div class="setting-row">
+                  <span class="setting-label"><span class="setting-key" data-i18n="notif.spotrem.weatherGate.key">Weather Gate</span><span class="setting-desc" data-i18n="notif.spotrem.weatherGate.desc">Suppress the reminder based on tomorrow's forecast.</span></span>
+                  <select id="sr-weather-gate" class="setting-input" style="width:160px" onchange="_saveSpottingReminderPrefs()">
+                    <option value="none" data-i18n="notif.spotrem.gate.none">No check</option>
+                    <option value="ignore_severe" data-i18n="notif.spotrem.gate.ignoreSevere">Ignore Severe Weather</option>
+                    <option value="sunny_only" data-i18n="notif.spotrem.gate.sunnyOnly">Sunny Days Only</option>
+                  </select>
+                </div>
+                <div class="setting-row">
+                  <span class="setting-label"><span class="setting-key" data-i18n="notif.spotrem.minAircraft.key">Minimum Aircraft</span><span class="setting-desc" data-i18n="notif.spotrem.minAircraft.desc">Skip the reminder if tomorrow's window has fewer than this many aircraft.</span></span>
+                  <input id="sr-min-aircraft" type="number" min="2" step="1" class="setting-input" style="width:160px" onchange="_saveSpottingReminderPrefs()">
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- Logs subtab -->
     <div class="set-subtab-page hidden" id="subtab-logs">
       <div class="page-col-block" style="display:flex;flex-direction:column;flex:1;min-height:0">
         <div class="section-heading" style="display:flex;align-items:center;justify-content:space-between">
-          <span>Application Log</span>
+          <span data-i18n="logs.heading">Application Log</span>
           <span style="display:flex;gap:8px">
-            <button class="pill-btn" onclick="logsLoad()">Refresh</button>
-            <a class="pill-btn pill-btn-accent" href="/api/logs/download" download="spotalert.log">Download</a>
+            <button class="pill-btn" onclick="logsLoad()" data-i18n="logs.refresh">Refresh</button>
+            <a class="pill-btn pill-btn-accent" href="/api/logs/download" download="spotalert.log" data-i18n="logs.download">Download</a>
           </span>
         </div>
         <pre id="logs-output" class="logs-output">Loading…</pre>
