@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any, List as _List, Optional
 import os as _os
 
-VERSION = "1.0.0"
+VERSION = "2.01"
 _PROCESS_START_TS = int(time.time())
 
 
