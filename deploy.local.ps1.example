@@ -1,5 +1,0 @@
-# deploy.local.ps1.example — copy this to deploy.local.ps1 and fill in
-# your real passwords. deploy.local.ps1 is gitignored and never committed.
-
-$DECK_PASSWORD = 'your-deck-ssh-password'
-$NAS_PASSWORD  = 'your-nas-ssh-smb-password'
