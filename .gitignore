@@ -6,6 +6,7 @@ data/.fr24_cookies.pkl
 data/.secret_key
 
 # Personal deployment/local-only scripts — not for the public repo
+local/
 *.ps1
 !studio/run.ps1
 

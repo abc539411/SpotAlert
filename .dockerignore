@@ -1,0 +1,12 @@
+.git
+local
+data
+lightroom
+logs
+docs
+studio
+backups
+__pycache__
+*.pyc
+.venv
+venv
