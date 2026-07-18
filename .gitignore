@@ -5,6 +5,9 @@
 data/.fr24_cookies.pkl
 data/.secret_key
 
+# Deploy script passwords — copy deploy.local.ps1.example to fill in
+deploy.local.ps1
+
 # Runtime downloaded assets — fetched on demand, not committed
 static/airline_logos/
 static/translations/

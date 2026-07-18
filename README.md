@@ -1,6 +1,42 @@
-# SpotAlert
+<p align="center">
+  <img src="static/icons/icon-512.png" width="96" height="96" alt="SpotAlert icon">
+</p>
 
-A self-hosted aircraft spotting assistant that monitors FlightRadar24 arrivals at a chosen airport and notifies you when interesting aircraft are detected. Features a Progressive Web App (PWA) front-end for real-time feed, spotting recommendations, collection tracking, and filter management.
+<h1 align="center">SpotAlert</h1>
+
+<p align="center"><b>English</b> | <a href="README.zh.md">简体中文</a></p>
+
+A self-hosted aircraft-spotting assistant. It watches live arrivals at one or more airports and tells you the moment something worth grabbing a camera for shows up — a special livery, a plane on your watchlist, a rare airline/type combo, or military traffic on approach. A multi-user Progressive Web App (PWA) gives everyone in the spotting group their own login, their own filters, and a push notification straight to their phone, in either English or Chinese.
+
+<p align="center">
+  <img src="screenshots/feed-en.png" width="100%" alt="SpotAlert Feed tab">
+</p>
+<p align="center">
+  <img src="screenshots/spotting-en.png" width="100%" alt="SpotAlert Spotting tab">
+</p>
+<p align="center">
+  <img src="screenshots/collection-en.png" width="100%" alt="SpotAlert Collection tab">
+</p>
+<p align="center">
+  <img src="screenshots/stats-en.png" width="100%" alt="SpotAlert Collection stats dashboard">
+</p>
+<p align="center">
+  <img src="screenshots/mobile-en.png" width="100%" alt="SpotAlert on mobile">
+</p>
+
+---
+
+## What it actually does, day to day
+
+You (the **Controller**) pick an airport and tell SpotAlert what you care about — keywords that show up in special-livery airline names, specific registrations or airlines you're tracking, or just "tell me if this type hasn't shown up in two weeks." SpotAlert keeps polling live arrivals in the background, and the moment something matches:
+
+- A card appears on the **Feed** immediately, with the aircraft's photo, route, live status, and predicted departure time.
+- A **push notification** goes out to every phone that's opted in — in whatever language that user has set.
+- It's folded into that day's **Spotting** recommendation — SpotAlert clusters the day's interesting arrivals into a single best window to head out, factoring in lighting quality and weather.
+
+If you shoot and keep a Lightroom catalog, SpotAlert cross-references it (read-only) so **Collection** and **Fleet** know what you've *already* photographed, not just what's flying — and you can tap straight through to the actual photo from any past session, right inside the app.
+
+It's built for more than one person from the ground up: invite a **Pilot** (their own filters and watchlists, scoped to whichever airports you grant) or a **Passenger** (read-only, follows your filters) — everyone gets their own login, their own push notifications, their own language.
 
 ---
 
@@ -8,60 +44,75 @@ A self-hosted aircraft spotting assistant that monitors FlightRadar24 arrivals a
 
 ### Arrival Filters
 
-All filters run in priority order — a flight only ever triggers one match:
+Each filter triggers independently — a single flight can match more than one:
 
-1. **Special Livery** — detects aircraft whose airline name contains configurable keywords (e.g. "Livery", "Sticker") and extracts the livery name from the airline field (e.g. "Air New Zealand (All Blacks Livery)" → "All Blacks Livery")
-2. **Rego Watchlist** — notifies when a specific registration on your watchlist is inbound
-3. **Type Watchlist** — notifies when a specific airline + aircraft type combination is inbound
-4. **Airline/Operator Watchlist** — notifies when an aircraft from a watched airline or operator is inbound
-5. **Rare Plane** — notifies when an airline + aircraft type combination reappears after being absent for a configurable number of days
+1. **Special Livery** — matches configurable keywords in the airline name and extracts the livery description (e.g. "Air New Zealand (All Blacks Livery)" → "All Blacks Livery"); shows the original Chinese text when the source data provides it bilingually
+2. **Rego Watchlist** — a specific registration you're tracking
+3. **Type Watchlist** — a specific airline + aircraft type combination
+4. **Airline/Operator Watchlist** — any aircraft from a watched airline or operator
+5. **Rare Plane** — an airline + aircraft type combination reappearing after being absent for a configurable number of days
 
 ### Web App (PWA)
 
-Accessible from any browser on your local network. Installable as a home-screen app on iOS and Android.
+Installable as a home-screen app on iOS/Android, accessible from any browser on your network. Fully bilingual (English/Chinese), set per user.
 
-- **Feed** — chronological day-grouped cards for every filter-matched arrival; shows flight route, status, departure prediction, and aircraft photo
-- **Timeline** — spotting window recommendations clustered by time of day; shows which flights qualify, lull periods, and lighting quality indicators
-- **Collection** — cross-references your Lightroom catalog with the flight feed; shows what you've photographed and what you're missing
-- **Fleet** — track full airline fleets from FR24; pills show which registrations you've captured and let you add unseen aircraft to your Rego Watchlist
-- **Search** — look up any registration's sighting history; browse route equipment by flight number; browse your Lightroom catalogue
-- **Settings** — manage all filters, watchlists, monitoring config, spot recommendation tuning, and airports from the web UI
+- **Feed** — day-grouped cards for every match; route, live status, departure prediction, aircraft photo, and (if you've shot it before) your own history with that tail
+- **Spotting** — the day's recommended window, clustered by activity gaps, with lighting quality and weather
+- **Collection** — cross-references your Lightroom catalog against the feed; shows what's photographed, what's missing, and per-keyword session stats
+- **Fleet** — live full-fleet data per airline; pills show which tails you've captured and let you add unseen ones straight to your watchlist
+- **Search** — look up a registration's sighting history, browse route equipment by flight number, or browse your whole catalog
+- **Session photo preview** — tap any past session anywhere in the app to see the actual photo you took — Controller-only, read-only access to your photo library (see below)
+- **Settings** — every filter, watchlist, and monitoring setting lives here, gated by role
+
+### Multi-User, Multi-Airport
+
+- **Roles**: Controller (full control), Pilot (own filters/watchlists, scoped to granted airports), Passenger (read-only, follows the Controller's filters)
+- A single deployment can **monitor multiple airports** at once — each with its own monitoring, filters, and data
+- **Push notifications** (Web Push/VAPID — no third-party service, no Telegram) are fanned out per subscriber, each in their own language, re-checked against their own filters and preferences
 
 ### Military Traffic
 
 - Monitors nearby military aircraft via the [adsb.fi](https://opendata.adsb.fi) open data API — no API key required
-- Detects aircraft on approach within a configurable radius and below a configurable altitude threshold
-- Notification includes country of origin (derived from ICAO hex address), registration, callsign, aircraft type, altitude, speed, distance, and a link to globe.adsb.fi
+- Detects aircraft on approach within a configurable radius/altitude and tracks that sighting live (GPS trail) until it leaves or lands
+- Notification includes country of origin (from the ICAO hex address), registration, callsign, aircraft type, and distance
+
+### Session Photo Preview
+
+Tap any past spotting session anywhere in the app to see the actual photo, overlaid with that flight's airline/type/livery info — the same treatment as the Feed's own photo cards. Reads the preview embedded directly in your RAW files (no extra export step), and never modifies the originals — the mount is read-only at the Docker level, and the app itself never writes to it. Setup is covered below under [Lightroom / Photo Integration](#lightroom--photo-integration).
 
 ### Spot Recommendation
 
-Clusters the day's interesting arrivals into natural spotting sessions and recommends the best window to head out.
+Clusters the day's interesting arrivals into a single best window instead of a flat list of times.
 
-- **Activity clustering** — flights grouped by gaps between events; a gap larger than the Max Gap threshold = separate session
-- **Lighting quality indicators** — 🌙 low/fading light around sunrise/sunset; ☀️ harsh overhead midday light
-- **Departure pairing** — each arrival is matched with its outbound departure (live board → historical patterns → turnaround prediction) so you can see how long an aircraft will be on the ground
-- **Weather integration** — severe weather suppresses automatic recommendations; weather always shown in the Timeline tab
+- **Activity clustering** — a gap larger than your configured threshold starts a new window; the largest cluster is taken, then tightened to the smallest span that still covers every flight in it
+- **Lighting quality** — flags low/fading light around sunrise/sunset and harsh overhead light around midday
+- **Departure pairing** — every arrival is matched to its outbound departure (live board → history → a learned turnaround pattern), so you know how long the aircraft will actually be on the ground
+- **Weather** — shown alongside each day's window; also feeds an optional spotting-alert push
 
 ### Lightroom Catalog Integration
 
-SpotAlert reads your Adobe Lightroom catalog (read-only) to enrich the feed and Fleet tab with your personal spotting history — last photographed date, session count, airport.
+Reads your Adobe Lightroom catalog (read-only, the main app never writes to it) to enrich Feed/Collection/Fleet with your own shooting history. Aircraft metadata (registration, airline, type, airport) needs to be tagged in Lightroom, either via the [AircraftMetadata Lightroom Plugin](https://github.com/aviationphoto/AircraftMetadata-Lightroom-Plugin) or **SpotAlert Studio** (below) — both write to the catalog using the same plugin ID, so SpotAlert can't tell them apart.
 
-Aircraft metadata (registration, airline, aircraft type, airport) must be tagged using the [AircraftMetadata Lightroom Plugin](https://github.com/aviationphoto/AircraftMetadata-Lightroom-Plugin).
+### SpotAlert Studio (companion app)
+
+A separate, local-only companion app (`studio/`) that organizes your RAW photo inbox — looks up each file's registration against public flight data (falling back to JetPhotos for military aircraft), files it into a `{date} - {airport}/{airline}/{registration}/` folder structure, and writes the resolved metadata directly into your Lightroom catalog. It's the one part of this project that writes to your catalog. It needs direct filesystem access, so it runs natively on your own machine, not in Docker.
+
+```powershell
+.\studio.ps1
+```
+
+See [studio/README.md](studio/README.md) for setup.
 
 ---
 
 ## Requirements
 
-- Python 3.10+
-- Docker (recommended for deployment)
-
-```
-pip install -r requirements.txt
-```
+- Docker + Docker Compose (recommended — this is how the project itself is deployed and tested)
+- Or, to run the two processes directly without Docker: Python 3.12+
 
 ---
 
-## Setup
+## Quick Start (Docker Compose)
 
 1. **Clone the repo**
    ```bash
@@ -69,86 +120,89 @@ pip install -r requirements.txt
    cd spotalert
    ```
 
-2. **Install dependencies**
-   ```bash
-   pip install -r requirements.txt
+2. **Edit `docker-compose.yml`** — the paths on the left of each volume mount are *this project's own* deployment host paths (a Synology NAS). Change them to wherever you actually want each piece of data to live on your host:
+   ```yaml
+   volumes:
+     - <your-path>/data:/app/data
+     - <your-path>/lightroom:/app/lightroom
+     - <your-path>/logs:/app/logs
+     - <your-path>/translations:/app/static/translations
+     - <your-path>/airline_logos:/app/static/airline_logos
+     - <your-path>/session_thumbs:/app/static/session_thumbs
+     # optional — only if you want the session photo preview feature (see below):
+     - "<your-photos-folder>:/app/photos:ro"
    ```
 
-3. **Run**
+3. **Build and start**
    ```bash
-   python main.py
+   docker compose up -d --build
    ```
-   The web app is available at `http://localhost:8088` by default.
 
-4. **Configure via the web UI** — open the Settings tab and set at minimum `AIRPORT_CODE` and `WEB_TIMEZONE`.
+4. **Find your admin password** — a fresh install auto-creates a Controller account on first startup:
+   ```bash
+   docker logs spotalert | grep "initial Controller"
+   ```
+   Visit `http://<your-host>:7478`, log in as `admin` with that password, then change it from the Settings tab.
 
-5. **(Optional) Lightroom integration** — set `LR_CATALOG_PATH` in the Settings tab to the path of your `.lrcat` file. SpotAlert opens it read-only.
+5. **Add your first airport** — Settings → Airports → Add Airport (IATA code). Monitoring starts immediately.
+
+6. **(Optional) Lightroom integration** — upload your `.lrcat` file under Settings → Collection → My Catalog, or point `LR_CATALOG_PATH` at a file already inside the `lightroom/` volume.
+
+That's the whole setup — the app is already polling arrivals, and matches will start showing up once you configure filters (Settings → the relevant filter card).
+
+### Without Docker
+
+Run the two processes directly:
+
+```bash
+pip install -r requirements.txt
+python main.py              # web server, also launches/supervises the monitor process
+```
+
+`main.py` starts `monitor_service.py` itself — you don't need to run it separately unless you want the monitor loop running with no web UI at all, in which case `python monitor_service.py` also runs standalone.
+
+---
+
+## Lightroom / Photo Integration
+
+Two independent, optional features:
+
+- **Read-only catalog access** (Collection/Fleet/Search-Catalogue data, the "already shot" filter threshold): upload a `.lrcat` per user in Settings, or mount it via the `lightroom/` volume.
+- **Session photo preview** (tap a session to see the actual photo): mount your RAW photo folder into the container read-only (see the optional volume line in Quick Start above), and tell it the in-container path under Settings → Collection → Session Photos Path (defaults to `/app/photos` — only change this if you mounted somewhere else). Needs `exiftool` in the image, which the provided `Dockerfile` already includes. Controller-only.
 
 ---
 
 ## Configuration
 
-All settings are managed via the **Settings** tab in the web UI and stored in `data/spotalert.db`. Key settings:
+Once you're logged in, almost everything is configured from the **Settings** tab, not environment variables or config files. A few of the more important ones:
 
 | Setting | Description | Default |
 |---|---|---|
-| `AIRPORT_CODE` | IATA code of the airport to monitor | — |
-| `WEB_TIMEZONE` | Display timezone (IANA format, e.g. `Australia/Sydney`) | — |
-| `CHECK_INTERVAL_MINUTES` | How often to poll FR24 for arrivals | 30 |
-| `FETCH_PAGES` | Number of pages to fetch per check (100 flights/page) | 2 |
+| `CHECK_INTERVAL_MINUTES` | How often to poll for arrivals | 30 |
+| `FETCH_PAGES` | Pages to fetch per check (~100 flights/page) | 2 |
 | `SPECIAL_LIVERY_KEYWORDS` | Comma-separated keywords matched against airline name | `Livery,livery,Sticker,sticker` |
 | `RARE_PLANE_MIN_ABSENCE_DAYS` | Days a combo must be absent before being considered rare | 7 |
 | `DEPARTURE_PATTERN_THRESHOLD` | Minimum confidence % to show a predicted departure; 0 = off | 80 |
 | `MILITARY_CHECK_INTERVAL_MINUTES` | How often to check for military traffic | 15 |
 | `MILITARY_RADIUS_NM` | Search radius around the airport (nautical miles, max 250) | 50 |
 | `MILITARY_MAX_ALT_FT` | Maximum altitude to consider a military aircraft "on approach" | 5000 |
-| `LOGOSTREAM_API_KEY` | API key for airline tail logo fetching (Logostream) | — |
-| `LR_CATALOG_PATH` | Path to your Lightroom `.lrcat` file | — |
+| `LOGOSTREAM_API_KEY` | API key for airline tail logo fetching (Logostream) — optional; without it, airline logos just won't display (military roundels are unaffected, sourced separately) | — |
+| `SESSION_PHOTOS_PATH` | In-container mount path for your photo folder (see above) | `/app/photos` |
+
+The web server's own port is still controlled by one environment variable: `WEB_PORT` (defaults to `8088` inside the container — map it to whatever host port you want, per the Docker Compose example above).
 
 ---
 
 ## Data Persistence
 
-A SQLite database is created at `data/spotalert.db` on first run. It stores:
-
-- All filter-matched arrivals and their departure pairings
-- Rego, type, and airline/operator watchlists + exclusion list
-- Notification cooldown state for each filter
-- Sighting history — last landing timestamps per registration
-- Departure patterns — historical arrival→departure pairings with turnaround offsets
-- Airport and aircraft type reference caches
-- Fleet cards and Lightroom session cross-references
-- Pre-computed spotting window clusters (timeline cache)
+- **`data/control.db`** — accounts, roles, airport access, push subscriptions
+- **`data/spotalert.db`** + **`data/airports/{IATA}.db`** — one SQLite file per monitored airport: flight history, filters/watchlists, settings, reference caches
+- **`logs/`** — rolling log files for the web process and the monitor process
+- **`static/translations/`** — cached Chinese translations (avoids re-calling the translation API every time)
+- **`static/airline_logos/`** — cached airline logos / military roundels
+- **`static/session_thumbs/`** — thumbnails generated by the session photo preview feature
 
 A daily backup is saved to `data/backups/`, keeping the last 7 copies.
-
----
-
-## Utilities
-
-### backfill.py
-
-Seeds the database with historical FR24 data after first install. Populates sighting history, rare plane history, and departure patterns so the app has context before live traffic accumulates.
-
-```bash
-python backfill.py
-```
-
-### _seed_cookies.py
-
-Run locally to seed Cloudflare session cookies into the webapp container when FR24 access is blocked:
-
-```bash
-python _seed_cookies.py
-```
-
-### _seed_icao_types.py
-
-Seeds the aircraft type cache from the ICAOList.csv reference data. Run once after a DB reset:
-
-```bash
-python _seed_icao_types.py
-```
 
 ---
 
@@ -158,10 +212,12 @@ This project is released under the [MIT License](LICENSE).
 
 ### Third-party code and data
 
-**FlightRadarAPI** — The `flightradar24api/` module is a modified version of the [FlightRadarAPI](https://github.com/JeanExtreme002/FlightRadarAPI/tree/main/python) Python library by [JeanExtreme002](https://github.com/JeanExtreme002), released under the MIT License. Modifications: replaced `requests` with `cloudscraper` to bypass Cloudflare bot protection on `api.flightradar24.com`.
+**FlightRadarAPI** — The `flightradar24api/` module is a modified version of the [FlightRadarAPI](https://github.com/JeanExtreme002/FlightRadarAPI/tree/main/python) Python library by [JeanExtreme002](https://github.com/JeanExtreme002), released under the MIT License.
 
 **FlightRadar24 data** — This project accesses FlightRadar24's unofficial API. FlightRadar24's [Terms of Service](https://www.flightradar24.com/terms-and-conditions) restrict use of their data to **personal, non-commercial purposes only**. Do not use this project in any commercial context without obtaining a proper data licence from FlightRadar24.
 
-**adsb.fi open data** — Military aircraft data is sourced from [opendata.adsb.fi](https://opendata.adsb.fi). This data is provided for **personal, non-commercial use only**. See [adsb.fi](https://adsb.fi) for their full terms of use.
+**adsb.fi open data** — Military traffic data comes from [opendata.adsb.fi](https://opendata.adsb.fi). This data is for **personal, non-commercial use only** — see [adsb.fi](https://adsb.fi) for full terms.
 
-**AircraftMetadata Lightroom Plugin** — Aircraft metadata fields read from the Lightroom catalog (registration, airline, aircraft type, airport) are created by the [AircraftMetadata Lightroom Plugin](https://github.com/aviationphoto/AircraftMetadata-Lightroom-Plugin) by [aviationphoto](https://github.com/aviationphoto).
+**AircraftMetadata Lightroom Plugin** — Aircraft metadata fields (registration, airline, type, airport) read from your Lightroom catalog can be created by [aviationphoto](https://github.com/aviationphoto)'s [AircraftMetadata Lightroom Plugin](https://github.com/aviationphoto/AircraftMetadata-Lightroom-Plugin), or by SpotAlert Studio (`studio/` in this repo).
+
+**Logostream** — Airline tail logos are fetched via the [Logostream](https://airline.logostream.dev/) API (free tier). Thanks to Logostream for the logo data — SpotAlert only reaches out to this API if you supply your own `LOGOSTREAM_API_KEY`.

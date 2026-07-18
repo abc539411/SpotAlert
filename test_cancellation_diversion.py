@@ -26,7 +26,10 @@ except Exception:
 
 import monitor
 from store import SqliteStore
-import main as main_mod
+import bootstrap as main_mod  # AppConfig moved from main.py to bootstrap.py
+                               # when the monitor loop was split into its own
+                               # process (monitor_service.py) — kept the
+                               # "main_mod" alias to minimize the diff below.
 
 
 # ---------------------------------------------------------------------------

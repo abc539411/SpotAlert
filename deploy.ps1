@@ -3,7 +3,16 @@
 
 $HOSTKEY  = 'ssh-ed25519 255 SHA256:TfZ8zX7bUIW/C1MNzzQjxBIX1uOMcesh8nWrKS9hmwg'
 $DECK     = 'deck@192.168.4.135'
-$PASSWORD = 'REDACTED-DECK-PASSWORD'
+
+# Password lives in deploy.local.ps1 (gitignored, not committed). It must
+# set $DECK_PASSWORD. See deploy.local.ps1.example for the expected format.
+$localConfig = Join-Path $PSScriptRoot 'deploy.local.ps1'
+if (-not (Test-Path $localConfig)) {
+    throw "Missing $localConfig — copy deploy.local.ps1.example to deploy.local.ps1 and fill in `$DECK_PASSWORD."
+}
+. $localConfig
+$PASSWORD = $DECK_PASSWORD
+
 $SRC      = $PSScriptRoot
 $DEST     = '/home/deck/spotalert'
 $PSCP     = 'C:\Program Files\PuTTY\pscp.exe'

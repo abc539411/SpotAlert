@@ -764,6 +764,12 @@
     input[type="time"].setting-input { text-align: left; width: 130px; color-scheme: dark; }
     .setting-input:focus { outline: none; border-color: var(--accent); }
     .setting-control { display: flex; align-items: center; justify-content: flex-start; width: 160px; flex-shrink: 0; }
+    /* Filesystem paths need real room, and read better left-aligned (the
+       root of the path matters more than the tail when the box is narrower
+       than the full string) — the 80px right-aligned default is sized for
+       short numbers, not paths. */
+    .setting-control:has(input[data-key="SESSION_PHOTOS_PATH"]) { width: 320px; justify-content: flex-end; }
+    input.setting-input[data-key="SESSION_PHOTOS_PATH"] { width: 100%; text-align: left; }
 
     /* Segmented control */
     .seg-ctrl { display: flex; background: var(--surface); border: 1px solid var(--border); border-radius: 5px; padding: 2px; gap: 2px; flex-shrink: 0; }
@@ -1608,6 +1614,111 @@
     .col-ex-pill-code { padding: 0 8px; color: var(--pill-code-col); font-weight: 600; line-height: 1; }
     .col-ex-pill-sep { width: 1px; height: 100%; background: var(--pill-sep); flex-shrink: 0; }
     .col-ex-pill-count { padding: 0 8px; color: var(--pill-count-col); line-height: 1; }
+    .col-ex-pill-clickable { cursor: pointer; }
+    .srch-fl-row-clickable { cursor: pointer; border-radius: 6px; }
+    .col-sp-row-clickable { cursor: pointer; border-radius: 6px; }
+    .flt-rego-pill-clickable { cursor: pointer; }
+    /* Hover-only (not touch) — a stuck :hover state on tap would otherwise
+       leave these looking "selected" after a touchscreen tap that opens the
+       preview and then loses focus without a genuine pointer leave event. */
+    @media (hover: hover) {
+      .col-ex-pill-clickable:hover { border-color: var(--accent); background: rgba(59,130,246,0.15); }
+      /* .srch-fl-row's own resting background IS var(--surface2) — a hover
+         rule that just repeats that value is invisible, hence the accent
+         tint + border here instead. */
+      .srch-fl-row-clickable:hover { background: rgba(59,130,246,0.15); border-color: var(--accent); }
+      .col-sp-row-clickable:hover { background: rgba(59,130,246,0.15); }
+      .flt-rego-pill-clickable:hover { border-color: var(--accent); background: rgba(34,197,94,0.28); }
+    }
+    .sp-photos-overlay { display: none; position: fixed; inset: 0; z-index: 500; background: rgba(0,0,0,.8); align-items: center; justify-content: center; padding: 20px; }
+    .sp-photos-overlay.open { display: flex; }
+    /* On mobile the modal sizes to the photo itself (up to a cap). On desktop
+       it's pinned to a fixed width instead (see the @media block below) —
+       the extracted preview's native resolution varies a lot photo to photo
+       (it's whatever size the RAW file's own embedded preview happens to
+       be), so sizing off intrinsic dimensions there made some photos look
+       much smaller than others for reasons that have nothing to do with the
+       photo itself. Width-only keeps each photo's own aspect ratio (height
+       still auto) rather than cropping/letterboxing to force a fixed box. */
+    .sp-photos-modal {
+      position: relative; background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--r); overflow: hidden;
+      max-width: min(94vw, 1400px); max-height: 90vh;
+    }
+    .sp-photos-modal .sp-photo-img { display: block; max-width: min(94vw, 1400px); max-height: 90vh; width: auto; height: auto;
+      user-select: none; -webkit-user-drag: none; pointer-events: none; }
+    @media (min-width: 768px) {
+      .sp-photos-modal { width: 900px; }
+      .sp-photos-modal .sp-photo-img { width: 100%; max-width: none; height: auto; }
+    }
+    .sp-photo-close {
+      position: absolute; top: 10px; right: 10px; z-index: 3; cursor: pointer;
+      width: 30px; height: 30px; display: flex; align-items: center; justify-content: center;
+      background: rgba(0,0,0,0.55); color: #fff; border-radius: 50%; font-size: 20px; line-height: 1;
+      backdrop-filter: blur(3px);
+    }
+    /* The × glyph's own metrics sit slightly high/left of its em box in most
+       fonts — flex-centering the box alone doesn't correct for that. */
+    /* em-based, not px — the same fixed px offset looked right at the desktop
+       font-size but was visibly wrong at mobile's smaller one, since the ×
+       glyph's own optical-centering error scales with font-size. */
+    .sp-photo-close::before { content: '\00d7'; transform: translate(0, -0.1em); }
+    .sp-photo-close:hover { background: rgba(0,0,0,0.75); }
+    /* Same top-pill / bottom-gradient-fade treatment as the Feed's .sq photo cards */
+    .sp-photo-top {
+      position: absolute; top: 10px; left: 10px; right: 52px;
+      display: flex; align-items: flex-start; z-index: 2;
+    }
+    .sp-photo-rego {
+      background: rgba(0,0,0,0.55); color: #fff; display: inline-flex; align-items: center; gap: 5px;
+      font-size: 14px; font-weight: 700; letter-spacing: .04em;
+      padding: 3px 9px; border-radius: 5px; backdrop-filter: blur(3px);
+    }
+    .sp-photo-bottom {
+      position: absolute; bottom: 0; left: 0; right: 0; z-index: 2;
+      background: linear-gradient(to top, rgba(0,0,0,0.85) 0%, transparent 100%);
+      padding: 40px 12px 12px;
+    }
+    /* Date/airport pill sits in normal flow at the far end of a row (not
+       absolutely positioned) — wraps naturally instead of needing padding
+       reserved to dodge an overlay. On mobile it lives at the end of row1
+       (alongside manufacturer/type/airline); on desktop it's on row2
+       (alongside notes/tags) — see the JS for which row gets it. */
+    .sp-photo-row1 { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: #fff; font-size: 13px; margin-bottom: 5px; }
+    .sp-photo-row1-left { display: flex; align-items: center; gap: 6px; min-width: 0; }
+    .sp-photo-row2 { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+    .sp-photo-row2-left { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
+    /* Fixed, IDENTICAL height + line-height on both — align-items:center alone
+       isn't enough because the pill's border+padding and the notes' italic
+       glyph metrics give them naturally different box heights, so centering
+       each within its own box still leaves the two centers at different
+       pixel rows. Pinning both to the same height forces true alignment. */
+    .sp-photo-notes, .sp-photo-row2-left .col-sp-tag {
+      display: inline-flex; align-items: center; box-sizing: border-box;
+      height: 18px; line-height: 16px;
+    }
+    .sp-photo-notes { font-size: 11px; color: rgba(255,255,255,0.75); font-style: italic; }
+    .sp-photo-date {
+      display: inline-flex; align-items: center; gap: 3px; flex-shrink: 0;
+      background: rgba(0,0,0,0.45); color: rgba(255,255,255,0.85);
+      font-size: 11px; padding: 3px 8px; border-radius: 5px; backdrop-filter: blur(3px);
+      white-space: nowrap;
+    }
+    @media (min-width: 768px) {
+      .sp-photo-rego { font-size: 18px; padding: 5px 12px; }
+      .sp-photo-date { font-size: 14px; padding: 5px 11px; }
+      .sp-photo-bottom { padding: 56px 18px 18px; }
+      .sp-photo-row1 { font-size: 17px; margin-bottom: 8px; }
+      .sp-photo-row1-left { gap: 9px; }
+      .sp-photo-row1-left .mfr { font-size: 12px; height: 20px; padding: 0 7px; }
+      .sp-photo-row2 { gap: 10px; }
+      .sp-photo-row2-left { gap: 7px; }
+      .sp-photo-notes, .sp-photo-row2-left .col-sp-tag { height: 22px; line-height: 20px; }
+      .sp-photo-notes { font-size: 14px; }
+      .sp-photo-row2-left .col-sp-tag { font-size: 11px; padding: 0 6px; }
+      .sp-photo-close { width: 36px; height: 36px; font-size: 24px; }
+    }
+    .sp-photos-empty, .sp-photos-loading { color: var(--dim); font-size: 13px; padding: 40px 60px; text-align: center; }
     .col-session-popover { display: none; position: fixed; z-index: 200; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); padding: 10px 13px; min-width: 480px; max-width: 600px; box-shadow: 0 6px 24px rgba(0,0,0,.5); pointer-events: none; }
     .col-session-popover:not(.hidden) { display: block; }
     .col-session-popover.pinned { pointer-events: auto; max-height: 70vh; overflow-y: auto; border-color: var(--accent); }
@@ -2265,6 +2376,12 @@
             <div class="section-heading" data-i18n="collection.sessionTags.heading">Session Panel Tags</div>
             <div class="card-desc" data-i18n="collection.sessionTags.desc">Choose which Lightroom keywords trigger display in the Sessions expanded panel. All tags selected (or none deselected) shows everything.</div>
             <div id="st-tags-list" style="display:flex;flex-wrap:wrap;gap:6px;min-height:28px"><span class="detail" data-i18n="collection.openToLoad">Open this tab to load…</span></div>
+          </div>
+
+          <div class="page-col-block" id="settings-card-session-photos-path">
+            <div class="section-heading" data-i18n="collection.photosPath.heading">Session Photos Path</div>
+            <div class="card-desc" data-i18n="collection.photosPath.desc">Container-internal path where your spotting-photo folder is mounted, used for the session-photo preview feature (Collection/Feed/Search/Fleet). You must mount your photo folder to this exact path yourself in docker-compose.yml — this setting only tells the app where to look, it does not create the mount.</div>
+            <div class="settings-group" id="settings-collection"></div>
           </div>
         </div>
 

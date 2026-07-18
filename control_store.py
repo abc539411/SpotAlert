@@ -134,6 +134,18 @@ class ControlStore:
                 )
             """)
 
+            # Cross-process signal: the web process and monitor process are separate
+            # OS processes (see monitor_service.py), so /api/force-check can't just
+            # set an in-process asyncio.Event anymore — it writes a row here instead,
+            # which the monitor process's force-check poller (monitor_runner.py)
+            # picks up on its next poll tick and deletes once handled.
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS force_check_requests (
+                    airport_iata  TEXT PRIMARY KEY,
+                    requested_ts  INTEGER NOT NULL
+                )
+            """)
+
             conn.execute("PRAGMA foreign_keys = ON;")
 
     # ── Users ──────────────────────────────────────────────────────────────
@@ -508,3 +520,31 @@ class ControlStore:
         with self._connect() as conn:
             conn.execute("DELETE FROM watched_airports WHERE airport_iata = ?", (airport_iata,))
             conn.execute("DELETE FROM user_airport_access WHERE airport_iata = ?", (airport_iata,))
+
+    # ── Force-check cross-process signal ─────────────────────────────────────
+
+    def request_force_check(self, airport_iata: str) -> None:
+        """Called by /api/force-check (web process). Upsert rather than insert-only
+        so a second click before the first request is picked up just refreshes the
+        timestamp instead of erroring on the PRIMARY KEY."""
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO force_check_requests(airport_iata, requested_ts) VALUES (?, ?) "
+                "ON CONFLICT(airport_iata) DO UPDATE SET requested_ts=excluded.requested_ts",
+                (airport_iata, int(time.time())),
+            )
+
+    def pop_pending_force_check(self, airport_iata: str) -> bool:
+        """Called by the monitor process's force-check poller. Returns True (and
+        deletes the row) if a check was requested for this airport since the last
+        poll — the DELETE-if-exists happens in one connection so two pollers could
+        never both claim the same request, though in practice there's only ever
+        one monitor process per the role-scoped instance lock in bootstrap.py."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM force_check_requests WHERE airport_iata = ?", (airport_iata,)
+            ).fetchone()
+            if row is None:
+                return False
+            conn.execute("DELETE FROM force_check_requests WHERE airport_iata = ?", (airport_iata,))
+            return True

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import re
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Optional, Tuple
 
 import pytz
@@ -298,6 +300,82 @@ _MFR_KEYWORDS = [
     ('bae', 'BAE Systems'),
     ('sukhoi', 'Sukhoi'),
 ]
+
+
+def _clean_airline_name(airline_raw: str) -> str:
+    """Strips FR24's trailing parenthetical livery/sticker descriptor AND a bare
+    "Sticker(s)"/"Livery/Liveries" qualifier word left dangling in front of it
+    (e.g. "GX Airlines Sticker (Cultural Jining (文化济宁))" -> "GX Airlines") —
+    some airlines' FR24 name field bakes that qualifier into the visible name
+    itself rather than keeping it purely inside the parenthetical, which
+    otherwise leaked into the displayed airline name/detail line instead of
+    staying part of the livery description (extra_info)."""
+    airline = re.sub(r'\s*\(.*\)', '', airline_raw or '').strip()
+    airline = re.sub(r'\s*(liveries|livery|stickers?)\s*$', '', airline, flags=re.IGNORECASE).strip()
+    return airline
+
+
+# Shared read-only view of the same cache web.py's /translate-names endpoint
+# writes to (static/translations/names_zh.json). Push notifications are sent
+# from this separate process and can't reach into web.py's in-request Baidu
+# call, so this only ever reads whatever's already cached — if a name hasn't
+# been translated yet (nobody's opened a card for it in the UI), the push
+# just falls back to English rather than blocking notification delivery on
+# a live translation API call.
+_TRANSLATE_CACHE_PATH = Path(__file__).parent / "static" / "translations" / "names_zh.json"
+
+def _zh_name_lookup(name: str) -> str:
+    if not name:
+        return name
+    try:
+        cache = json.loads(_TRANSLATE_CACHE_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return name
+    if name in cache:
+        return cache[name]
+    lname = name.lower()
+    for k, v in cache.items():
+        if k.lower() == lname:
+            return v
+    return name
+
+
+# Mirrors static/app.js's tLiveryName — the push body and the in-app card
+# should describe the same livery/sticker string the same way in Chinese.
+_LIVERY_FULL_ZH = {
+    'skyteam': '天合联盟涂装',
+    'skyteam livery': '天合联盟涂装',
+    'star alliance': '星空联盟涂装',
+    'star alliance livery': '星空联盟涂装',
+    'retro livery': '复古涂装',
+    'retro': '复古涂装',
+    'oneworld': '寰宇一家涂装',
+    'oneworld livery': '寰宇一家涂装',
+    'one world': '寰宇一家涂装',
+    'one world livery': '寰宇一家涂装',
+}
+
+def _zh_livery_label(name: str) -> str:
+    if not name:
+        return name
+    full = _LIVERY_FULL_ZH.get(name.strip().lower())
+    if full:
+        return full
+    # Bilingual FR24 livery names embed a Chinese translation in their own
+    # parenthetical, e.g. "Cultural Jining (文化济宁)" — show just that part
+    # with the usual 涂装 suffix (see tLiveryName's identical comment for why
+    # the livery/sticker distinction isn't recoverable in this branch).
+    cjk_match = re.search(r'\(([^)]*[一-鿿][^)]*)\)', name)
+    if cjk_match:
+        return f"{cjk_match.group(1).strip()} 涂装"
+    m = re.match(r'^(.*?)\s*(liveries|livery|stickers?)\s*$', name, flags=re.IGNORECASE)
+    if not m:
+        return name
+    base = m.group(1).strip()
+    if not base:
+        return name
+    suffix = '涂装' if m.group(2).lower().startswith('liver') else '贴纸'
+    return f"{base} {suffix}"
 
 
 def _derive_manufacturer(model_text: str):
@@ -920,12 +998,12 @@ async def _enrich_and_store(
     airline_raw   = (flight.get("airline") or {}).get("name") or (flight.get("owner") or {}).get("name") or ""
     arr_airline_icao = _safe_get(flight, "airline", "code", "icao") or ""
     aircraft_code = _safe_get(flight, "aircraft", "model", "code", default="")
-    clean_airline = re.sub(r'\s*\(.*?\)', '', airline_raw).strip()
+    clean_airline = _clean_airline_name(airline_raw)
     detail = f"{clean_airline} ({aircraft_code})" if clean_airline and aircraft_code else (clean_airline or aircraft_code)
 
     extra_info = ""
     if "Special Livery" in notif_types:
-        m = re.search(r'\((.+?)\)', airline_raw)
+        m = re.search(r'\((.*)\)', airline_raw)
         extra_info = m.group(1) if m else airline_raw
 
     _origin     = (flight.get("airport") or {}).get("origin") or {}
@@ -1102,7 +1180,17 @@ async def _send_filter_match_push(cfg, registration: str, notif_types: list, det
             # title alone doesn't say which registration matched). Every
             # other type already conveys what matters via detail/extra_info.
             _body_rego = registration if _primary_type == "Watchlist Registration" else ""
-            _body = " · ".join(p for p in (cfg.airport_iata, detail, _body_rego, extra_info) if p)
+            if _lang == "zh":
+                # detail is always "{airline} ({aircraft_code})" or just one of
+                # the two (see _clean_airline_name's caller) — translate only
+                # the airline half via the same cache the in-app card reads,
+                # leave the aircraft type code as-is (not a translatable name).
+                _dm = re.match(r'^(.*?)\s*(\([^()]*\))?$', detail)
+                _detail_zh = f"{_zh_name_lookup(_dm.group(1))} {_dm.group(2)}".strip() if _dm and _dm.group(2) \
+                    else _zh_name_lookup(detail)
+                _body = " · ".join(p for p in (cfg.airport_iata, _detail_zh, _body_rego, _zh_livery_label(extra_info)) if p)
+            else:
+                _body = " · ".join(p for p in (cfg.airport_iata, detail, _body_rego, extra_info) if p)
             _push.send_push_to_user(
                 cstore, push_owner_id,
                 title=_title,
@@ -1398,10 +1486,8 @@ async def run_check(context: ContextTypes.DEFAULT_TYPE) -> None:
             return str(v).strip().upper() if v and str(v).strip() not in ("N/A", "N\\A", "") else None
 
         def _airline(flight):
-            import re as _re
             raw = _safe_get(flight, "airline", "name", default="") or ""
-            name = _re.sub(r'\s*\(.+?\)', '', raw).strip()
-            return name or None
+            return _clean_airline_name(raw) or None
 
         for reg, flights in all_arrivals.items():
             for flight in flights:
@@ -2588,13 +2674,14 @@ async def _send_notification(
         extra_info = ""
         if notification_type == "Special Livery":
             airline_name = (flight.get("airline") or {}).get("name") or ""
-            match = re.search(r'\((.+?)\)', airline_name)
+            # Greedy — see _enrich_and_store's identical fix for why.
+            match = re.search(r'\((.*)\)', airline_name)
             extra_info = match.group(1) if match else airline_name
 
         airline_raw   = (flight.get("airline") or {}).get("name") or \
                         (flight.get("owner") or {}).get("name") or ""
         aircraft_code = _safe_get(flight, "aircraft", "model", "code", default="")
-        clean_airline = re.sub(r'\s*\(.*?\)', '', airline_raw).strip()
+        clean_airline = _clean_airline_name(airline_raw)
         if clean_airline and aircraft_code:
             detail = f"{clean_airline} ({aircraft_code})"
         else:
@@ -2762,7 +2849,8 @@ def _classify_new_aircraft(flight: dict, registration: str, cfg) -> Optional[str
     airline_name = (flight.get("airline") or {}).get("name") or ""
 
     if any(kw in airline_name for kw in cfg.livery_keywords):
-        match = re.search(r'\((.+?)\)', airline_name)
+        # Greedy — see _enrich_and_store's identical fix for why.
+        match = re.search(r'\((.*)\)', airline_name)
         livery = match.group(1) if match else airline_name
         return f"Special Livery — {livery}"
 

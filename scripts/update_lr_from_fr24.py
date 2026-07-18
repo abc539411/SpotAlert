@@ -110,10 +110,18 @@ def _parse_fr24(result: dict) -> Tuple[str, str, str, str]:
         aircraft_type = (info.get("model") or {}).get("code") or ""
         model_text    = (info.get("model") or {}).get("text") or ""
 
-    base_airline = re.sub(r"\s*\(.+?\)", "", airline_raw).strip()
+    # Greedy — a livery name with its OWN nested parens (a bilingual FR24 name
+    # like "Sticker (Cultural Jining (文化济宁))") would otherwise split at the
+    # INNER ")", leaving stray unmatched parens in base_airline/livery.
+    base_airline = re.sub(r"\s*\(.*\)", "", airline_raw).strip()
+    # Some airlines' FR24 name field bakes a "Sticker(s)"/"Livery/Liveries"
+    # qualifier into the visible name itself, ahead of the parenthetical, e.g.
+    # "GX Airlines Sticker (...)" — that belongs with the livery description,
+    # not the airline name.
+    base_airline = re.sub(r"\s*(liveries|livery|stickers?)\s*$", "", base_airline, flags=re.IGNORECASE).strip()
     if base_airline.lower() == "private owner":
         base_airline = "Private Owner"
-    m = re.search(r"\((.+?)\)", airline_raw)
+    m = re.search(r"\((.*)\)", airline_raw)
     livery = m.group(1).strip() if m else ""
     airline = f"{base_airline} ({icao_code})" if icao_code else base_airline
     return airline, aircraft_type, _derive_manufacturer(model_text), livery

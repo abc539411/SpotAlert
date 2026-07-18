@@ -127,7 +127,11 @@ def _parse_fr24_airline(result: dict) -> Tuple[str, str]:
 
     airline_raw = airline_obj.get("name") or ""
     icao_code   = (airline_obj.get("code") or {}).get("icao") or ""
-    base_name   = re.sub(r"\s*\(.+?\)", "", airline_raw).strip()
+    # Greedy — see monitor.py's _enrich_and_store for why (nested-parens livery names).
+    base_name   = re.sub(r"\s*\(.*\)", "", airline_raw).strip()
+    # Some airlines' FR24 name field bakes a "Sticker(s)"/"Livery/Liveries"
+    # qualifier into the visible name itself — see monitor.py's _clean_airline_name.
+    base_name   = re.sub(r"\s*(liveries|livery|stickers?)\s*$", "", base_name, flags=re.IGNORECASE).strip()
     if base_name.lower() == "private owner":
         base_name = "Private Owner"
     airline = f"{base_name} ({icao_code})" if icao_code else base_name

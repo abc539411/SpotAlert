@@ -124,6 +124,8 @@ const I18N = {
     'collection.statKeywords.desc': '选择 3 个 Lightroom 关键词，用于在收藏仪表盘中显示唯一注册号数量。',
     'collection.sessionTags.heading': '拍摄记录面板标签',
     'collection.sessionTags.desc': '选择哪些 Lightroom 关键词会在拍摄记录展开面板中显示。全选（或全不选）则显示全部。',
+    'collection.photosPath.heading': '拍摄照片路径',
+    'collection.photosPath.desc': '容器内挂载您拍机照片文件夹的路径，用于收藏/动态/搜索/机队标签页的照片预览功能。您需要在 docker-compose.yml 中自行将照片文件夹挂载到此确切路径 — 此设置仅告知应用去哪里查找，并不会创建挂载。',
     'collection.openToLoad': '打开此标签页以加载…',
     'collection.ph.airportCode': '机场代码',
     'collection.ph.airportName': '机场名称',
@@ -180,6 +182,7 @@ const SETTINGS_I18N_ZH = {
   SPECIAL_LIVERY_KEYWORDS:         { label: '关键词', desc: '若航空公司名称包含以下任一词语（不区分大小写）则视为匹配，例如 "retro"、"special"。' },
   SPECIAL_LIVERY_EXCLUDE_KEYWORDS: { label: '排除关键词', desc: '若航空公司名称包含以下任一词语，则不予匹配 — 用于屏蔽常规涂装。' },
   RARE_PLANE_MIN_ABSENCE_DAYS: { label: '最短未出现天数', desc: '仅当某机型至少这么多天未在本机场出现时，才视为"稀有"。' },
+  SESSION_PHOTOS_PATH: { label: '挂载路径', desc: '照片文件夹在容器内的挂载路径（见 docker-compose.yml）。默认为 /app/photos。' },
   MILITARY_CHECK_INTERVAL_MINUTES: { label: '检查频率', desc: '查询 adsb.fi 获取机场附近军机动态的频率。' },
   MILITARY_RADIUS_NM:              { label: '探测半径', desc: '仅考虑此半径范围内的军机。数值越小误报越少。' },
   MILITARY_MAX_ALT_FT:             { label: '最高高度', desc: '忽略高空过境飞机 — 仅提醒可能适合拍摄的低空活动。' },
@@ -288,6 +291,7 @@ const UI_ZH = {
   'Now': '当前时间',
   'Arr. From': '到达自', 'At': '位于', 'Next Dep.': '下一班起飞',
   'Last Visit': '上次到访', 'Spotted': '已拍摄', 'Last Spotted': '上次拍摄', 'Last Seen': '上次出现', 'Never': '从未',
+  'First visit': '首次到访',
   'From': '来自',
   'No arrivals in the past 30 days': '过去 30 天内无到达记录',
   'Arrivals · past 30 days': '到达记录 · 过去 30 天',
@@ -320,6 +324,8 @@ const UI_ZH = {
   'No airports assigned to your account yet.': '您的账户尚未分配任何机场。',
   'Passwords do not match': '两次输入的密码不一致',
   'Loading…': '加载中…',
+  'No photos found.': '未找到照片。',
+  'Failed to load photos.': '照片加载失败。',
   'Edit': '编辑', 'Delete': '删除',
   'No users yet.': '暂无用户。',
   'Could not load users.': '无法加载用户列表。',
@@ -428,6 +434,15 @@ function tLiveryName(name) {
   if (_lang !== 'zh' || !name) return name;
   const full = _LIVERY_FULL_ZH[name.trim().toLowerCase()];
   if (full) return full;
+  // Bilingual FR24 livery names embed a Chinese translation in their own
+  // parenthetical, e.g. "Cultural Jining (文化济宁)" — with the UI already in
+  // Chinese, showing the English name alongside its own translation is
+  // redundant. Show just the Chinese portion with the usual 涂装 suffix (the
+  // livery/sticker distinction the plain-English branch below makes isn't
+  // recoverable here — that word lives outside the parenthetical this text
+  // was extracted from — so this always uses the more general term).
+  const cjkMatch = name.match(/\(([^)]*[一-鿿][^)]*)\)/);
+  if (cjkMatch) return `${cjkMatch[1].trim()} 涂装`;
   const m = name.match(/^(.*?)\s*(liveries|livery|stickers?)\s*$/i);
   if (!m) return name;
   const base = m[1].trim();
@@ -530,20 +545,32 @@ function tExternalName(name) {
 async function _translateNamesForZh(names) {
   if (_lang !== 'zh') return;
   const need = [...new Set(names.filter(n => n && !_nameTranslationCache[_extNameKey(n)]))];
-  if (!need.length) return;
-  try {
-    const data = await api('/translate-names', { method: 'POST', body: JSON.stringify({ names: need }) });
-    for (const [k, v] of Object.entries(data.translations || {})) {
-      _nameTranslationCache[_extNameKey(k)] = v;
-    }
-    document.querySelectorAll('[data-ext-name]').forEach(el => {
-      const orig = el.dataset.extName;
-      const val = _nameTranslationCache[_extNameKey(orig)];
-      if (val) {
-        el.textContent = el.dataset.extCity ? _cityNameZh(val) : val;
+  if (need.length) {
+    try {
+      const data = await api('/translate-names', { method: 'POST', body: JSON.stringify({ names: need }) });
+      for (const [k, v] of Object.entries(data.translations || {})) {
+        _nameTranslationCache[_extNameKey(k)] = v;
       }
-    });
-  } catch (e) { /* graceful fallback to English — no user-facing error */ }
+    } catch (e) { /* graceful fallback to English — no user-facing error */ }
+  }
+  // Always patch, even when nothing new needed fetching — this loop is the
+  // ONLY thing that ever swaps translated text into a `data-ext-name`
+  // element's DOM node (route-bar spans render their synchronous fallback
+  // text directly, e.g. the raw English `origin_city` on mobile — see
+  // _renderRouteBar — never _routeAirportDisp's own already-cached-aware
+  // lookup). A card opened AFTER its airport name was already cached by an
+  // earlier _translateNamesForZh() call hits the `need.length === 0` case
+  // every time, so returning early here used to skip this loop entirely for
+  // that card's freshly-created elements — they'd stay on their English
+  // fallback forever, even though the translation was sitting right there in
+  // _nameTranslationCache the whole time.
+  document.querySelectorAll('[data-ext-name]').forEach(el => {
+    const orig = el.dataset.extName;
+    const val = _nameTranslationCache[_extNameKey(orig)];
+    if (val) {
+      el.textContent = el.dataset.extCity ? _cityNameZh(val) : val;
+    }
+  });
 }
 
 // Resolves key against the current language, falling back to origEnglish
@@ -758,6 +785,11 @@ function _applyRoleUI(role) {
     const el = $(id);
     if (el) el.classList.toggle('hidden', isPilot);
   });
+  // Session-photo preview is a Controller-only feature (see _spOpenPhotos'
+  // _appRole check) — Pilots/Passengers have no use for its mount-path
+  // config and shouldn't see a container filesystem path at all.
+  const photosPathCard = $('settings-card-session-photos-path');
+  if (photosPathCard) photosPathCard.classList.toggle('hidden', !isController);
 
   // Operational/monitoring-internals Settings subtabs — Controller-only,
   // hidden entirely (not just disabled) for Pilot and Passenger alike.
@@ -841,6 +873,15 @@ async function _authBoot() {
     _lang = me.user.language;
     localStorage.setItem('spotalert-lang', _lang);
     applyI18n();
+  } else if (!me.user.language && _lang !== 'en') {
+    // The server has no language on file but this device's localStorage does
+    // (set by setLanguage() below) — the PUT that was supposed to persist it
+    // must have failed silently at the time (offline, expired session, etc;
+    // that call is fire-and-forget with no retry). Push notifications read
+    // the server-side value directly, so a permanently-unsynced preference
+    // here means the UI looks fully translated while push text never
+    // matches — resync now, every boot, until it actually lands.
+    api('/me/language', { method: 'PUT', body: JSON.stringify({ language: _lang }) }).catch(() => {});
   }
   if (!me.airport) {
     _renderAirportPicker(me.airports || [], me.user.role, me.user.username);
@@ -992,7 +1033,7 @@ function _shortAirportName(name) {
 // (e.g. "奥克兰机场") and stripping English words like "International" from
 // it would do nothing useful. English keeps the shortened form as before.
 function _airportDisplayName(name) {
-  if (_lang === 'zh' && _nameTranslationCache[name]) return _cityNameZh(_nameTranslationCache[name]);
+  if (_lang === 'zh' && _nameTranslationCache[_extNameKey(name)]) return _cityNameZh(_nameTranslationCache[_extNameKey(name)]);
   return _shortAirportName(name);
 }
 
@@ -2175,6 +2216,27 @@ async function openDetail(el) {
     requestAnimationFrame(() => requestAnimationFrame(() => panel.classList.add('open')));
   }
 
+  // Defensive re-check, AFTER the modal/panel HTML above is already in the DOM
+  // (its data-ext-name elements must exist before this can find/patch them —
+  // calling this earlier, before render, was itself a bug: when every name is
+  // already cached _translateNamesForZh() never awaits anything and its
+  // DOM-patch loop runs synchronously to completion before there's anything
+  // for it to find). loadFeed() already fires ONE upfront batch covering
+  // every card's names, but that's a single fire-and-forget call — if it's
+  // still in flight, failed, or for any reason didn't end up covering this
+  // specific card's names, this card's own route bar would otherwise be
+  // stuck showing English forever (nothing else ever re-requests it). Cheap
+  // regardless: _translateNamesForZh() already skips any name that's already
+  // cached, so this is a no-op network-wise for the common case where the
+  // upfront batch already covered it — it just re-runs the DOM-patch pass
+  // against THIS modal's fresh elements using whatever's already cached.
+  _translateNamesForZh([
+    _cardAirlineName(r),
+    ...(r.flights || []).flatMap(f => [f.origin_name, f.dep_dest_name]),
+    // Legacy single-row card shape (r.flights absent) carries these directly on r.
+    r.origin_name, r.dep_dest_name,
+  ].filter(Boolean));
+
   // Fire and forget: lazy-load Last Spotted (and route bar for legacy cards)
   const lazyUid = r.flights
     ? ('rego_' + r.registration)
@@ -2399,7 +2461,7 @@ async function _loadAircraftDetail(registration, uid, r) {
           lsEl.textContent = _fmtLastSeen(data.prev_seen_ts) || '—';
           lsEl.style.color = '';
         } else {
-          lsEl.textContent = 'First visit';
+          lsEl.textContent = tt('First visit');
         }
       }
       const spotEl = document.getElementById(placeholderId + '-spotted');
@@ -2424,7 +2486,12 @@ const pills = sessions.map(s => {
               : esc(apt);
             const sesNotes = (s.notes || '').trim().toLowerCase();
             const hl = isLivery && curLivery && sesNotes && sesNotes === curLivery;
-            return `<span class="col-ex-pill${hl ? ' col-ex-pill-hl' : ''}">` +
+            const isoDate = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+            const clickable = _appRole === 'controller' && apt;
+            const clickAttrs = clickable
+              ? ` class="col-ex-pill${hl ? ' col-ex-pill-hl' : ''} col-ex-pill-clickable" onclick="_spOpenPhotos('${esc(registration)}','${esc(apt)}','${isoDate}')"`
+              : ` class="col-ex-pill${hl ? ' col-ex-pill-hl' : ''}"`;
+            return `<span${clickAttrs}>` +
               `<span class="col-ex-pill-code">${codePart}</span>` +
               `<span class="col-ex-pill-sep"></span>` +
               `<span class="col-ex-pill-count" style="color:var(--text)">${dateLabel}</span>` +
@@ -2506,7 +2573,7 @@ function _cityNameZh(name) {
 }
 
 function _routeAirportDisp(name) {
-  if (_lang === 'zh' && _nameTranslationCache[name]) return _cityNameZh(_nameTranslationCache[name]);
+  if (_lang === 'zh' && _nameTranslationCache[_extNameKey(name)]) return _cityNameZh(_nameTranslationCache[_extNameKey(name)]);
   return _cityName(name);
 }
 
@@ -2851,6 +2918,8 @@ const SETTINGS_SCHEMA = [
   { group: 'livery', key: 'SPECIAL_LIVERY_EXCLUDE_KEYWORDS',   label: 'Exclude Keywords',     desc: 'If the airline name contains any of these words the match is suppressed — use to block standard liveries.',      type: 'tags', restart: true },
   // Rare Plane
   { group: 'rare', key: 'RARE_PLANE_MIN_ABSENCE_DAYS',         label: 'Minimum Days Absent',  desc: 'An aircraft type is only considered "rare" if it hasn\'t been seen at this airport for at least this many days.', type: 'number', min: 1, max: 365, unit: 'days', restart: true },
+  // Collection — session photo preview
+  { group: 'collection', key: 'SESSION_PHOTOS_PATH', label: 'Mount Path', desc: 'Container-internal path your photo folder is mounted at (see docker-compose.yml). Defaults to /app/photos.', placeholder: '/app/photos' },
   // Military — Scanning
   { group: 'mil-scan',  key: 'MILITARY_CHECK_INTERVAL_MINUTES', label: 'Check Frequency',        desc: 'How often to query adsb.fi for military traffic near the airport.',                                              type: 'number', min: 1,  max: 60,   unit: 'minutes', restart: true },
   { group: 'mil-scan',  key: 'MILITARY_RADIUS_NM',              label: 'Detection Radius',       desc: 'Only consider military aircraft within this radius of the airport. Smaller = fewer false positives.',             type: 'number', min: 10, max: 500,  unit: 'nm', restart: true },
@@ -2925,7 +2994,7 @@ function _settingControl(item, value) {
           `<option value="${esc(val)}"${String(v) === val ? ' selected' : ''}>${esc(lbl)}</option>`
         ).join('')}</select>`;
     default:
-      return `<input class="setting-input" data-key="${k}" value="${esc(String(v))}" placeholder="—">`;
+      return `<input class="setting-input" data-key="${k}" value="${esc(String(v))}" placeholder="${esc(item.placeholder || '—')}">`;
   }
 }
 
@@ -3214,14 +3283,14 @@ function loadTab(name) {
       _srchDDCreate('srch-dd-mfr',        tt('All Manufacturer'), [], () => _srchFlFilter());
       _srchDDCreate('srch-dd-airline',    tt('All Airline'),      [], () => _srchFlFilter());
       _srchDDCreate('srch-dd-type',       tt('All Type'),         [], () => _srchFlFilter());
-      _srchDDCreate('srch-dd-rt-origin',  tt('All Origins'),      [], () => { _srchRtMirror('origin'); _srchRtRun(true); });
-      _srchDDCreate('srch-dd-rt-dest',    tt('All Destinations'), [], () => { _srchRtMirror('dest');   _srchRtRun(true); });
-      _srchDDCreate('srch-dd-rt-airline', tt('All Airlines'),     [], () => _srchRtRun(true));
-      _srchDDCreate('srch-dd-cat-mfr',    tt('All Manufacturers'),[], () => _srchRun(true));
-      _srchDDCreate('srch-dd-cat-type',   tt('All Types'),        [], () => _srchRun(true));
-      _srchDDCreate('srch-dd-cat-airline',tt('All Airlines'),     [], () => _srchRun(true));
-      _srchDDCreate('srch-dd-cat-airport',tt('All Airports'),     [], () => _srchRun(true));
-      _srchDDCreate('srch-dd-cat-keyword',tt('All Keywords'),     [], () => _srchRun(true));
+      _srchDDCreate('srch-dd-rt-origin',  tt('All Origins'),      [], () => { _srchRtMirror('origin'); _srchRtRun(window.innerWidth >= 768); });
+      _srchDDCreate('srch-dd-rt-dest',    tt('All Destinations'), [], () => { _srchRtMirror('dest');   _srchRtRun(window.innerWidth >= 768); });
+      _srchDDCreate('srch-dd-rt-airline', tt('All Airlines'),     [], () => _srchRtRun(window.innerWidth >= 768));
+      _srchDDCreate('srch-dd-cat-mfr',    tt('All Manufacturers'),[], () => _srchRun(window.innerWidth >= 768));
+      _srchDDCreate('srch-dd-cat-type',   tt('All Types'),        [], () => _srchRun(window.innerWidth >= 768));
+      _srchDDCreate('srch-dd-cat-airline',tt('All Airlines'),     [], () => _srchRun(window.innerWidth >= 768));
+      _srchDDCreate('srch-dd-cat-airport',tt('All Airports'),     [], () => _srchRun(window.innerWidth >= 768));
+      _srchDDCreate('srch-dd-cat-keyword',tt('All Keywords'),     [], () => _srchRun(window.innerWidth >= 768));
       _srchFiltersTs = Date.now();
       _srchFlLoadFilters();
       _srchRtLoadFilters();
@@ -3496,7 +3565,13 @@ function _fleetCardHtml(card, idx) {
       const flag = cc ? `<span class="flt-pill-flag">${_flagEmoji(cc, 12)}</span>` : '';
       const isWatched = a.photos === 0 && _fleetWatched.has(a.registration);
       const cls = a.photos > 0 ? 'flt-pill--have' : isWatched ? 'flt-pill--watched' : 'flt-pill--miss';
-      const clickAttr = a.photos === 0 && !isWatched ? `onclick="_fleetPillClick(this,'${esc(a.registration)}')"` : '';
+      const havePreviewable = a.photos > 0 && _appRole === 'controller' && a.last_date && a.last_ap_iata;
+      const clickAttr = a.photos === 0 && !isWatched
+        ? `onclick="_fleetPillClick(this,'${esc(a.registration)}')"`
+        : havePreviewable
+          ? `onclick="_spOpenPhotos('${esc(a.registration)}','${esc(a.last_ap_iata)}','${esc(a.last_date)}')"`
+          : '';
+      const pillCls = havePreviewable ? `${cls} flt-rego-pill-clickable` : cls;
       let right = '';
       if (a.photos > 0 && a.last_date) {
         const apFlag = a.last_ap_cc ? `<span class="flt-ap-flag">${_flagEmoji(a.last_ap_cc, 10)}</span>` : '';
@@ -3505,7 +3580,7 @@ function _fleetCardHtml(card, idx) {
         const sep = date && apCode ? '&nbsp;&nbsp;·&nbsp;&nbsp;' : '';
         right = `<span class="flt-pill-ct">${date}${sep}${apFlag}${apCode ? ' ' + esc(apCode) : ''}</span>`;
       }
-      return `<span class="flt-rego-pill ${cls}" ${clickAttr}>${flag}${esc(a.registration)}${right}</span>`;
+      return `<span class="flt-rego-pill ${pillCls}" ${clickAttr}>${flag}${esc(a.registration)}${right}</span>`;
     }).join('');
     return header + `<div id="flt-g-${key}" class="flt-pill-wrap" style="display:${open ? 'flex' : 'none'}">${acRows}</div>`;
   }).join('');
@@ -3653,7 +3728,7 @@ function _flagEmoji(cc, h = 16) {
   return `<img src="https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/svg/${code}.svg" style="height:${h}px;width:auto;vertical-align:middle;flex-shrink:0">`;
 }
 
-const _LOGO_V = 4;  // bump to bust SW logo cache when server-side logic changes
+const _LOGO_V = 6;  // bump to bust SW logo cache when server-side logic changes
 function _airlineLogoByIcao(icao, size = 28, fallbackName = '') {
   if (!icao && !fallbackName) return '';
   const src = icao
@@ -4016,14 +4091,19 @@ function _colShowSessionPopover(row, pin) {
       const rows = aircraft.map(a => {
         const badge = a.manufacturer ? `<span class="mfr mfr-${a.manufacturer.toLowerCase().replace(/\s+/g,'-')}">${a.manufacturer}</span>` : '';
         const tagHtml = a.tags.map(t => `<span class="col-sp-tag ${_colTagClass(t)}">${t}</span>`).join('');
+        const clickable = _appRole === 'controller' && a.reg;
+        const clickCls  = clickable ? ' col-sp-row-clickable' : '';
+        const clickAttr = clickable
+          ? ` onclick="_spOpenPhotos('${esc(a.reg)}','${esc(airport)}','${esc(date)}')"`
+          : '';
         if (window.innerWidth < 768) {
-          return `<div class="col-sp-row col-sp-row-m">
+          return `<div class="col-sp-row col-sp-row-m${clickCls}"${clickAttr}>
             <div class="col-sp-m-row1"><span class="col-sp-reg">${esc(a.reg)}</span>${badge}</div>
             <div class="col-sp-m-row2">${[a.aircraft_type, a.airline].filter(Boolean).join(' · ')}</div>
             <div class="col-sp-tags">${tagHtml}</div>
           </div>`;
         }
-        return `<div class="col-sp-row">
+        return `<div class="col-sp-row${clickCls}"${clickAttr}>
           <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
             <span class="col-sp-reg">${esc(a.reg)}</span>
             <span class="col-sp-meta">${[badge+a.aircraft_type, a.airline].filter(p=>p.replace(/<[^>]+>/g,'').trim()).join('<span style="color:var(--border);margin:0 2px">·</span>')}</span>
@@ -4075,14 +4155,19 @@ function _colInitSessionPopover() {
             const notesHtml = (a.notes && a.tags.includes('Special Livery'))
               ? `<span style="font-size:11px;color:var(--dim);margin-right:2px">${esc(tLiveryName(a.notes))}</span>` : '';
             const parts = [a.aircraft_type ? esc(a.aircraft_type) : '', airlineDisp].filter(Boolean).join('<span class="col-sp-dot">·</span>');
+            const clickable = _appRole === 'controller' && a.reg;
+            const clickCls  = clickable ? ' col-sp-row-clickable' : '';
+            const clickAttr = clickable
+              ? ` onclick="_spOpenPhotos('${esc(a.reg)}','${esc(airport)}','${esc(date)}')"`
+              : '';
             if (window.innerWidth < 768) {
-              return `<div class="col-sp-row col-sp-row-m">
+              return `<div class="col-sp-row col-sp-row-m${clickCls}"${clickAttr}>
                 <div class="col-sp-m-row1"><span class="col-sp-reg">${esc(a.reg)}</span>${badge}</div>
                 <div class="col-sp-m-row2">${parts}</div>
                 <div class="col-sp-tag-group">${tagHtml}${notesHtml}</div>
               </div>`;
             }
-            return `<div class="col-sp-row">
+            return `<div class="col-sp-row${clickCls}"${clickAttr}>
               <div class="col-sp-main"><span class="col-sp-reg">${esc(a.reg)}</span>${badge}<span class="col-sp-meta">${parts}</span></div>
               <div class="col-sp-tag-group">${notesHtml}${tagHtml}</div>
             </div>`;
@@ -4247,7 +4332,11 @@ function _colInitRegoPopover() {
             const tags = s.tags || [];
             const matched = tags.length && (_sessionFilterTags ? tags.some(t => _sessionFilterTags.has(t)) : tags.length > 0);
             const hlClass = matched ? ' col-ex-pill-hl' : '';
-            return `<span class="col-ex-pill${hlClass}">` +
+            const clickable = _appRole === 'controller';
+            const clickAttrs = clickable
+              ? ` class="col-ex-pill${hlClass} col-ex-pill-clickable" onclick="_spOpenPhotos('${esc(reg)}','${esc(s.iata)}','${esc(s.date)}')"`
+              : ` class="col-ex-pill${hlClass}"`;
+            return `<span${clickAttrs}>` +
               `<span class="col-ex-pill-code">${codePart}</span>` +
               `<span class="col-ex-pill-sep"></span>` +
               `<span class="col-ex-pill-count">${_colShortDate(s.date)}</span>` +
@@ -4265,6 +4354,86 @@ function _colInitRegoPopover() {
       });
     });
   });
+}
+
+// ── Controller-only session photo preview ──────────────────────────────────
+// Read-only by construction: this only ever GETs a thumbnail from the server
+// (/api/session-photo-pick, /api/session-photo-thumb) — there is no upload,
+// delete, or rename affordance anywhere in this lightbox, and the image
+// itself is non-draggable/non-selectable (see .sp-photos-body img CSS) so
+// casual right-click/drag isn't a one-click save path either.
+// Shows exactly one photo per session: whichever has the "Featured" keyword
+// in Lightroom if the session has one, otherwise a random photo from it —
+// picked server-side (see _pick_session_photo in web.py), which also returns
+// the session's airline/type/manufacturer/notes/tags to overlay on the photo
+// (same gradient-fade treatment as the Feed's .sq photo cards).
+function _spPhotosOverlay() {
+  let el = $('sp-photos-overlay');
+  if (el) return el;
+  el = document.createElement('div');
+  el.id = 'sp-photos-overlay';
+  el.className = 'sp-photos-overlay';
+  el.innerHTML = `<div class="sp-photos-modal" id="sp-photos-body"></div>`;
+  el.addEventListener('click', e => { if (e.target === el) _spClosePhotos(); });
+  document.body.appendChild(el);
+  return el;
+}
+
+function _spClosePhotos() {
+  const el = $('sp-photos-overlay');
+  if (el) el.classList.remove('open');
+}
+
+async function _spOpenPhotos(rego, iata, date) {
+  if (_appRole !== 'controller' || !rego || !iata || !date) return;
+  const overlay = _spPhotosOverlay();
+  const body = $('sp-photos-body');
+  body.innerHTML = `<div class="sp-photos-loading">${tt('Loading…')}</div><span class="sp-photo-close" onclick="_spClosePhotos()"></span>`;
+  overlay.classList.add('open');
+  try {
+    const d = await api(`/session-photo-pick?rego=${encodeURIComponent(rego)}&iata=${encodeURIComponent(iata)}&date=${encodeURIComponent(date)}`);
+    if (!d.id) {
+      body.innerHTML = `<div class="sp-photos-empty">${tt('No photos found.')}</div><span class="sp-photo-close" onclick="_spClosePhotos()"></span>`;
+      return;
+    }
+    const cc = _regoCountryCode(d.registration);
+    const flag = cc ? _flag(cc, { h: 13 }) : '';
+    const badge = d.manufacturer ? mfrBadge(d.manufacturer) : '';
+    const airlineName = (d.airline || '').replace(/\s*\([^)]*\)\s*$/, '').trim();
+    const airlineDisp = airlineName ? tExternalName(airlineName) : '';
+    const metaLine = [d.aircraft_type, airlineDisp].filter(Boolean).join(' · ');
+    const notesHtml = d.notes ? `<span class="sp-photo-notes">${esc(tLiveryName(d.notes))}</span>` : '';
+    const tagsHtml = (d.tags || []).map(t => `<span class="col-sp-tag ${_colTagClass(t)}">${esc(tColKeyword(t))}</span>`).join('');
+    await _translateNamesForZh([airlineName, d.airport_name].filter(Boolean));
+    // Mobile: short IATA code, moved up onto row1 (right-aligned, alongside
+    // the manufacturer/type/airline line) — there isn't room on a phone
+    // width for a full airport name AND a separate row for it. Desktop:
+    // full shortened name — normally on its own row2 next to notes/tags,
+    // but if there ARE no notes/tags, row2 would otherwise just be an
+    // near-empty line holding only the date pill, so it moves up onto row1
+    // there too rather than wasting a whole row on it.
+    const isMobile = window.innerWidth < 768;
+    const apDisp = isMobile ? d.airport : (d.airport_name ? _airportDisplayName(d.airport_name) : d.airport);
+    const dateFlagHtml = d.airport_flag ? `<span class="sp-photo-date-flag">${esc(d.airport_flag)}</span>` : '';
+    const dateHtml = `<span class="sp-photo-date">${dateFlagHtml}<span>${esc(apDisp)} · ${esc(_colShortDate(date))}</span></span>`;
+    const row1LeftHtml = metaLine ? `<div class="sp-photo-row1-left">${badge}<span>${esc(metaLine)}</span></div>` : '';
+    const row2LeftHtml = (notesHtml || tagsHtml) ? `<div class="sp-photo-row2-left">${notesHtml}${tagsHtml}</div>` : '';
+    const dateOnRow1 = isMobile || !row2LeftHtml;
+    const row1Html = (row1LeftHtml || dateOnRow1)
+      ? `<div class="sp-photo-row1">${row1LeftHtml}${dateOnRow1 ? dateHtml : ''}</div>` : '';
+    const row2Html = (row2LeftHtml || !dateOnRow1)
+      ? `<div class="sp-photo-row2">${row2LeftHtml}${dateOnRow1 ? '' : dateHtml}</div>` : '';
+    body.innerHTML = `
+      <img class="sp-photo-img" src="/api/session-photo-thumb/${d.id}" alt="" oncontextmenu="return false">
+      <span class="sp-photo-close" onclick="_spClosePhotos()"></span>
+      <div class="sp-photo-top">
+        <span class="sp-photo-rego">${flag}${esc(d.registration)}</span>
+      </div>
+      <div class="sp-photo-bottom">${row1Html}${row2Html}</div>`;
+    if (window.twemoji) twemoji.parse(body, {folder:'svg',ext:'.svg'});
+  } catch (_) {
+    body.innerHTML = `<div class="sp-photos-empty">${tt('Failed to load photos.')}</div><span class="sp-photo-close" onclick="_spClosePhotos()"></span>`;
+  }
 }
 
 const REC_START = 5 * 60;   // 05:00 in minutes
@@ -5795,9 +5964,14 @@ async function _srchExec() {
         const kwPills  = s.keywords.map(k => `<span class="col-sp-tag ${_colTagClass(k)}">${esc(tColKeyword(k))}</span>`).join('');
         const notesHtml = s.notes ? `<span style="font-size:11px;color:var(--dim);font-style:italic;white-space:nowrap;flex-shrink:0">${esc(tLiveryName(s.notes))}</span>` : '';
         const dateDisp = _srchCatDate(s.date);
+        const clickable = _appRole === 'controller' && s.airport && s.date;
+        const clickCls  = clickable ? ' srch-fl-row-clickable' : '';
+        const clickAttr = clickable
+          ? ` onclick="_spOpenPhotos('${esc(r.reg)}','${esc(s.airport)}','${esc(s.date)}')"`
+          : '';
         if (window.innerWidth < 768) {
           const hasKw = kwPills.length > 0;
-          return `<div class="srch-fl-row srch-fl-row-m">
+          return `<div class="srch-fl-row srch-fl-row-m${clickCls}"${clickAttr}>
             <div class="srch-fl-m-row1">
               <span class="srch-fl-date">${esc(dateDisp)}</span>
               ${aflag}<span>${esc(s.airport)}</span>
@@ -5805,7 +5979,7 @@ async function _srchExec() {
             ${hasKw ? `<div class="srch-fl-m-row2">${kwPills}${notesHtml}</div>` : ''}
           </div>`;
         }
-        return `<div class="srch-fl-row" style="display:flex;gap:8px;align-items:center">
+        return `<div class="srch-fl-row${clickCls}" style="display:flex;gap:8px;align-items:center"${clickAttr}>
           <span class="srch-fl-date" style="flex-shrink:0;width:90px">${esc(dateDisp)}</span>
           <span class="srch-fl-fn srch-cat-ap" style="display:inline-flex;align-items:center;gap:5px;white-space:nowrap;flex-shrink:0">${aflag}${esc(apName)}</span>
           <span class="srch-fl-route" style="flex:1">${tPhotosN(s.photos)}</span>

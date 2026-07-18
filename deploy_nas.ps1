@@ -15,7 +15,16 @@
 $HOSTKEY   = 'ssh-ed25519 255 SHA256:ZvfO5/+fXwYeGWley/hI4XdjHmFRwEOzYMyNSHJior4'
 $NAS_SSH   = 'abc539411@192.168.4.100'
 $NAS_PORT  = 9222
-$PASSWORD  = 'REDACTED-NAS-PASSWORD'
+
+# Password lives in deploy.local.ps1 (gitignored, not committed). It must
+# set $NAS_PASSWORD. See deploy.local.ps1.example for the expected format.
+$localConfig = Join-Path $PSScriptRoot 'deploy.local.ps1'
+if (-not (Test-Path $localConfig)) {
+    throw "Missing $localConfig — copy deploy.local.ps1.example to deploy.local.ps1 and fill in `$NAS_PASSWORD."
+}
+. $localConfig
+$PASSWORD  = $NAS_PASSWORD
+
 $SRC       = $PSScriptRoot
 $SMB_ROOT  = '\\192.168.4.100\public\docker\spotalert-app'
 $DOCKER    = '/Volume2/@apps/DockerEngine/dockerd/bin/docker'

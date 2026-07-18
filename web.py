@@ -91,89 +91,15 @@ PILOT_EDITABLE_SETTINGS = frozenset({
     "COLLECTION_KW_STAT_1", "COLLECTION_KW_STAT_2", "COLLECTION_KW_STAT_3", "collection_session_tags",
 })
 
-# Controller-only settings that must be identical across every watched airport
-# rather than independent per airport-DB file — the Controller sets one, and
-# PUT /api/settings fans the write out to every airport instead of just the
-# selected one. These are unreachable for Pilots (never in
-# PILOT_EDITABLE_SETTINGS), so no per-user variation is possible for them.
-GLOBAL_INFRA_SETTINGS = frozenset({
-    "CHECK_INTERVAL_MINUTES", "FETCH_PAGES", "DEPARTURE_PATTERN_THRESHOLD",
-    "MONITOR_CANCEL_GRACE_MINS", "MONITOR_DIVERTED_GRACE_MINS",
-    "MONITOR_ABSENCE_CHECKS", "MONITOR_CONFIRM_CALL_CAP",
-    "MILITARY_CHECK_INTERVAL_MINUTES", "MILITARY_RADIUS_NM",
-    "MILITARY_MAX_ALT_FT", "MILITARY_RENOTIFY_HOURS", "LOGOSTREAM_API_KEY",
-    "BAIDU_TRANSLATE_APP_ID", "BAIDU_TRANSLATE_SECRET_KEY",
-})
-
-# Settings whose value must be identical across every airport a given user
-# accesses — unlike other settings (which are genuinely independent per
-# airport DB), these fan out to every airport's DB at save time, keyed by the
-# writing user's own owner id (Controller's or a Pilot's own), so the value
-# follows that user everywhere they go. SPECIAL_LIVERY_KEYWORDS is
-# Controller-only (not in PILOT_EDITABLE_SETTINGS), so in practice only the
-# 'controller' owner id is ever used for it here.
-PER_USER_GLOBAL_SETTINGS = frozenset({
-    "COLLECTION_KW_STAT_1", "COLLECTION_KW_STAT_2", "COLLECTION_KW_STAT_3", "collection_session_tags",
-    "SPECIAL_LIVERY_KEYWORDS",
-})
-
-# Genuinely per-airport settings (each airport keeps its own independent
-# value, e.g. because sunrise/sunset/lighting are physically airport-specific)
-# that are still seeded ONCE when a user gains a new airport — but the seed
-# source depends on whether this user already has a value anywhere else:
-#   - Existing user gaining an additional airport: copy THEIR OWN value from
-#     any airport they already have access to (not the Controller's).
-#   - Brand-new user's very first airport (or the Controller's own value when
-#     a brand-new airport is added to the server): fall back to the
-#     Controller's value on the new airport itself.
-# SPECIAL_LIVERY_EXCLUDE_KEYWORDS is deliberately NOT in this set — per user
-# feedback it should never be prefilled from anywhere, always starting blank
-# on a new airport grant.
-PER_AIRPORT_PREFILL_SETTINGS = frozenset({
-    "SPOT_MAX_GAP_HOURS", "SPOT_LULL_MINS", "SPOT_MAX_LULLS", "SPOT_LIGHTING_GATE",
-    "SPOT_MAX_SPOTTED", "SPOT_LIGHT_BUFFER_MINS", "SPOT_BAD_LIGHT_START", "SPOT_BAD_LIGHT_END",
-    "RARE_PLANE_MIN_ABSENCE_DAYS",
-})
-
-
-def seed_new_airport_prefill_settings(cfgs: dict, owner_user_id: str, new_iata: str) -> None:
-    """Called whenever owner_user_id (a Pilot, or the Controller via a
-    brand-new watched airport) gains access to new_iata. For each key in
-    PER_AIRPORT_PREFILL_SETTINGS, seeds new_iata's own row for owner_user_id
-    from wherever a value already exists for them: their own row on any
-    OTHER airport in cfgs first, falling back to the Controller's row on
-    new_iata itself only if they have no value anywhere yet. No-op per key
-    once owner_user_id already has their own row on new_iata (never
-    overwrites an edit made after the seed) — safe to call repeatedly."""
-    new_cfg = cfgs.get(new_iata)
-    if not new_cfg:
-        return
-    other_cfgs = [cfg for iata, cfg in cfgs.items() if iata != new_iata]
-    with new_cfg.store._connect() as new_conn:
-        for key in PER_AIRPORT_PREFILL_SETTINGS:
-            if new_conn.execute(
-                "SELECT 1 FROM settings WHERE user_id = ? AND key = ?", (owner_user_id, key)
-            ).fetchone():
-                continue
-            value = None
-            for other_cfg in other_cfgs:
-                with other_cfg.store._connect() as oconn:
-                    row = oconn.execute(
-                        "SELECT value FROM settings WHERE user_id = ? AND key = ?", (owner_user_id, key)
-                    ).fetchone()
-                if row is not None:
-                    value = row["value"]
-                    break
-            if value is None:
-                row = new_conn.execute(
-                    "SELECT value FROM settings WHERE user_id = 'controller' AND key = ?", (key,)
-                ).fetchone()
-                value = row["value"] if row is not None else None
-            if value is not None:
-                new_conn.execute(
-                    "INSERT OR REPLACE INTO settings(user_id, key, value) VALUES (?, ?, ?)",
-                    (owner_user_id, key, value),
-                )
+# GLOBAL_INFRA_SETTINGS, PER_USER_GLOBAL_SETTINGS, PER_AIRPORT_PREFILL_SETTINGS,
+# and seed_new_airport_prefill_settings moved to bootstrap.py so monitor_service.py
+# (the separate monitor process) can use them without importing this whole FastAPI
+# module — re-imported here under the same names so every existing reference in
+# this file keeps working unchanged.
+from bootstrap import (
+    GLOBAL_INFRA_SETTINGS, PER_USER_GLOBAL_SETTINGS, PER_AIRPORT_PREFILL_SETTINGS,
+    seed_new_airport_prefill_settings,
+)
 
 # Cache for /api/live-status — one shared airport page fetch, reused for 90s
 _live_status_cache: dict = {"ts": 0, "schedule": None}
@@ -968,17 +894,8 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         if app.state.fr_api is None:
             raise HTTPException(400, "Only available in integrated mode")
 
-        import asyncio as _asyncio
         from store import SqliteStore
-        from main import build_config, _country_code_for_iata  # deferred: main.py
-                                        # imports create_app from this module at its
-                                        # own top level, so this import must stay
-                                        # lazy (resolved at call time, once both
-                                        # modules are fully loaded).
-        from monitor_runner import (
-            run_force_check_listener, log_task_result,
-            _run_arrivals_check, run_immediate_military_check,
-        )
+        from bootstrap import build_config, _country_code_for_iata
 
         new_dir = os.path.join(app.state.data_dir, "airports")
         os.makedirs(new_dir, exist_ok=True)
@@ -1002,8 +919,6 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
             raise HTTPException(400, f"Could not fetch airport info for '{airport_code}' — try again in a moment")
         if cfg.airport_iata in app.state.cfgs:
             raise HTTPException(400, f"{cfg.airport_iata} is already being watched")
-        cfg.check_now_event = _asyncio.Event()
-        cfg.check_lock = _asyncio.Lock()
 
         # Seed the new airport's DB with the current global infra settings,
         # every user's PER_USER_GLOBAL_SETTINGS values (Collection Stat
@@ -1032,7 +947,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                 # rows (~2700 ICAO type-code -> manufacturer/model mappings) only ever
                 # get populated by a manual GitHub refresh against one store, so a
                 # brand-new airport's DB would otherwise start with zero rows and
-                # silently break manufacturer resolution (see main.py's
+                # silently break manufacturer resolution (see bootstrap.py's
                 # _reconcile_global_settings_across_airports for the full story).
                 _type_rows = _sconn.execute(
                     "SELECT icao, name, source, manufacturer FROM aircraft_types"
@@ -1051,8 +966,9 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
             db_path=new_store.db_path, added_by_user_id=user.user_id,
             country_code=_country_code_for_iata(cfg.airport_iata),
         )
-        app.state.cfgs[cfg.airport_iata] = cfg  # same dict _run_backup() iterates —
-                                                 # mutating in place makes it visible there too
+        app.state.cfgs[cfg.airport_iata] = cfg  # so THIS process's own requests see
+                                                 # it immediately, without waiting on
+                                                 # the monitor process's reconciliation
 
         # Seed the Controller's own per-airport SPOT_*/RARE_PLANE_MIN_ABSENCE_DAYS
         # values on this brand-new airport from their value on an airport they
@@ -1060,35 +976,31 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         # seed from, so build_config()'s hardcoded defaults apply instead).
         seed_new_airport_prefill_settings(app.state.cfgs, "controller", cfg.airport_iata)
 
-        if not hasattr(app.state, "monitor_tasks"):
-            app.state.monitor_tasks = {}
-        # The shared run_monitor_rotation/run_military_shared_loop tasks (started
-        # once in main.py) read app.state.cfgs fresh every cycle, so this new
-        # airport is automatically folded into their scheduling from the NEXT
-        # cycle boundary onward — nothing to spawn for that here, and no per-
-        # airport military task either (run_military_shared_loop covers every
-        # airport with one shared fetch — see monitor_runner.py). What IS needed
-        # per airport is the always-on out-of-band force-check listener, plus an
-        # immediate one-off first check for both arrivals and military so the
-        # Controller sees data for it right away instead of waiting for the next
-        # cycle boundary.
-        t1 = _asyncio.create_task(run_force_check_listener(cfg), name=f"force-check-{cfg.airport_iata}")
-        t1.add_done_callback(log_task_result)
-        app.state.monitor_tasks[cfg.airport_iata] = (t1,)
-        t3 = _asyncio.create_task(_run_arrivals_check(cfg), name=f"first-check-{cfg.airport_iata}")
-        t3.add_done_callback(log_task_result)
-        t4 = _asyncio.create_task(run_immediate_military_check(cfg), name=f"first-military-check-{cfg.airport_iata}")
-        t4.add_done_callback(log_task_result)
-
+        # The monitor process (a separate OS process — see monitor_service.py)
+        # discovers this new watched_airports row on its own, via
+        # run_cfg_reconciliation_loop's periodic poll (every
+        # monitor_runner.CFG_RECONCILE_POLL_SECS), and fires the immediate
+        # first arrivals/military check itself once it does — nothing to spawn
+        # here directly anymore now that the web and monitor processes don't
+        # share memory.
         return JSONResponse({"ok": True, "airport_iata": cfg.airport_iata, "airport_name": cfg.airport_name})
 
     @app.delete("/api/controller/airports/{iata}")
     async def controller_remove_airport(iata: str, user=Depends(_auth_require_role("controller"))):
         """Hard delete, per explicit requirement: once removed, every file for
-        that airport is gone for every user — not a soft active=0 flag. Cancels
-        its monitor/military tasks, removes the watched_airports row and any
-        user_airport_access grants to it, then deletes the airport's own SQLite
-        DB file (plus WAL/SHM/journal sidecars and any backups) from disk."""
+        that airport is gone for every user — not a soft active=0 flag. Removes
+        the watched_airports row and any user_airport_access grants to it, then
+        deletes the airport's own SQLite DB file (plus WAL/SHM/journal sidecars
+        and any backups) from disk.
+
+        Waits briefly between the DB removal and the file deletion: the monitor
+        process (a separate OS process — see monitor_service.py) only notices an
+        airport was removed on its next run_cfg_reconciliation_loop poll (every
+        monitor_runner.CFG_RECONCILE_POLL_SECS), so deleting the files
+        immediately could race a check already in flight for this airport in
+        that process. The wait here is generous relative to that poll interval
+        so the monitor process has stopped touching this airport's files by the
+        time they're removed."""
         iata = iata.upper()
         if iata not in app.state.cfgs:
             raise HTTPException(404, "Unknown airport")
@@ -1098,12 +1010,12 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         cfg = app.state.cfgs[iata]
         db_path = cfg.store.db_path
 
-        tasks = getattr(app.state, "monitor_tasks", {}).pop(iata, None)
-        if tasks:
-            for t in tasks:
-                t.cancel()
         app.state.cfgs.pop(iata, None)
         app.state.control_store.delete_watched_airport(iata)
+
+        import asyncio as _asyncio
+        from monitor_runner import CFG_RECONCILE_POLL_SECS
+        await _asyncio.sleep(CFG_RECONCILE_POLL_SECS * 2)
 
         import glob
         for path in glob.glob(db_path + "*"):
@@ -1355,13 +1267,14 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
 
     @app.post("/api/force-check")
     async def force_check(user=Depends(_auth_require_role("controller"))):
-        cfg = _cfg_for_user(user)
-        if cfg.check_now_event is None:
-            raise HTTPException(400, "Monitor loop not running")
-        # Wake the monitor loop immediately instead of spawning a disconnected
-        # one-off scan — this also resets its periodic timer, so the next
-        # automatic check is scheduled from this run, not the previous one.
-        cfg.check_now_event.set()
+        cfg = _cfg_for_user(user)  # raises 400 if no airport selected
+        # Write a request row for the monitor process (a separate OS process —
+        # see monitor_service.py) to pick up on its next
+        # run_force_check_poller tick (every monitor_runner.FORCE_CHECK_POLL_SECS)
+        # instead of setting an in-process asyncio.Event, which can't cross a
+        # process boundary. This also resets the airport's periodic rotation
+        # timer once the monitor process runs the check, same as before.
+        app.state.control_store.request_force_check(cfg.airport_iata)
         return JSONResponse({"ok": True})
 
     @app.get("/api/live-status/{registration}")
@@ -1380,7 +1293,11 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
             # into another's live-status lookups.
             cache = _live_status_cache.setdefault(cfg_.airport_iata, {"ts": 0, "schedule": None})
             if now_ts_ - cache["ts"] > 90 or cache["schedule"] is None:
-                data = cfg_.fr_api.get_airport_details(code=cfg_.airport_code, page=-1)
+                import asyncio
+                # Thread-dispatched — blocking FR24 network call, see
+                # get_airforce_roundel's comment above for why.
+                data = await asyncio.to_thread(cfg_.fr_api.get_airport_details,
+                                                code=cfg_.airport_code, page=-1)
                 cache["schedule"] = data["airport"]["pluginData"]["schedule"]
                 cache["ts"] = now_ts_
             schedule = cache["schedule"]
@@ -1506,8 +1423,12 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
             try:
                 airframe = store.get_airframe(registration.upper())
                 if airframe is None or not airframe.get("manufacturer"):
+                    import asyncio
                     from monitor import _derive_manufacturer
-                    rd = cfg.fr_api.get_rego_details(registration.upper())
+                    # Thread-dispatched — blocking FR24 network call, see
+                    # get_airforce_roundel's comment above for why. This
+                    # endpoint is hit on every card open, so it matters.
+                    rd = await asyncio.to_thread(cfg.fr_api.get_rego_details, registration.upper())
                     _rd_data = (rd or {}).get("data") or []
                     if _rd_data:
                         _model_text = ((_rd_data[0].get("aircraft") or {}).get("model") or {}).get("text") or ""
@@ -2622,6 +2543,228 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
             sessions.append({'date': date_str, 'iata': iata, 'flag': flag, 'photos': photos, 'tags': tags})
         return JSONResponse({'sessions': sessions})
 
+    # Controller-only session-photo preview — read-only by construction: the
+    # photos mount below is :ro at the Docker level (see docker-compose.yml),
+    # this code path only ever reads files and writes into a SEPARATE
+    # generated-thumbnail cache dir, and there is no endpoint anywhere that
+    # writes to, renames, or deletes anything under either path. The RAW
+    # originals on the NAS Photo share are never modified or exposed directly
+    # — only a downscaled JPEG extracted from each RAW's embedded preview.
+    _PHOTOS_ROOT_DEFAULT = "/app/photos"
+
+    def _session_photos_root() -> Path:
+        """Container-internal path the operator has bind-mounted their photo
+        folder to — configurable via Settings > Collection > Session Photos
+        Path (SESSION_PHOTOS_PATH) rather than hardcoded, since that mount
+        point is something the operator chooses in their own
+        docker-compose.yml, not something this app controls. Read fresh each
+        call (cheap single-row lookup) rather than cached at startup, so a
+        Controller changing it takes effect immediately, no restart."""
+        try:
+            with app.state.store._connect() as _conn:
+                row = _conn.execute("SELECT value FROM settings WHERE key='SESSION_PHOTOS_PATH'").fetchone()
+            path = (row[0] if row else "").strip()
+        except Exception:
+            path = ""
+        return Path(path or _PHOTOS_ROOT_DEFAULT)
+
+    # Every AgLibraryRootFolder.absolutePath in the catalog is recorded with
+    # this literal SMB-style prefix (Lightroom itself always wrote it this
+    # way, regardless of what actually reads it) — stripping it and rejoining
+    # under _session_photos_root() maps a catalog-recorded path onto the
+    # read-only bind mount without hardcoding each year/region subfolder name.
+    _PHOTOS_CATALOG_PREFIX = "//192.168.4.100/Photo/Plane Spotting/"
+    _SESSION_THUMB_DIR = Path(__file__).parent / "static" / "session_thumbs"
+
+    def _pick_session_photo(user, rego: str, iata: str, date: str):
+        """Pick ONE photo for this rego+session: whichever has the 'Featured'
+        Lightroom keyword if any photo in the session has it, else a random
+        photo from the session — random among ties either way, so repeat
+        views of a session with multiple Featured photos (or none at all)
+        don't always show the same one. Also returns the session's aggregate
+        metadata (airline/type/manufacturer/notes/tags — same fields the
+        Collection session-detail view shows) so the preview can display it
+        alongside the photo instead of just the bare rego/airport/date."""
+        cat_str = _col_catalog_path(user)
+        if not cat_str or not (rego and iata and date):
+            return None
+        cat = Path(cat_str)
+        if not cat.exists():
+            return None
+        import sqlite3 as _sq3
+        con = _sq3.connect(f"file:{cat}?mode=ro", uri=True)
+        try:
+            rego_u, iata_u = rego.strip().upper(), iata.strip().upper()
+            pick_row = con.execute(
+                """
+                SELECT img.id_local
+                FROM AgSearchablePhotoProperty reg
+                JOIN Adobe_images img ON img.id_local = reg.photo
+                JOIN AgPhotoPropertySpec reg_spec ON reg_spec.id_local = reg.propertySpec
+                    AND reg_spec.key = 'registration' AND reg_spec.sourcePlugin = ?
+                JOIN AgSearchablePhotoProperty ap ON ap.photo = img.id_local
+                JOIN AgPhotoPropertySpec ap_spec ON ap_spec.id_local = ap.propertySpec
+                    AND ap_spec.key = 'airport_iata' AND ap_spec.sourcePlugin = ?
+                LEFT JOIN AgLibraryKeywordImage ki ON ki.image = img.id_local
+                LEFT JOIN AgLibraryKeyword kw ON kw.id_local = ki.tag AND kw.name = 'Featured'
+                WHERE UPPER(TRIM(reg.internalValue)) = ?
+                  AND UPPER(TRIM(ap.internalValue)) = ?
+                  AND DATE(img.captureTime) = ?
+                ORDER BY (kw.id_local IS NOT NULL) DESC, RANDOM()
+                LIMIT 1
+                """,
+                (_COL_PLUGIN, _COL_PLUGIN, rego_u, iata_u, date),
+            ).fetchone()
+            if not pick_row:
+                return None
+            meta_row = con.execute(
+                """
+                SELECT MAX(CASE WHEN al_spec.id_local  IS NOT NULL THEN al.internalValue  END),
+                       MAX(CASE WHEN typ_spec.id_local IS NOT NULL THEN typ.internalValue END),
+                       MAX(CASE WHEN mfr_spec.id_local IS NOT NULL THEN mfr.internalValue END),
+                       MAX(CASE WHEN nt_spec.id_local  IS NOT NULL THEN nt.internalValue  END),
+                       GROUP_CONCAT(DISTINCT kw.name)
+                FROM AgSearchablePhotoProperty reg
+                JOIN Adobe_images img ON img.id_local = reg.photo
+                JOIN AgPhotoPropertySpec reg_spec ON reg_spec.id_local = reg.propertySpec
+                    AND reg_spec.key = 'registration' AND reg_spec.sourcePlugin = ?
+                JOIN AgSearchablePhotoProperty ap ON ap.photo = img.id_local
+                JOIN AgPhotoPropertySpec ap_spec ON ap_spec.id_local = ap.propertySpec
+                    AND ap_spec.key = 'airport_iata' AND ap_spec.sourcePlugin = ?
+                LEFT JOIN AgSearchablePhotoProperty al ON al.photo = img.id_local
+                LEFT JOIN AgPhotoPropertySpec al_spec ON al_spec.id_local = al.propertySpec
+                    AND al_spec.key = 'airline' AND al_spec.sourcePlugin = ?
+                LEFT JOIN AgSearchablePhotoProperty typ ON typ.photo = img.id_local
+                LEFT JOIN AgPhotoPropertySpec typ_spec ON typ_spec.id_local = typ.propertySpec
+                    AND typ_spec.key = 'aircraft_type' AND typ_spec.sourcePlugin = ?
+                LEFT JOIN AgSearchablePhotoProperty mfr ON mfr.photo = img.id_local
+                LEFT JOIN AgPhotoPropertySpec mfr_spec ON mfr_spec.id_local = mfr.propertySpec
+                    AND mfr_spec.key = 'aircraft_manufacturer' AND mfr_spec.sourcePlugin = ?
+                LEFT JOIN AgSearchablePhotoProperty nt ON nt.photo = img.id_local
+                LEFT JOIN AgPhotoPropertySpec nt_spec ON nt_spec.id_local = nt.propertySpec
+                    AND nt_spec.key = 'aircraft_notes' AND nt_spec.sourcePlugin = ?
+                LEFT JOIN AgLibraryKeywordImage ki ON ki.image = img.id_local
+                LEFT JOIN AgLibraryKeyword kw ON kw.id_local = ki.tag AND kw.name IS NOT NULL
+                    AND kw.name NOT IN ('Featured','SPTA','AircraftMetadata-RegNotFound','AircraftMetadata-WrongReg','Cleaned')
+                WHERE UPPER(TRIM(reg.internalValue)) = ?
+                  AND UPPER(TRIM(ap.internalValue)) = ?
+                  AND DATE(img.captureTime) = ?
+                """,
+                (_COL_PLUGIN, _COL_PLUGIN, _COL_PLUGIN, _COL_PLUGIN, _COL_PLUGIN, _COL_PLUGIN,
+                 rego_u, iata_u, date),
+            ).fetchone()
+        finally:
+            con.close()
+        airline, atype, mfr, notes, kw_csv = meta_row or (None, None, None, None, None)
+        tags = sorted([t.strip() for t in (kw_csv or '').split(',') if t.strip()])
+        airport_flag, airport_name = _col_airport_flag_and_name(iata_u)
+        return {
+            'id': pick_row[0],
+            'registration': rego_u, 'airport': iata_u, 'date': date,
+            'airport_flag': airport_flag, 'airport_name': airport_name,
+            'airline': airline or '', 'aircraft_type': atype or '',
+            'manufacturer': mfr or '', 'notes': notes or '', 'tags': tags,
+        }
+
+    def _session_photo_local_path(row: dict):
+        root_path = row.get("root_path") or ""
+        if not root_path.startswith(_PHOTOS_CATALOG_PREFIX):
+            return None
+        year_region = root_path[len(_PHOTOS_CATALOG_PREFIX):]
+        return _session_photos_root() / year_region / (row.get("rel_path") or "") / f"{row['base_name']}.{row['ext']}"
+
+    @app.get("/api/session-photo-pick")
+    async def get_session_photo_pick(rego: str = "", iata: str = "", date: str = "",
+                                      user=Depends(_auth_require_role("controller"))):
+        import asyncio
+        picked = await asyncio.to_thread(_pick_session_photo, user, rego, iata, date)
+        if not picked:
+            return JSONResponse({"id": None})
+        return JSONResponse(picked)
+
+    @app.get("/api/session-photo-thumb/{photo_id}")
+    async def get_session_photo_thumb(photo_id: int, user=Depends(_auth_require_role("controller"))):
+        import asyncio
+        cache_path = _SESSION_THUMB_DIR / f"{photo_id}.jpg"
+        if cache_path.exists():
+            return FileResponse(str(cache_path), media_type="image/jpeg",
+                                 headers={"Cache-Control": "private, max-age=2592000"})
+
+        def _extract():
+            cat_str = _col_catalog_path(user)
+            if not cat_str:
+                return None
+            cat = Path(cat_str)
+            if not cat.exists():
+                return None
+            import sqlite3 as _sq3
+            con = _sq3.connect(f"file:{cat}?mode=ro", uri=True)
+            con.row_factory = _sq3.Row
+            try:
+                row = con.execute(
+                    """
+                    SELECT img.id_local AS id, root.absolutePath AS root_path,
+                           folder.pathFromRoot AS rel_path,
+                           file.baseName AS base_name, file.extension AS ext
+                    FROM Adobe_images img
+                    JOIN AgLibraryFile file ON file.id_local = img.rootFile
+                    JOIN AgLibraryFolder folder ON folder.id_local = file.folder
+                    JOIN AgLibraryRootFolder root ON root.id_local = folder.rootFolder
+                    WHERE img.id_local = ?
+                    """,
+                    (photo_id,),
+                ).fetchone()
+            finally:
+                con.close()
+            if not row:
+                return None
+            src_path = _session_photo_local_path(dict(row))
+            if not src_path or not src_path.exists():
+                return None
+
+            import subprocess as _sp
+            from PIL import Image as _Img, ImageOps as _ImgOps
+            import io as _io2
+            # Different cameras/firmware populate different embedded-image
+            # tags at different sizes — e.g. one camera's PreviewImage might
+            # be a small 640px thumbnail while its JpgFromRaw is a full-size
+            # JPEG, and the reverse is true for another camera. Rather than
+            # guessing a fixed priority order, pull every candidate that
+            # exists and keep whichever decodes to the most pixels, so the
+            # preview is always the best the RAW file actually has to offer.
+            preview_bytes = None
+            best_pixels = 0
+            for tag in ("-PreviewImage", "-JpgFromRaw", "-OtherImage", "-ThumbnailImage"):
+                try:
+                    result = _sp.run(
+                        ["exiftool", "-b", tag, str(src_path)],
+                        capture_output=True, timeout=30,
+                    )
+                    if result.returncode != 0 or len(result.stdout) <= 1000:
+                        continue
+                    probe = _Img.open(_io2.BytesIO(result.stdout))
+                    pixels = probe.size[0] * probe.size[1]
+                    if pixels > best_pixels:
+                        best_pixels = pixels
+                        preview_bytes = result.stdout
+                except Exception:
+                    continue
+            if not preview_bytes:
+                return None
+
+            img = _Img.open(_io2.BytesIO(preview_bytes))
+            img = _ImgOps.exif_transpose(img).convert("RGB")
+            img.thumbnail((1920, 1920))
+            _SESSION_THUMB_DIR.mkdir(parents=True, exist_ok=True)
+            img.save(str(cache_path), "JPEG", quality=88)
+            return cache_path
+
+        result_path = await asyncio.to_thread(_extract)
+        if not result_path:
+            raise HTTPException(404, "Photo not available")
+        return FileResponse(str(result_path), media_type="image/jpeg",
+                             headers={"Cache-Control": "private, max-age=2592000"})
+
     @app.get("/api/catalog-stats/tags")
     async def get_catalog_session_tag_list(user=Depends(_auth_current_user)):
         from pathlib import Path as _Path
@@ -3487,11 +3630,14 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         # Cache miss — look up via FR24 using the sample rego
         rego = sample.strip() or prefix + "-AAA"
         try:
+            import asyncio
             fr_api = app.state.fr_api if hasattr(app.state, 'fr_api') else None
             if fr_api is None:
                 from flightradar24api import FlightRadar24API
                 fr_api = FlightRadar24API()
-            data = fr_api.get_rego_details(rego)
+            # Thread-dispatched — blocking FR24 network call, see
+            # get_airforce_roundel's comment above for why.
+            data = await asyncio.to_thread(fr_api.get_rego_details, rego)
             entries = data.get('data', []) if isinstance(data, dict) else []
             country = None
             for entry in entries:
@@ -3527,7 +3673,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         current fleet from FR24 and cross-reference with the LR catalog to show
         which registrations have been photographed.
         """
-        import re as _re, requests as _req
+        import re as _re, requests as _req, asyncio
         from bs4 import BeautifulSoup as _BS
         from monitor import _derive_manufacturer as _dmfr
 
@@ -3536,12 +3682,14 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
             return JSONResponse({'error': 'No code provided'})
 
         # ── Step 1: resolve IATA ↔ ICAO via FR24 airline list ─────────────
+        # Thread-dispatched — get_airlines() is a blocking FR24 network call
+        # (same reasoning as get_airforce_roundel's comment above).
         try:
             fr_api = app.state.fr_api if hasattr(app.state, 'fr_api') else None
             if fr_api is None:
                 from flightradar24api import FlightRadar24API
                 fr_api = FlightRadar24API()
-            airlines = fr_api.get_airlines()
+            airlines = await asyncio.to_thread(fr_api.get_airlines)
         except Exception as e:
             return JSONResponse({'error': f'FR24 airline lookup failed: {e}'})
 
@@ -3568,7 +3716,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
             'Accept-Language': 'en-US,en;q=0.9',
         }
         try:
-            resp = _req.get(fleet_url, headers=hdrs, timeout=20)
+            resp = await asyncio.to_thread(_req.get, fleet_url, headers=hdrs, timeout=20)
             resp.raise_for_status()
         except Exception as e:
             return JSONResponse({'error': f'FR24 fleet fetch failed: {e}'})
@@ -3752,6 +3900,16 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         except LookupError:
             return ""
 
+    # Countries where the World-Airforce-Insignia repo's filename is a
+    # colloquial abbreviation rather than the ISO code — keyed by the
+    # lowercased country name as it appears in military.py's _ICAO_RANGES,
+    # valued by the (lowercased, extension-stripped) filename key it should
+    # resolve to. Add an entry here if a country you know has a roundel in
+    # that repo still isn't showing up.
+    _ROUNDEL_NAME_OVERRIDES = {
+        "united kingdom": "uk",
+    }
+
     def _airforce_roundel_filenames():
         """List of available roundel filenames in the World-Airforce-Insignia CDN repo,
         fetched from the GitHub API once and cached to disk. No hardcoded country list —
@@ -3782,6 +3940,12 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         import re as _re3, difflib, requests as _req
         if not country:
             return None, None
+        query = country.strip().lower()
+        safe_key = _re3.sub(r'[^a-z0-9]+', '_', query).strip('_')
+        cache_path = Path(__file__).parent / "static" / "airline_logos" / f"af_{safe_key}.png"
+        if cache_path.exists():
+            return cache_path, "image/png"
+
         files = _airforce_roundel_filenames()
         if not files:
             return None, None
@@ -3792,18 +3956,44 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
             return s.strip().lower()
 
         norm_map = {_norm(f): f for f in files}
-        query = country.strip().lower()
         match = difflib.get_close_matches(query, norm_map.keys(), n=1, cutoff=0.6)
         if not match:
-            match = [k for k in norm_map if query in k or k in query][:1]
+            # Fall back to the country's ISO abbreviations — many roundel filenames
+            # use short codes ("USA") rather than the full country name, which the
+            # difflib fuzzy match above (tuned for whole-name similarity) won't
+            # bridge. EXACT match only, never substring/fuzzy, on purpose: the
+            # previous fallback here (`query in k or k in query`) matched ANY key
+            # that was merely a substring of the query, so the 2-letter "un" key
+            # (United Nations) matched every country name starting with "Un..." —
+            # "United States" and even the literal string "Unknown" both showed
+            # the UN roundel. A short abbreviation must match a candidate exactly.
+            candidates = []
+            # Colloquial abbreviation the roundel repo uses instead of the ISO
+            # code for a few common countries (checked first, still an exact
+            # match only) — e.g. "United Kingdom" -> "UK.png", not "GB"/"GBR"
+            # (its actual ISO alpha-2/alpha-3), which is why this specific
+            # country needed a manual override rather than falling out of the
+            # ISO-based candidates below.
+            candidates.append(_ROUNDEL_NAME_OVERRIDES.get(query, ''))
+            code_a2 = _country_code_for_name(country)
+            if code_a2:
+                try:
+                    import pycountry
+                    rec = pycountry.countries.get(alpha_2=code_a2)
+                    if rec:
+                        candidates.append(getattr(rec, 'alpha_3', '').lower())
+                        candidates.append(getattr(rec, 'common_name', '').lower())
+                except Exception:
+                    pass
+                candidates.append(code_a2.lower())
+            for cand in candidates:
+                if cand and cand in norm_map:
+                    match = [cand]
+                    break
         if not match:
             return None, None
         filename = norm_map[match[0]]
 
-        safe_key = _re3.sub(r'[^a-z0-9]+', '_', query).strip('_')
-        cache_path = Path(__file__).parent / "static" / "airline_logos" / f"af_{safe_key}.png"
-        if cache_path.exists():
-            return cache_path, "image/png"
         url = f"https://cdn.jsdelivr.net/gh/chaseAEd/World-Airforce-Insignia@master/Flags/{filename}"
         try:
             r = _req.get(url, timeout=10)
@@ -3874,7 +4064,17 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
 
     @app.get("/api/airforce-roundel/{country}")
     async def get_airforce_roundel(country: str):
-        cache_path, media = _fetch_airforce_roundel(country.strip())
+        import asyncio
+        # Thread-dispatched — on a cache miss this makes real blocking network
+        # calls (GitHub API for the file index, jsdelivr CDN for the image, up
+        # to 10s timeout each) that would otherwise freeze the ENTIRE web
+        # process's event loop for every other concurrent request, same class
+        # of bug as the monitor-loop freezes fixed earlier tonight. Static
+        # cache files under static/airline_logos/ aren't in a persistent
+        # volume (see docker-compose.yml), so every container rebuild wipes
+        # them and the next page load re-triggers this cold-cache burst for
+        # every distinct roundel/logo shown.
+        cache_path, media = await asyncio.to_thread(_fetch_airforce_roundel, country.strip())
         if not cache_path:
             raise HTTPException(404, "Roundel not found")
         from fastapi.responses import FileResponse
@@ -3898,14 +4098,17 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
 
     @app.get("/api/airline-logo/{icao}")
     async def get_airline_logo(icao: str):
-        import re as _re
+        import re as _re, asyncio
         icao = icao.upper().strip()
         if not _re.match(r'^[A-Z0-9]{2,4}$', icao):
             raise HTTPException(400, "Invalid ICAO code")
         cache_path, media = _cached_logo_path(icao)
         if not cache_path:
             try:
-                cache_path, media = _fetch_and_cache_logo(icao)
+                # Thread-dispatched — see get_airforce_roundel's comment above
+                # for why a cache-miss blocking network call here can't run
+                # directly on the event loop.
+                cache_path, media = await asyncio.to_thread(_fetch_and_cache_logo, icao)
             except HTTPException:
                 raise
             except Exception as e:
@@ -3918,7 +4121,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
     @app.get("/api/airline-logo-name/{name}")
     async def get_airline_logo_by_name(name: str):
         """Fuzzy search by airline name → resolve ICAO → serve tail logo."""
-        import re as _re, json as _json, requests as _req
+        import re as _re, json as _json, requests as _req, asyncio
         name = name.strip()
         if not name:
             raise HTTPException(400, "Name required")
@@ -3937,7 +4140,12 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
             api_key = _logostream_api_key()
             if not api_key:
                 raise HTTPException(503, "Logostream API key not configured")
-            try:
+
+            # Thread-dispatched — see get_airforce_roundel's comment above for
+            # why a blocking network call here can't run directly on the event
+            # loop. HTTPException raised inside still propagates correctly
+            # through the await below.
+            def _fetch_icao_by_name():
                 r = _req.get(
                     "https://aviation-api.logostream.dev/v1/airlines",
                     params={"name": name},
@@ -3948,12 +4156,15 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                 results = r.json().get("data", [])
                 if not results:
                     raise HTTPException(404, "Airline not found")
-                icao = results[0].get("icao", "").upper()
-                if not icao:
+                _icao = results[0].get("icao", "").upper()
+                if not _icao:
                     raise HTTPException(404, "No ICAO in search result")
-                # Save mapping
-                mapping[name_key] = icao
+                mapping[name_key] = _icao
                 mapping_path.write_text(_json.dumps(mapping))
+                return _icao
+
+            try:
+                icao = await asyncio.to_thread(_fetch_icao_by_name)
             except HTTPException:
                 raise
             except Exception as e:
@@ -3962,7 +4173,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         cache_path, media = _cached_logo_path(icao)
         if not cache_path:
             try:
-                cache_path, media = _fetch_and_cache_logo(icao)
+                cache_path, media = await asyncio.to_thread(_fetch_and_cache_logo, icao)
             except HTTPException:
                 raise
             except Exception as e:
@@ -4062,6 +4273,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
 
     @app.post("/api/translate-names")
     async def translate_names(request: Request, user=Depends(_auth_current_user)):
+        import asyncio
         body = await request.json()
         names = body.get("names") or []
         if not isinstance(names, list):
@@ -4074,37 +4286,51 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                 seen.add(n)
                 deduped.append(n)
         deduped = deduped[:200]
-        with _TRANSLATE_CACHE_LOCK:
-            cache = _load_translate_cache()
-            # Case-insensitive lookup — the same airline/airport name shows up in
-            # different casing across data sources (FR24 payloads, Lightroom
-            # catalogs, user-entered filters, etc.); without this, "Qantas" and
-            # "QANTAS" would each burn a separate Baidu call and grow the cache
-            # file with duplicate entries. Cache stays stored under whatever
-            # casing first got translated — only the lookup is normalized —
-            # and a hit is returned under the REQUESTED casing so the client's
-            # own cache keys line up with what it asked for.
-            cache_ci = {k.lower(): k for k in cache}
-            def _cache_hit(n: str):
-                if n in cache:
-                    return cache[n]
-                stored_key = cache_ci.get(n.lower())
-                return cache[stored_key] if stored_key is not None else None
-            hits = {}
-            misses = []
-            for n in deduped:
-                v = _cache_hit(n)
-                if v is not None:
-                    hits[n] = v
-                else:
-                    misses.append(n)
-            if not misses:
-                return JSONResponse({"translations": hits})
-            new_map = _baidu_translate_batch(misses)
-            if new_map:
-                cache.update(new_map)
-                _save_translate_cache(cache)
-        return JSONResponse({"translations": {**hits, **new_map}})
+
+        # The whole cache-check + Baidu-call block is dispatched as ONE thread
+        # call — this is the most frequently-hit endpoint of any of these (every
+        # Feed load, every card open), and on a cache miss it makes a genuinely
+        # blocking network call to Baidu while holding _TRANSLATE_CACHE_LOCK (a
+        # plain threading.Lock, itself only safe to block on off the event loop
+        # thread) — running that directly on the event loop froze the ENTIRE web
+        # process for every other concurrent request for as long as the Baidu
+        # call took. threading.Lock works the same from a worker thread, so this
+        # preserves the existing cross-request serialization unchanged.
+        def _resolve_translations():
+            with _TRANSLATE_CACHE_LOCK:
+                cache = _load_translate_cache()
+                # Case-insensitive lookup — the same airline/airport name shows up in
+                # different casing across data sources (FR24 payloads, Lightroom
+                # catalogs, user-entered filters, etc.); without this, "Qantas" and
+                # "QANTAS" would each burn a separate Baidu call and grow the cache
+                # file with duplicate entries. Cache stays stored under whatever
+                # casing first got translated — only the lookup is normalized —
+                # and a hit is returned under the REQUESTED casing so the client's
+                # own cache keys line up with what it asked for.
+                cache_ci = {k.lower(): k for k in cache}
+                def _cache_hit(n: str):
+                    if n in cache:
+                        return cache[n]
+                    stored_key = cache_ci.get(n.lower())
+                    return cache[stored_key] if stored_key is not None else None
+                hits = {}
+                misses = []
+                for n in deduped:
+                    v = _cache_hit(n)
+                    if v is not None:
+                        hits[n] = v
+                    else:
+                        misses.append(n)
+                if not misses:
+                    return hits
+                new_map = _baidu_translate_batch(misses)
+                if new_map:
+                    cache.update(new_map)
+                    _save_translate_cache(cache)
+                return {**hits, **new_map}
+
+        translations = await asyncio.to_thread(_resolve_translations)
+        return JSONResponse({"translations": translations})
 
     @app.get("/api/airports")
     async def list_airports(user=Depends(_auth_current_user)):

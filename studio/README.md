@@ -13,13 +13,22 @@ catalog, neither of which a remote server can reach.
 
 ## Setup
 
+From the repo root, the quickest way to start Studio:
+
+```powershell
+.\studio.ps1
+```
+
+This is a thin wrapper around `studio\run.ps1` — you can also run that
+directly from inside this folder:
+
 ```powershell
 .\run.ps1
 ```
 
-This creates a local `.venv`, installs dependencies, and starts the app at
-`http://127.0.0.1:5000`. Re-run the same script any time — it reuses the existing
-venv and just updates dependencies.
+Either way, this creates a local `.venv`, installs dependencies, and starts the
+app at `http://127.0.0.1:5000`. Re-run any time — it reuses the existing venv
+and just updates dependencies.
 
 ## Configuration
 
