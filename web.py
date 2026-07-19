@@ -651,7 +651,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
     # Gate every /api/* route behind a valid session, except the handful needed to
     # log in / check auth status in the first place. No role restrictions yet — any
     # authenticated user passes; role-based access is layered in separately.
-    _AUTH_EXEMPT_PATHS = {"/api/auth/login", "/api/me", "/api/version"}
+    _AUTH_EXEMPT_PATHS = {"/api/auth/login", "/api/auth/request-account", "/api/me", "/api/version"}
 
     @app.middleware("http")
     async def _require_session(request: Request, call_next):
