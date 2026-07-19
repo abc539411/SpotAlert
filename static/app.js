@@ -922,6 +922,7 @@ async function _authBoot() {
     if (!localStorage.getItem('spotalert-lang') && me.site_default_language && me.site_default_language !== _lang) {
       _lang = me.site_default_language;
       applyI18n();
+      _refreshInstallPromptText();
     }
     _showAuthView('view-login');
     return;
@@ -933,6 +934,7 @@ async function _authBoot() {
     _lang = me.user.language;
     localStorage.setItem('spotalert-lang', _lang);
     applyI18n();
+    _refreshInstallPromptText();
   } else if (!me.user.language && _lang !== 'en') {
     // The server has no language on file but this device's localStorage does
     // (set by setLanguage() below) — the PUT that was supposed to persist it
@@ -3420,6 +3422,24 @@ async function pollStatus() {
 // ── Service Worker + Install banner ──────────────────────────────────────────
 
 let _deferredInstallPrompt = null;
+let _installPromptVariant = null;  // 'ios' | 'android' | null
+
+// setupPWA() runs synchronously very early — before _authBoot()'s async
+// /api/me resolves and (for anonymous visitors with no saved preference)
+// applies the site's default language. So the iOS branch's initial tt()
+// call below always sees the pre-boot _lang, typically 'en'. Unlike
+// data-i18n-bound text, which applyI18n() correctly re-applies whenever
+// _lang changes later, this text was being set once and never revisited.
+// _authBoot() calls this again right after each applyI18n() so it stays
+// in sync with whichever variant (if any) is currently showing.
+function _refreshInstallPromptText() {
+  if (_installPromptVariant === 'ios') {
+    $('install-prompt-text').textContent = tt('✈ Add to Home Screen in Safari to enable push notifications.');
+  } else if (_installPromptVariant === 'android') {
+    $('install-prompt-text').textContent = tt('✈ Install SpotAlert for quick access and notifications.');
+    $('install-prompt-btn').textContent = tt('Install');
+  }
+}
 
 function setupPWA() {
   if ('serviceWorker' in navigator) {
@@ -3447,7 +3467,8 @@ function setupPWA() {
   // instructional text with no button, shown as soon as we know it's
   // eligible (browser tab, not already installed).
   if (isIOS && !isStandalone && !dismissed) {
-    $('install-prompt-text').textContent = tt('✈ Add to Home Screen in Safari to enable push notifications.');
+    _installPromptVariant = 'ios';
+    _refreshInstallPromptText();
     $('install-prompt').classList.remove('hidden');
     return;
   }
@@ -3463,8 +3484,8 @@ function setupPWA() {
     e.preventDefault();
     _deferredInstallPrompt = e;
     if (isMobile && !isStandalone && !dismissed) {
-      $('install-prompt-text').textContent = tt('✈ Install SpotAlert for quick access and notifications.');
-      $('install-prompt-btn').textContent = tt('Install');
+      _installPromptVariant = 'android';
+      _refreshInstallPromptText();
       $('install-prompt-btn').classList.remove('hidden');
       $('install-prompt').classList.remove('hidden');
     }
