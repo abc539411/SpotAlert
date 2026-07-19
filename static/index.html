@@ -1349,7 +1349,12 @@
     }
     #install-banner.hidden { display: none; }
     #spotting-reminder-prefs.hidden { display: none; }
-    #install-banner .close-banner { margin-left: auto; background: none; border: none; color: var(--dim); font-size: 16px; cursor: pointer; padding: 0; }
+    #install-banner-text { flex: 1; }
+    #install-banner-btn {
+      background: var(--accent); color: #fff; border: none; border-radius: var(--r);
+      padding: 4px 12px; font-size: 12px; font-weight: 600; cursor: pointer; flex-shrink: 0;
+    }
+    #install-banner .close-banner { margin-left: 0; background: none; border: none; color: var(--dim); font-size: 16px; cursor: pointer; padding: 0; }
 
     /* ── Status pill + live dot on cards ────────────────────────────────── */
     .sq-status {
@@ -1852,7 +1857,8 @@
 <body>
 
 <div id="install-banner" class="hidden">
-  ✈ Add to Home Screen in Safari to enable push notifications.
+  <span id="install-banner-text">✈ Add to Home Screen in Safari to enable push notifications.</span>
+  <button id="install-banner-btn" class="hidden" onclick="_doAndroidInstall()">Install</button>
   <button class="close-banner" onclick="document.getElementById('install-banner').classList.add('hidden')">✕</button>
 </div>
 

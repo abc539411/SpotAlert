@@ -294,6 +294,9 @@ function tDaysAgo(n) {
 // numerous/one-off each to justify their own named helper. Looked up by the
 // literal English string itself rather than a semantic key.
 const UI_ZH = {
+  '✈ Add to Home Screen in Safari to enable push notifications.': '✈ 在 Safari 中添加到主屏幕以启用推送通知。',
+  '✈ Install SpotAlert for quick access and notifications.': '✈ 安装 SpotAlert 以便快速访问并接收通知。',
+  'Install': '安装',
   'Arrivals': '到达', 'Departures': '离开',
   'Sunrise': '日出', 'Sunset': '日落',
   'Before Sunrise': '日出前', 'After Sunset': '日落后', 'Harsh Light': '顶光',
@@ -3415,20 +3418,57 @@ async function pollStatus() {
 
 // ── Service Worker + Install banner ──────────────────────────────────────────
 
+let _deferredInstallPrompt = null;
+
 function setupPWA() {
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('/sw.js').catch(() => {});
   }
 
-  // iOS install prompt — show if running in browser (not standalone) on iOS
+  const isMobile = window.innerWidth < 768;
   const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
-  const isStandalone = window.navigator.standalone === true;
-  if (isIOS && !isStandalone && !localStorage.getItem('install-dismissed')) {
+  const isStandalone = window.navigator.standalone === true ||
+    window.matchMedia('(display-mode: standalone)').matches;
+  const dismissed = !!localStorage.getItem('install-dismissed');
+
+  $('install-banner').querySelector('.close-banner').addEventListener('click', () => {
+    localStorage.setItem('install-dismissed', '1');
+  });
+
+  // iOS has no programmatic install API at all — Safari only exposes the
+  // "Add to Home Screen" action via its own Share sheet — so this is
+  // instructional text with no button, shown as soon as we know it's
+  // eligible (browser tab, not already installed).
+  if (isIOS && isMobile && !isStandalone && !dismissed) {
+    $('install-banner-text').textContent = tt('✈ Add to Home Screen in Safari to enable push notifications.');
     $('install-banner').classList.remove('hidden');
-    $('install-banner').querySelector('.close-banner').addEventListener('click', () => {
-      localStorage.setItem('install-dismissed', '1');
-    });
+    return;
   }
+
+  // Android/Chrome: the browser decides eligibility (valid manifest,
+  // service worker, engagement heuristics) and fires this whenever —
+  // could be immediately or several seconds after load. Capture it and
+  // suppress the browser's own mini-infobar in favor of our banner, which
+  // triggers the same native install flow via prompt() on click.
+  window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    _deferredInstallPrompt = e;
+    if (isMobile && !isStandalone && !dismissed) {
+      $('install-banner-text').textContent = tt('✈ Install SpotAlert for quick access and notifications.');
+      $('install-banner-btn').textContent = tt('Install');
+      $('install-banner-btn').classList.remove('hidden');
+      $('install-banner').classList.remove('hidden');
+    }
+  });
+}
+
+async function _doAndroidInstall() {
+  if (!_deferredInstallPrompt) return;
+  _deferredInstallPrompt.prompt();
+  await _deferredInstallPrompt.userChoice.catch(() => {});
+  _deferredInstallPrompt = null;
+  localStorage.setItem('install-dismissed', '1');
+  $('install-banner').classList.add('hidden');
 }
 
 // ── Tab loader dispatcher ─────────────────────────────────────────────────────
