@@ -1341,20 +1341,22 @@
     #toast.wrap { white-space: normal; text-align: center; border-radius: var(--r); max-width: 320px; }
     #toast.show { transform: translateX(-50%) translateY(0); }
 
-    /* ── Install banner ──────────────────────────────────────────────────── */
-    #install-banner {
-      background: var(--accent-dim); border-bottom: 1px solid var(--accent);
-      padding: 8px 16px; font-size: 12px; color: var(--text);
-      display: flex; align-items: center; gap: 10px; flex-shrink: 0;
+    /* ── Install prompt (full-screen, blocks the login screen until dismissed) ── */
+    #install-prompt {
+      position: fixed; inset: 0; z-index: 999; background: rgba(0,0,0,0.75);
+      display: flex; align-items: center; justify-content: center; padding: 20px;
     }
-    #install-banner.hidden { display: none; }
+    #install-prompt.hidden { display: none; }
     #spotting-reminder-prefs.hidden { display: none; }
-    #install-banner-text { flex: 1; }
-    #install-banner-btn {
-      background: var(--accent); color: #fff; border: none; border-radius: var(--r);
-      padding: 4px 12px; font-size: 12px; font-weight: 600; cursor: pointer; flex-shrink: 0;
+    .install-prompt-card {
+      background: var(--surface); border: 1px solid var(--border); border-radius: var(--r);
+      padding: 28px 24px; max-width: 320px; width: 100%; text-align: center;
+      display: flex; flex-direction: column; align-items: center; gap: 10px;
     }
-    #install-banner .close-banner { margin-left: 0; background: none; border: none; color: var(--dim); font-size: 16px; cursor: pointer; padding: 0; }
+    .install-prompt-icon { width: 64px; height: 64px; border-radius: 16px; margin-bottom: 4px; }
+    .install-prompt-title { font-size: 18px; font-weight: 700; color: var(--text); }
+    .install-prompt-text { font-size: 13px; color: var(--dim); line-height: 1.5; margin-bottom: 8px; }
+    .install-prompt-card .auth-btn { width: 100%; }
 
     /* ── Status pill + live dot on cards ────────────────────────────────── */
     .sq-status {
@@ -1856,10 +1858,14 @@
 </head>
 <body>
 
-<div id="install-banner" class="hidden">
-  <span id="install-banner-text">✈ Add to Home Screen in Safari to enable push notifications.</span>
-  <button id="install-banner-btn" class="hidden" onclick="_doAndroidInstall()">Install</button>
-  <button class="close-banner" onclick="document.getElementById('install-banner').classList.add('hidden')">✕</button>
+<div id="install-prompt" class="hidden">
+  <div class="install-prompt-card">
+    <img src="/static/icons/icon-192.png" alt="" class="install-prompt-icon">
+    <div class="install-prompt-title" data-i18n="install.title">Install SpotAlert</div>
+    <div id="install-prompt-text" class="install-prompt-text">Add SpotAlert to your home screen for quick access and push notifications.</div>
+    <button id="install-prompt-btn" class="auth-btn hidden" onclick="_doAndroidInstall()">Install</button>
+    <button class="auth-btn auth-btn-secondary" onclick="_dismissInstallPrompt()" data-i18n="install.notNow">Not now</button>
+  </div>
 </div>
 
 <header>

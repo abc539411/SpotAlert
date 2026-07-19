@@ -35,6 +35,7 @@ const I18N = {
     'settings.tab.collection': '收藏',
     'settings.tab.notification': '通知',
     'settings.tab.logs': '日志',
+    'install.title': '安装 SpotAlert', 'install.notNow': '暂不',
     'settings.language.heading': '语言',
     'settings.language.key': '显示语言',
     'settings.language.desc': '更改的是您账户的应用界面文本，会同步到您的所有设备，不影响航班数据。',
@@ -3426,40 +3427,53 @@ function setupPWA() {
   }
 
   const isMobile = window.innerWidth < 768;
-  const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+  // navigator.userAgent (e.g. /iphone/i) is NOT reliable here — Safari's
+  // "Request Desktop Website" (which iOS remembers per-site) rewrites the
+  // UA string to claim "Macintosh" AND inflates window.innerWidth to a
+  // desktop-like value, silently defeating both a UA regex and a width
+  // check at once. navigator.standalone, in contrast, is a WebKit/iOS-only
+  // API surface that isn't part of that spoofing — it exists (true or
+  // false) on iOS Safari regardless of desktop-site mode, and is simply
+  // undefined everywhere else. That makes it a reliable iOS signal on its
+  // own, independent of viewport/UA — so the iOS branch below doesn't
+  // additionally gate on isMobile.
+  const isIOS = typeof window.navigator.standalone !== 'undefined';
   const isStandalone = window.navigator.standalone === true ||
     window.matchMedia('(display-mode: standalone)').matches;
   const dismissed = !!localStorage.getItem('install-dismissed');
-
-  $('install-banner').querySelector('.close-banner').addEventListener('click', () => {
-    localStorage.setItem('install-dismissed', '1');
-  });
 
   // iOS has no programmatic install API at all — Safari only exposes the
   // "Add to Home Screen" action via its own Share sheet — so this is
   // instructional text with no button, shown as soon as we know it's
   // eligible (browser tab, not already installed).
-  if (isIOS && isMobile && !isStandalone && !dismissed) {
-    $('install-banner-text').textContent = tt('✈ Add to Home Screen in Safari to enable push notifications.');
-    $('install-banner').classList.remove('hidden');
+  if (isIOS && !isStandalone && !dismissed) {
+    $('install-prompt-text').textContent = tt('✈ Add to Home Screen in Safari to enable push notifications.');
+    $('install-prompt').classList.remove('hidden');
     return;
   }
 
   // Android/Chrome: the browser decides eligibility (valid manifest,
   // service worker, engagement heuristics) and fires this whenever —
   // could be immediately or several seconds after load. Capture it and
-  // suppress the browser's own mini-infobar in favor of our banner, which
-  // triggers the same native install flow via prompt() on click.
+  // suppress the browser's own mini-infobar in favor of our full-screen
+  // prompt, which triggers the same native install flow via prompt() on
+  // click. Gated on isMobile since desktop Chrome also fires this and the
+  // request was specifically for a mobile prompt.
   window.addEventListener('beforeinstallprompt', (e) => {
     e.preventDefault();
     _deferredInstallPrompt = e;
     if (isMobile && !isStandalone && !dismissed) {
-      $('install-banner-text').textContent = tt('✈ Install SpotAlert for quick access and notifications.');
-      $('install-banner-btn').textContent = tt('Install');
-      $('install-banner-btn').classList.remove('hidden');
-      $('install-banner').classList.remove('hidden');
+      $('install-prompt-text').textContent = tt('✈ Install SpotAlert for quick access and notifications.');
+      $('install-prompt-btn').textContent = tt('Install');
+      $('install-prompt-btn').classList.remove('hidden');
+      $('install-prompt').classList.remove('hidden');
     }
   });
+}
+
+function _dismissInstallPrompt() {
+  localStorage.setItem('install-dismissed', '1');
+  $('install-prompt').classList.add('hidden');
 }
 
 async function _doAndroidInstall() {
@@ -3467,8 +3481,7 @@ async function _doAndroidInstall() {
   _deferredInstallPrompt.prompt();
   await _deferredInstallPrompt.userChoice.catch(() => {});
   _deferredInstallPrompt = null;
-  localStorage.setItem('install-dismissed', '1');
-  $('install-banner').classList.add('hidden');
+  _dismissInstallPrompt();
 }
 
 // ── Tab loader dispatcher ─────────────────────────────────────────────────────
