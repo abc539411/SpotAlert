@@ -525,6 +525,8 @@
     .cp-row { display: flex; gap: 8px; }
     .cp-row .auth-input { flex: 1; min-width: 0; }
     .auth-hint { font-size: 11px; color: var(--dim); margin-top: -4px; }
+    .auth-link { cursor: pointer; color: var(--accent, #3b82f6); }
+    .auth-link:hover { text-decoration: underline; }
     .cp-submit-btn { align-self: center; width: auto; padding-left: 28px; padding-right: 28px; }
     .picker-footer-row { display: flex; gap: 8px; }
     .picker-footer-row .auth-btn { flex: 1; }
@@ -1882,6 +1884,15 @@
     <input id="login-username" class="auth-input" type="text" placeholder="Username" data-i18n-placeholder="picker.username" autocomplete="username">
     <input id="login-password" class="auth-input" type="password" placeholder="Password" data-i18n-placeholder="login.password" autocomplete="current-password">
     <button class="auth-btn" onclick="doLogin()" data-i18n="login.signIn">Sign in</button>
+    <div id="request-account-link" class="auth-hint auth-link hidden" style="text-align:center" onclick="_toggleRequestAccountForm()" data-i18n="login.requestAccount">Request an account</div>
+    <div id="request-account-form" class="hidden">
+      <input id="ra-username" class="auth-input" type="text" placeholder="Username" data-i18n-placeholder="picker.username" autocomplete="username">
+      <input id="ra-password" class="auth-input" type="password" placeholder="Password (min 8 characters)" data-i18n-placeholder="picker.passwordMin8" autocomplete="new-password">
+      <input id="ra-note" class="auth-input" type="text" placeholder="Note for the controller (optional)" data-i18n-placeholder="login.requestNote" autocomplete="off">
+      <div id="ra-error" class="auth-error hidden"></div>
+      <div id="ra-success" class="auth-hint hidden" data-i18n="login.requestSubmitted">Request submitted — wait for the controller to review it.</div>
+      <button class="auth-btn" onclick="requestAccount()" data-i18n="login.submitRequest">Submit request</button>
+    </div>
     <div id="login-version" class="auth-hint" style="text-align:center"></div>
   </div>
 </div>
@@ -1919,6 +1930,21 @@
     </div>
 
     <div id="picker-panel-users" class="hidden">
+      <div id="account-requests-block" class="hidden">
+        <div class="auth-title" data-i18n="picker.pendingRequests">Pending account requests</div>
+        <div id="account-requests-list" class="user-mgmt-list"></div>
+        <div id="approve-request-form" class="hidden">
+          <div id="approve-request-username" class="auth-hint"></div>
+          <div id="approve-request-role-group" class="role-pill-group">
+            <button type="button" class="role-pick-pill role-pilot" data-role="pilot" onclick="_selectRolePill('approve-request','pilot')" data-i18n="picker.role.pilot">PILOT</button>
+            <button type="button" class="role-pick-pill role-passenger" data-role="passenger" onclick="_selectRolePill('approve-request','passenger')" data-i18n="picker.role.passenger">PASSENGER</button>
+          </div>
+          <input type="hidden" id="approve-request-role" value="pilot">
+          <div id="approve-request-airports" class="airport-pill-select"></div>
+          <div id="approve-request-error" class="auth-error hidden"></div>
+          <button class="auth-btn" onclick="_confirmApproveRequest()" data-i18n="picker.approveRequest">Approve &amp; create account</button>
+        </div>
+      </div>
       <div class="auth-title" data-i18n="picker.manageUsersTitle">Manage users</div>
       <div id="user-mgmt-list" class="user-mgmt-list"></div>
       <div class="picker-icon-btns">
@@ -2142,6 +2168,23 @@
                   <option value="en">English</option>
                   <option value="zh">简体中文</option>
                 </select>
+              </div>
+            </div>
+          </div>
+          <!-- Site settings card (Controller only) -->
+          <div class="page-col-block hidden" id="settings-card-site">
+            <div class="section-heading" data-i18n="settings.site.heading">Site Settings</div>
+            <div class="settings-group">
+              <div class="setting-row">
+                <span class="setting-label"><span class="setting-key" data-i18n="settings.site.defaultLang.key">Default Language for New Visitors</span><span class="setting-desc" data-i18n="settings.site.defaultLang.desc">Language shown to anyone who hasn't logged in yet or set their own preference (e.g. the sign-in screen).</span></span>
+                <select id="site-default-lang" class="setting-input" style="width:240px;text-align:left" onchange="_saveSiteSettings()">
+                  <option value="en">English</option>
+                  <option value="zh">简体中文</option>
+                </select>
+              </div>
+              <div class="setting-row">
+                <span class="setting-label"><span class="setting-key" data-i18n="settings.site.allowSelfReg.key">Allow Account Requests</span><span class="setting-desc" data-i18n="settings.site.allowSelfReg.desc">Shows a "Request an account" link on the sign-in screen. You still review and approve or decline each request under Manage Users.</span></span>
+                <label class="tog-switch"><input type="checkbox" class="tog-input" id="site-allow-self-reg" onchange="_saveSiteSettings()"><span class="tog-track"><span class="tog-thumb"></span></span></label>
               </div>
             </div>
           </div>

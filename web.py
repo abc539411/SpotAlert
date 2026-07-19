@@ -808,13 +808,41 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         cstore.set_password(user.user_id, hash_password(new_password))
         return {"ok": True}
 
+    @app.post("/api/auth/request-account")
+    async def auth_request_account(request: Request):
+        """Public, unauthenticated - queues a self-registration request for a
+        Controller to review (see /api/controller/account-requests). Gated
+        behind the ALLOW_SELF_REGISTRATION site setting so this only exists
+        where a Controller has explicitly turned it on."""
+        from auth import hash_password
+        cstore = app.state.control_store
+        if cstore.get_site_setting("ALLOW_SELF_REGISTRATION", "false") != "true":
+            raise HTTPException(404)
+        body = await request.json()
+        username = str(body.get("username") or "").strip()
+        password = str(body.get("password") or "")
+        note = str(body.get("note") or "")
+        if not username or len(password) < 8:
+            raise HTTPException(400, "username and a password of at least 8 characters are required")
+        if cstore.username_taken_or_pending(username):
+            raise HTTPException(409, "That username is already taken or already has a pending request")
+        cstore.create_account_request(username, hash_password(password), note)
+        return {"ok": True}
+
     @app.get("/api/me")
     async def auth_me(request: Request):
         from auth import get_current_user_optional
+        cstore = app.state.control_store
+        # Site-wide, non-airport-specific - included for anonymous callers too
+        # so the login screen can pick a default language and decide whether
+        # to show "Request an Account" before anyone is authenticated.
+        site = {
+            "site_default_language": cstore.get_site_setting("DEFAULT_LANGUAGE", "en"),
+            "allow_self_registration": cstore.get_site_setting("ALLOW_SELF_REGISTRATION", "false") == "true",
+        }
         user = get_current_user_optional(request)
         if user is None:
-            return {"authenticated": False}
-        cstore = app.state.control_store
+            return {"authenticated": False, **site}
         if user.role == "controller":
             airports = [dict(a) for a in cstore.get_active_watched_airports()]
         else:
@@ -830,6 +858,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                 "icao": a["airport_icao"], "tz": a["airport_tz"],
                 "country_code": a["country_code"] or "", "tz_abbr": _tz_abbr(a["airport_tz"]),
             } for a in airports],
+            **site,
         }
 
     @app.put("/api/me/language")
@@ -1045,6 +1074,23 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
             })
         return JSONResponse({"users": out})
 
+    def _grant_pilot_snapshot(new_id: str, airport_iatas: list) -> None:
+        """One-time snapshot of the Controller's current exclusion/watchlist
+        rows AND pilot-editable settings values into a new Pilot's own rows,
+        per airport they've just been granted — after this they're fully
+        independent, no further syncing. The per-airport SPOT_*/RARE_PLANE
+        keys instead seed from this same Pilot's own value elsewhere first
+        (see seed_new_airport_prefill_settings); SPECIAL_LIVERY_EXCLUDE_KEYWORDS
+        is never seeded at all. Shared by direct user creation and account-
+        request approval."""
+        for iata in airport_iatas:
+            cfg = app.state.cfgs.get(iata)
+            if cfg:
+                cfg.store.copy_controller_filters_to_owner(new_id)
+                cfg.store.copy_controller_settings_to_owner(
+                    new_id, PER_USER_GLOBAL_SETTINGS - {"SPECIAL_LIVERY_KEYWORDS"})
+                seed_new_airport_prefill_settings(app.state.cfgs, new_id, iata)
+
     @app.post("/api/controller/users")
     async def controller_create_user(request: Request, user=Depends(_auth_require_role("controller"))):
         from auth import hash_password
@@ -1062,20 +1108,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
             raise HTTPException(409, "That username is already taken")
         new_id = cstore.create_user(username, hash_password(password), role, airport_iatas)
         if role == "pilot":
-            # One-time snapshot of the Controller's current exclusion/watchlist
-            # rows AND pilot-editable settings values into this Pilot's own
-            # rows, per airport they've just been granted — after this
-            # they're fully independent, no further syncing. The per-airport
-            # SPOT_*/RARE_PLANE keys instead seed from this same Pilot's own
-            # value elsewhere first (see seed_new_airport_prefill_settings);
-            # SPECIAL_LIVERY_EXCLUDE_KEYWORDS is never seeded at all.
-            for iata in airport_iatas:
-                cfg = app.state.cfgs.get(iata)
-                if cfg:
-                    cfg.store.copy_controller_filters_to_owner(new_id)
-                    cfg.store.copy_controller_settings_to_owner(
-                        new_id, PER_USER_GLOBAL_SETTINGS - {"SPECIAL_LIVERY_KEYWORDS"})
-                    seed_new_airport_prefill_settings(app.state.cfgs, new_id, iata)
+            _grant_pilot_snapshot(new_id, airport_iatas)
         return JSONResponse({"ok": True, "id": new_id})
 
     @app.put("/api/controller/users/{target_id}")
@@ -1177,6 +1210,73 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                 log.warning("Could not remove catalog file for deleted user %s: %s", target_id, exc)
 
         cstore.delete_user(target_id)
+        return JSONResponse({"ok": True})
+
+    # ── Self-registration: account requests ──────────────────────────────
+
+    @app.get("/api/controller/account-requests")
+    async def controller_list_account_requests(user=Depends(_auth_require_role("controller"))):
+        cstore = app.state.control_store
+        out = [{
+            "id": r["request_id"], "username": r["username"], "note": r["note"],
+            "created_ts": r["created_ts"],
+        } for r in cstore.list_account_requests("pending")]
+        return JSONResponse({"requests": out})
+
+    @app.post("/api/controller/account-requests/{request_id}/approve")
+    async def controller_approve_account_request(request_id: str, request: Request,
+                                                   user=Depends(_auth_require_role("controller"))):
+        body = await request.json()
+        role = str(body.get("role") or "")
+        airport_iatas = body.get("airport_iatas") or []
+        if role not in ("pilot", "passenger"):
+            raise HTTPException(400, "role must be pilot or passenger")
+        cstore = app.state.control_store
+        req = cstore.get_account_request(request_id)
+        if not req or req["status"] != "pending":
+            raise HTTPException(404, "Unknown or already-reviewed request")
+        if cstore.get_user_by_username(req["username"]):
+            raise HTTPException(409, "That username is already taken")
+        new_id = cstore.create_user(req["username"], req["password_hash"], role, airport_iatas)
+        if role == "pilot":
+            _grant_pilot_snapshot(new_id, airport_iatas)
+        cstore.resolve_account_request(request_id, "approved", user.user_id)
+        return JSONResponse({"ok": True, "id": new_id})
+
+    @app.post("/api/controller/account-requests/{request_id}/decline")
+    async def controller_decline_account_request(request_id: str, request: Request,
+                                                   user=Depends(_auth_require_role("controller"))):
+        body = await request.json()
+        reason = str(body.get("reason") or "")
+        cstore = app.state.control_store
+        req = cstore.get_account_request(request_id)
+        if not req or req["status"] != "pending":
+            raise HTTPException(404, "Unknown or already-reviewed request")
+        cstore.resolve_account_request(request_id, "declined", user.user_id, reason)
+        return JSONResponse({"ok": True})
+
+    # ── Site-wide settings (default language, self-registration toggle) ──
+
+    @app.get("/api/controller/site-settings")
+    async def controller_get_site_settings(user=Depends(_auth_require_role("controller"))):
+        cstore = app.state.control_store
+        return JSONResponse({
+            "default_language": cstore.get_site_setting("DEFAULT_LANGUAGE", "en"),
+            "allow_self_registration": cstore.get_site_setting("ALLOW_SELF_REGISTRATION", "false") == "true",
+        })
+
+    @app.put("/api/controller/site-settings")
+    async def controller_set_site_settings(request: Request, user=Depends(_auth_require_role("controller"))):
+        body = await request.json()
+        cstore = app.state.control_store
+        if "default_language" in body:
+            lang = str(body["default_language"])
+            if lang not in ("en", "zh"):
+                raise HTTPException(400, "default_language must be en or zh")
+            cstore.set_site_setting("DEFAULT_LANGUAGE", lang)
+        if "allow_self_registration" in body:
+            cstore.set_site_setting("ALLOW_SELF_REGISTRATION",
+                                     "true" if body["allow_self_registration"] else "false")
         return JSONResponse({"ok": True})
 
     @app.get("/api/catalog/status")

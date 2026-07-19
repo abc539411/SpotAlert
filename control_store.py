@@ -146,6 +146,35 @@ class ControlStore:
                 )
             """)
 
+            # Site-wide, non-airport-specific config that must be readable by
+            # anonymous callers (e.g. the login screen deciding whether to
+            # show "Request an Account", or which language to default to) -
+            # deliberately its own tiny key/value table rather than living in
+            # the per-airport `settings` table (store.py), since that table
+            # requires an authenticated request and at least one configured
+            # airport to reach.
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS site_settings (
+                    key   TEXT PRIMARY KEY,
+                    value TEXT
+                )
+            """)
+
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS account_requests (
+                    request_id          TEXT PRIMARY KEY,
+                    username             TEXT NOT NULL,
+                    password_hash        TEXT NOT NULL,
+                    note                 TEXT DEFAULT NULL,
+                    status               TEXT NOT NULL DEFAULT 'pending'
+                                             CHECK(status IN ('pending','approved','declined')),
+                    created_ts           INTEGER NOT NULL,
+                    reviewed_ts          INTEGER DEFAULT NULL,
+                    reviewed_by_user_id  TEXT DEFAULT NULL,
+                    decline_reason       TEXT DEFAULT NULL
+                )
+            """)
+
             conn.execute("PRAGMA foreign_keys = ON;")
 
     # ── Users ──────────────────────────────────────────────────────────────
@@ -548,3 +577,75 @@ class ControlStore:
                 return False
             conn.execute("DELETE FROM force_check_requests WHERE airport_iata = ?", (airport_iata,))
             return True
+
+    # ── Site settings ──────────────────────────────────────────────────────
+
+    def get_site_setting(self, key: str, default: Optional[str] = None) -> Optional[str]:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT value FROM site_settings WHERE key = ?", (key,)
+            ).fetchone()
+            return row["value"] if row is not None else default
+
+    def set_site_setting(self, key: str, value: str) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO site_settings (key, value) VALUES (?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (key, value),
+            )
+
+    # ── Account requests (self-registration) ──────────────────────────────
+
+    def username_taken_or_pending(self, username: str) -> bool:
+        """True if `username` is already a real account OR has a pending
+        (not yet reviewed) account request - checked together so a second
+        signup attempt under the same name can't queue up behind the first
+        one still awaiting review."""
+        username = username.strip()
+        with self._connect() as conn:
+            if conn.execute(
+                "SELECT 1 FROM web_users WHERE username = ?", (username,)
+            ).fetchone():
+                return True
+            return conn.execute(
+                "SELECT 1 FROM account_requests WHERE username = ? AND status = 'pending'",
+                (username,),
+            ).fetchone() is not None
+
+    def create_account_request(self, username: str, password_hash: str,
+                                note: str = "") -> str:
+        request_id = secrets.token_hex(16)
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO account_requests "
+                "(request_id, username, password_hash, note, created_ts) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (request_id, username.strip(), password_hash, note.strip(), int(time.time())),
+            )
+        return request_id
+
+    def list_account_requests(self, status: str = "pending") -> List[sqlite3.Row]:
+        with self._connect() as conn:
+            return conn.execute(
+                "SELECT * FROM account_requests WHERE status = ? ORDER BY created_ts ASC",
+                (status,),
+            ).fetchall()
+
+    def get_account_request(self, request_id: str) -> Optional[sqlite3.Row]:
+        with self._connect() as conn:
+            return conn.execute(
+                "SELECT * FROM account_requests WHERE request_id = ?", (request_id,)
+            ).fetchone()
+
+    def resolve_account_request(self, request_id: str, status: str,
+                                 reviewer_user_id: str, decline_reason: str = "") -> None:
+        """status is 'approved' or 'declined' - the actual web_users row (for
+        an approval) is created separately by the caller, this just closes
+        out the request itself."""
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE account_requests SET status = ?, reviewed_ts = ?, "
+                "reviewed_by_user_id = ?, decline_reason = ? WHERE request_id = ?",
+                (status, int(time.time()), reviewer_user_id, decline_reason.strip(), request_id),
+            )

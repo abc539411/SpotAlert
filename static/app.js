@@ -38,6 +38,11 @@ const I18N = {
     'settings.language.heading': '语言',
     'settings.language.key': '显示语言',
     'settings.language.desc': '更改的是您账户的应用界面文本，会同步到您的所有设备，不影响航班数据。',
+    'settings.site.heading': '站点设置',
+    'settings.site.defaultLang.key': '新访客默认语言',
+    'settings.site.defaultLang.desc': '尚未登录或尚未设置自己语言偏好的访客（例如登录页面）看到的语言。',
+    'settings.site.allowSelfReg.key': '允许申请账号',
+    'settings.site.allowSelfReg.desc': '在登录页面显示"申请账号"链接。每个申请仍需您在用户管理中审核并批准或拒绝。',
     'settings.general.heading': '常规',
     'settings.general.airport.key': '监控机场',
     'settings.general.airport.desc': '机场 IATA 代码。如需更改，请创建新实例。',
@@ -62,6 +67,7 @@ const I18N = {
     'picker.add': '添加',
     'picker.manageUsersTitle': '用户管理',
     'picker.addUser': '添加用户',
+    'picker.pendingRequests': '待审核的账号申请', 'picker.approveRequest': '批准并创建账号',
     'picker.username': '用户名', 'picker.passwordMin8': '密码（至少 8 位）',
     'picker.role.pilot': '飞行员', 'picker.role.passenger': '乘客', 'picker.role.controller': '空管',
     'picker.createUser': '创建用户',
@@ -72,6 +78,9 @@ const I18N = {
     'picker.min8Chars': '至少 8 个字符',
     'picker.updatePassword': '更新密码',
     'login.signIn': '登录', 'login.password': '密码',
+    'login.requestAccount': '申请账号', 'login.requestNote': '给管理员的备注（可选）',
+    'login.submitRequest': '提交申请',
+    'login.requestSubmitted': '申请已提交——请等待管理员审核。',
 
     'col.summary': '概览', 'col.fleet': '机队',
     'col.noCatalog': '请在设置 → 拍机推荐 中上传目录以使用此功能。',
@@ -326,10 +335,11 @@ const UI_ZH = {
   'Loading…': '加载中…',
   'No photos found.': '未找到照片。',
   'Failed to load photos.': '照片加载失败。',
-  'Edit': '编辑', 'Delete': '删除',
+  'Edit': '编辑', 'Delete': '删除', 'Approve': '批准', 'Decline': '拒绝',
   'No users yet.': '暂无用户。',
   'Could not load users.': '无法加载用户列表。',
   'Username is required': '用户名不能为空',
+  'Username and a password of at least 8 characters are required': '需要用户名以及至少 8 位的密码',
   'New password must be at least 8 characters': '新密码至少需要 8 个字符',
   'Refresh Feed': '刷新动态', 'Refresh Collection': '刷新收藏', 'Refresh Spotting': '刷新拍机',
   'Restart Server': '重启服务器',
@@ -749,6 +759,8 @@ function _showAuthView(id) {
     fetch('/api/version').then(r => r.json()).then(d => {
       $('login-version').textContent = d.version ? `v${d.version}` : '';
     }).catch(() => {});
+    $('request-account-link').classList.toggle('hidden', !_allowSelfRegistration);
+    $('request-account-form').classList.add('hidden');
   }
 }
 function _hideAuthViews() {
@@ -790,6 +802,13 @@ function _applyRoleUI(role) {
   // config and shouldn't see a container filesystem path at all.
   const photosPathCard = $('settings-card-session-photos-path');
   if (photosPathCard) photosPathCard.classList.toggle('hidden', !isController);
+  // Site-wide config (default language for anonymous visitors, whether the
+  // sign-in screen offers "Request an account") — Controller-only.
+  const siteCard = $('settings-card-site');
+  if (siteCard) {
+    siteCard.classList.toggle('hidden', !isController);
+    if (isController) loadSiteSettings();
+  }
 
   // Operational/monitoring-internals Settings subtabs — Controller-only,
   // hidden entirely (not just disabled) for Pilot and Passenger alike.
@@ -849,6 +868,30 @@ function _applyRoleUI(role) {
   _syncRefreshBtnVisibility();
 }
 
+async function loadSiteSettings() {
+  try {
+    const s = await api('/controller/site-settings');
+    $('site-default-lang').value = s.default_language || 'en';
+    $('site-allow-self-reg').checked = !!s.allow_self_registration;
+  } catch (e) {}
+}
+
+async function _saveSiteSettings() {
+  try {
+    await api('/controller/site-settings', {
+      method: 'PUT',
+      body: JSON.stringify({
+        default_language: $('site-default-lang').value,
+        allow_self_registration: $('site-allow-self-reg').checked,
+      }),
+    });
+    toast('Saved');
+  } catch (e) {
+    toast('Could not save site settings');
+    loadSiteSettings();
+  }
+}
+
 // Only "Refresh Collection" and "Refresh Spotting" hit endpoints Pilot/Passenger
 // can actually call — every other tab's button action (Refresh Feed / force-check,
 // Restart Server) is Controller-only server-side. Allowlist rather than blocklist
@@ -862,10 +905,23 @@ function _syncRefreshBtnVisibility() {
   btn.classList.toggle('hidden', !_NON_CONTROLLER_SAFE_REFRESH_TABS.has(activeTab) && _appRole !== 'controller');
 }
 
+let _allowSelfRegistration = false;
+
 async function _authBoot() {
   let me;
   try { me = await api('/me'); } catch { me = { authenticated: false }; }
-  if (!me.authenticated) { _showAuthView('view-login'); return; }
+  _allowSelfRegistration = !!me.allow_self_registration;
+  if (!me.authenticated) {
+    // Anonymous visitor — no per-user language on file, so fall back to
+    // the site's configured default (Controller-set, see Site Settings)
+    // unless this device already has its own explicit choice saved.
+    if (!localStorage.getItem('spotalert-lang') && me.site_default_language && me.site_default_language !== _lang) {
+      _lang = me.site_default_language;
+      applyI18n();
+    }
+    _showAuthView('view-login');
+    return;
+  }
   // Per-user language, synced server-side (see setLanguage()) — apply it before
   // anything auth-gated renders (including the airport picker below) so there's
   // no flash of whatever language localStorage/this device happened to have.
@@ -986,6 +1042,39 @@ async function doLogin() {
 async function doLogout() {
   try { await api('/auth/logout', { method: 'POST' }); } catch {}
   location.reload();
+}
+
+function _toggleRequestAccountForm() {
+  const form = $('request-account-form');
+  form.classList.toggle('hidden');
+  $('ra-error').classList.add('hidden');
+  $('ra-success').classList.add('hidden');
+}
+
+async function requestAccount() {
+  const username = $('ra-username').value.trim();
+  const password = $('ra-password').value;
+  const note = $('ra-note').value.trim();
+  const errEl = $('ra-error');
+  errEl.classList.add('hidden');
+  $('ra-success').classList.add('hidden');
+  if (!username || password.length < 8) {
+    errEl.textContent = tt('Username and a password of at least 8 characters are required');
+    errEl.classList.remove('hidden');
+    return;
+  }
+  try {
+    await api('/auth/request-account', { method: 'POST', body: JSON.stringify({ username, password, note }) });
+    $('ra-username').value = '';
+    $('ra-password').value = '';
+    $('ra-note').value = '';
+    $('ra-success').classList.remove('hidden');
+  } catch (e) {
+    let msg = 'Could not submit request';
+    try { msg = JSON.parse(e.message).detail || msg; } catch {}
+    errEl.textContent = msg;
+    errEl.classList.remove('hidden');
+  }
 }
 
 let _pickerAirports = [];  // cached for the Add User form's airport checkboxes
@@ -1255,7 +1344,7 @@ function _pickerSubtab(name) {
   $('picker-panel-airports').classList.toggle('hidden', name !== 'airports');
   $('picker-panel-users').classList.toggle('hidden', name !== 'users');
   $('change-password-toggle-btn').classList.toggle('hidden', name === 'users');
-  if (name === 'users' && _pickerIsController) loadUserManagement();
+  if (name === 'users' && _pickerIsController) { loadUserManagement(); loadAccountRequests(); }
 }
 
 async function selectAirport(iata) {
@@ -1272,6 +1361,77 @@ async function showAirportPicker() {
   try { me = await api('/me'); } catch { me = { airports: [], user: {} }; }
   _renderAirportPicker(me.airports || [], (me.user || {}).role, (me.user || {}).username);
   _showAuthView('view-airport-picker');
+}
+
+// ── Account requests (Controller only, self-registration review) ───────────
+
+let _accountRequestsCache = [];
+let _approvingRequestId = null;
+
+async function loadAccountRequests() {
+  const listEl = $('account-requests-list');
+  try {
+    const { requests } = await api('/controller/account-requests');
+    _accountRequestsCache = requests;
+    $('account-requests-block').classList.toggle('hidden', requests.length === 0);
+    listEl.innerHTML = requests.map(r => `
+      <div class="user-mgmt-row">
+        <div class="user-mgmt-row-hdr"><span class="user-mgmt-username">${esc(r.username)}</span></div>
+        ${r.note ? `<div class="user-mgmt-airports">${esc(r.note)}</div>` : ''}
+        <div class="user-mgmt-actions">
+          <button onclick="_showApproveRequestForm('${esc(r.id)}')">${tt('Approve')}</button>
+          <button class="danger" onclick="_declineRequest(this,'${esc(r.id)}','${esc(r.username)}')">${tt('Decline')}</button>
+        </div>
+      </div>`).join('');
+  } catch (e) {
+    $('account-requests-block').classList.add('hidden');
+  }
+}
+
+function _showApproveRequestForm(id) {
+  const r = _accountRequestsCache.find(x => x.id === id);
+  if (!r) return;
+  _approvingRequestId = id;
+  $('approve-request-username').textContent = r.username;
+  _renderAirportPillSelect('approve-request-airports', []);
+  _setRolePillOptions('approve-request', ['pilot', 'passenger'], 'pilot');
+  $('approve-request-error').classList.add('hidden');
+  $('approve-request-form').classList.remove('hidden');
+}
+
+async function _confirmApproveRequest() {
+  if (!_approvingRequestId) return;
+  const role = $('approve-request-role').value;
+  const airport_iatas = _getSelectedAirportPills('approve-request-airports');
+  const errEl = $('approve-request-error');
+  errEl.classList.add('hidden');
+  try {
+    await api(`/controller/account-requests/${_approvingRequestId}/approve`, {
+      method: 'POST', body: JSON.stringify({ role, airport_iatas }),
+    });
+    $('approve-request-form').classList.add('hidden');
+    _approvingRequestId = null;
+    toast('Account created');
+    loadAccountRequests();
+    loadUserManagement();
+  } catch (e) {
+    let msg = 'Could not approve request';
+    try { msg = JSON.parse(e.message).detail || msg; } catch {}
+    errEl.textContent = msg;
+    errEl.classList.remove('hidden');
+  }
+}
+
+function _declineRequest(btn, id, username) {
+  _armOrConfirm(btn, 'Decline', 'Click again to confirm', async () => {
+    try {
+      await api(`/controller/account-requests/${id}/decline`, { method: 'POST', body: JSON.stringify({}) });
+      toast(`Declined ${username}`);
+      loadAccountRequests();
+    } catch (e) {
+      toast('Could not decline request');
+    }
+  }, 'armed');
 }
 
 // ── Manage Users (Controller only) ──────────────────────────────────────────
