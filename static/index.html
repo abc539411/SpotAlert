@@ -379,7 +379,9 @@
     .auth-input {
       background: var(--surface); border: 1px solid var(--border); color: var(--text);
       padding: 9px 12px; border-radius: var(--r); font-size: 14px;
+      width: 100%; box-sizing: border-box;
     }
+    textarea.auth-input { resize: vertical; font-family: inherit; }
     .auth-btn {
       background: var(--accent); color: #fff; border: none; padding: 10px 12px;
       border-radius: var(--r); font-size: 14px; font-weight: 600; cursor: pointer; margin-top: 4px;
@@ -1888,7 +1890,7 @@
     <div id="request-account-form" class="hidden">
       <input id="ra-username" class="auth-input" type="text" placeholder="Username" data-i18n-placeholder="picker.username" autocomplete="username">
       <input id="ra-password" class="auth-input" type="password" placeholder="Password (min 8 characters)" data-i18n-placeholder="picker.passwordMin8" autocomplete="new-password">
-      <input id="ra-note" class="auth-input" type="text" placeholder="Note for the controller (optional)" data-i18n-placeholder="login.requestNote" autocomplete="off">
+      <textarea id="ra-note" class="auth-input" rows="3" placeholder="Note for the controller (optional)" data-i18n-placeholder="login.requestNote"></textarea>
       <div id="ra-error" class="auth-error hidden"></div>
       <div id="ra-success" class="auth-hint hidden" data-i18n="login.requestSubmitted">Request submitted — wait for the controller to review it.</div>
       <button class="auth-btn" onclick="requestAccount()" data-i18n="login.submitRequest">Submit request</button>
