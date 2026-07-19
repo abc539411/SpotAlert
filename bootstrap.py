@@ -228,6 +228,14 @@ def build_cfgs_for_watched_airports(fr_api, control_store, primary_store, data_d
     cfgs: Dict[str, "AppConfig"] = {}
 
     if not watched:
+        if not _s(primary_store, "AIRPORT_CODE"):
+            # Genuinely fresh install - no legacy single-airport config to
+            # migrate. Start with zero airports; the user adds their first
+            # one via Settings -> Airports -> Add Airport. Registering a
+            # blank-IATA placeholder here (as this branch used to do
+            # unconditionally) leaves a permanent ghost row in
+            # watched_airports with no name/IATA/timezone.
+            return cfgs
         cfg = build_config(fr_api, primary_store, catalog, control_store)
         control_store.register_airport(
             airport_iata=cfg.airport_iata, airport_code=cfg.airport_code,
