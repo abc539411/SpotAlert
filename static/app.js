@@ -220,7 +220,7 @@ const SETTINGS_I18N_ZH = {
 const _LABEL_ZH = {
   'Scheduled': '计划', 'Arriving': '抵达中', 'Arrived': '已到达', 'Departed': '已起飞',
   'Cancelled': '取消', 'Diverted': '备降', 'Swapped': '换机', 'N/A': '无',
-  'Estimated': '预计', 'Predicted': '预测',
+  'Estimated': '预计', 'Predicted': '预测', 'Unlisted': '已下架',
   'Confirmed Cancelled': '确认取消', 'Confirmed Diverted': '确认备降',
   'Presumed Cancelled': '推测取消', 'Presumed Diverted': '推测备降',
 };
@@ -356,6 +356,7 @@ const UI_ZH = {
   "Waiting for this airport's first check — tap Refresh to run one now.": '正在等待该机场的首次检查——点击刷新立即检查。',
   'Could not load the Board.': '无法加载看板。',
   'Not assigned yet': '尚未分配机号', 'No regular flights to show.': '暂无需要关注的常规航班。',
+  'Not scheduled': '未排班', 'Not on the schedule yet': '尚未出现在时刻表', 'Last card': '上次卡片',
   'Updated': '更新于', 'Data through': '数据截至', 'just now': '刚刚',
   'Hidden': '已隐藏', 'Unhide': '取消隐藏', 'Hide': '隐藏', 'hidden': '已隐藏', 'unhidden': '已取消隐藏',
   'Hidden flights only disappear from the Board — their Feed cards and notifications are unaffected. A hidden flight still reappears on a day it gets a Feed card.':
@@ -2070,6 +2071,7 @@ const _STATUS_STYLE = {
   Cancelled: ['rgba(239,68,68,0.18)',   '#ef4444'],
   Diverted:  ['rgba(168,85,247,0.18)',  '#a855f7'],
   Swapped:   ['rgba(120,120,120,0.10)', 'var(--dim)'],
+  Unlisted:  ['rgba(120,120,120,0.10)', 'var(--dim)'],   // Board: FR24 stopped listing this flight
   'N/A':     ['rgba(120,120,120,0.08)', 'var(--dim)'],
 };
 
@@ -3115,8 +3117,9 @@ function _bdRow(r, isMobile) {
     ? `${_flag(_regoCountryCode(r.registration), { h: 11 })}<a href="${_fr24AircraftUrl(r.registration)}" target="_blank" rel="noopener">${esc(r.registration)}</a>` +
       `${r.aircraft_type ? `<div class="ty">${esc(r.aircraft_type)}</div>` : ''}`
     : `<span class="bd-na">${esc(tt('Not assigned yet'))}</span>${r.aircraft_type ? `<div class="ty">${esc(r.aircraft_type)}</div>` : ''}`;
-  const pill = r.status === 'Arriving' ? ` ${_statusPillInline(r.status)}` : '';
-  return `<div class="bd-row">
+  const pill = (r.status && r.status !== 'Scheduled' && r.status !== 'N/A') ? ` ${_statusPillInline(r.status)}` : '';
+  const done = (r.status === 'Arrived' || r.status === 'Cancelled' || r.status === 'Diverted' || r.status === 'Unlisted') ? ' bd-row-done' : '';
+  return `<div class="bd-row${done}">
       <div class="bd-time">${time}</div>
       <div class="bd-main">
         <a class="bd-fn" href="${_fr24FlightUrl(r.flight_number)}" target="_blank" rel="noopener">${_srchLogoWithFallback(r.airline_icao, r.airline_name, 16, '')}${fn}</a>${pill}
@@ -3126,6 +3129,29 @@ function _bdRow(r, isMobile) {
       <button type="button" class="bd-hide${r.hidden ? ' is-hidden' : ''}" data-fn="${fn}" data-hidden="${r.hidden ? 1 : 0}"
               title="${esc(r.hidden ? tt('Unhide') : tt('Hide this flight number from the Board'))}"
               onclick="bdToggle(this)">${r.hidden ? _BD_EYE : _BD_EYE_OFF}</button>
+    </div>`;
+}
+
+// A roster flight number with no schedule row on this day: still listed (so the list is the same every
+// day and any flight can be checked), with what we know about it and the last time it triggered a card.
+function _bdAbsentRow(a, isMobile) {
+  const fn = esc(a.flight_number);
+  const originLabel = isMobile ? (a.origin_iata || '') : (a.origin_city || a.origin_iata || '');
+  const origin = originLabel ? `${a.origin_iata ? _flag(_airportCountry(a.origin_iata), { h: 11 }) : ''}${esc(originLabel)}` : '';
+  const airline = a.airline_name ? `<span data-ext-name="${esc(a.airline_name)}">${esc(tExternalName(a.airline_name))}</span>` : '';
+  const sub = [airline, origin].filter(Boolean).join(' · ');
+  const last = a.last_trigger_ts
+    ? `${esc(tt('Last card'))} ${esc(fmtDate(a.last_trigger_ts))}${a.last_trigger_reg ? ' · ' + esc(a.last_trigger_reg) : ''}`
+    : '';
+  return `<div class="bd-row bd-row-absent">
+      <div class="bd-time">—</div>
+      <div class="bd-main">
+        <a class="bd-fn" href="${_fr24FlightUrl(a.flight_number)}" target="_blank" rel="noopener">${_srchLogoWithFallback(a.airline_icao, a.airline_name, 16, '')}${fn}</a>
+        <div class="bd-sub">${sub}</div>
+      </div>
+      <div class="bd-ac"><span class="bd-na">${last}</span></div>
+      <button type="button" class="bd-hide" data-fn="${fn}" data-hidden="0" title="${esc(tt('Hide this flight number from the Board'))}"
+              onclick="bdToggle(this)">${_BD_EYE_OFF}</button>
     </div>`;
 }
 
@@ -3145,15 +3171,24 @@ function renderBoard() {
 
   wrap.innerHTML = (d.days || []).map(day => {
     const dateLbl = new Date(`${day.date}T12:00:00`).toLocaleDateString(_locale(), { weekday: 'short', day: 'numeric', month: 'short' });
+    const absent = day.absent || [];
+    const sched = day.rows.length ? day.rows.map(r => _bdRow(r, isMobile)).join('') : '';
+    const absentHd = absent.length
+      ? `<div class="bd-group-hd">${esc(day.horizon_reached ? tt('Not scheduled') : tt('Not on the schedule yet'))} (${absent.length})</div>${absent.map(a => _bdAbsentRow(a, isMobile)).join('')}`
+      : '';
+    const empty = (!day.rows.length && !absent.length)
+      ? `<div class="bd-empty">${esc(d.updated_ts ? tt('No regular flights to show.') : tt("Waiting for this airport's first check — tap Refresh to run one now."))}</div>` : '';
+    const note = (!d.updated_ts && absent.length)
+      ? `<div class="bd-empty">${esc(tt("Waiting for this airport's first check — tap Refresh to run one now."))}</div>` : '';
     return `<div class="bd-card">
-      <div class="bd-card-hd"><span class="t">${esc(tFeedDayLabel(day.date, day.label))}</span><span class="d">${esc(dateLbl)}</span><span class="n">${day.rows.length}</span></div>
-      <div class="bd-rows">${day.rows.length ? day.rows.map(r => _bdRow(r, isMobile)).join('') : `<div class="bd-empty">${esc(d.updated_ts ? tt('No regular flights to show.') : tt("Waiting for this airport's first check — tap Refresh to run one now."))}</div>`}</div>
+      <div class="bd-card-hd"><span class="t">${esc(tFeedDayLabel(day.date, day.label))}</span><span class="d">${esc(dateLbl)}</span><span class="n">${day.rows.length} / ${day.rows.length + absent.length}</span></div>
+      <div class="bd-rows">${note}${sched}${absentHd}${empty}</div>
     </div>`;
   }).join('');
   wrap.scrollLeft = keepX;
   wrap.querySelectorAll('.bd-rows').forEach((el, i) => { el.scrollTop = keepY[i] || 0; });
   if (_lang === 'zh') {
-    _translateNamesForZh((d.days || []).flatMap(day => day.rows.map(r => r.airline_name)).filter(Boolean));
+    _translateNamesForZh((d.days || []).flatMap(day => [...day.rows, ...(day.absent || [])].map(r => r.airline_name)).filter(Boolean));
   }
 }
 

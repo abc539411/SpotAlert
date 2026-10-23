@@ -4641,6 +4641,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                     cfg.store.set_setting(owner, str(key), str(value))
             else:
                 store.set_setting(owner, str(key), str(value))
+        _board_roster_cache.clear()   # the Board's roster depends on these lists
         return JSONResponse({"ok": True})
 
     @app.get("/api/filters")
@@ -4668,6 +4669,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         body = await request.json()
         store = _cfg_for_user(user).store
         store.add_exclusion(body.get("airline", ""), body["registration"], body.get("description", ""), _owner_for(user))
+        _board_roster_cache.clear()   # the Board's roster depends on these lists
         return JSONResponse({"ok": True})
 
     @app.delete("/api/filters/exclusion/{registration}")
@@ -4675,6 +4677,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         store = _cfg_for_user(user).store
         with store._connect() as conn:
             conn.execute("DELETE FROM filter_exclusions WHERE registration = ? AND owner_user_id = ?", (registration, _owner_for(user)))
+        _board_roster_cache.clear()   # the Board's roster depends on these lists
         return JSONResponse({"ok": True})
 
     # Notification Mute List — a registration that never triggers a push notification for this
@@ -4698,40 +4701,40 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
     # for the airport-local today + tomorrow. Rows are written by monitor.run_check Step 6b from
     # the same live-board fetch the Feed pipeline uses, so coverage is exactly as deep as the Feed's
     # (FETCH_PAGES) — see docs/13-board.md.
-    def _build_board_payload(cfg_, user) -> dict:
-        import datetime as _dtm, json as _json, pytz
-        store_ = cfg_.store
-        tz_name = getattr(cfg_, "airport_tz", None) or "UTC"
-        tz = pytz.timezone(tz_name)
-        now_ts = int(time.time())
-        d0 = _dtm.datetime.fromtimestamp(now_ts, tz).date()
-        starts = [int(tz.localize(_dtm.datetime.combine(d0 + _dtm.timedelta(days=i), _dtm.time.min)).timestamp())
-                  for i in range(3)]
-        rows = store_.get_board_rows(starts[0], starts[2])
-        hidden = set(store_.get_board_hidden(_owner_id(user)))
-        fns = {r["flight_number"] for r in rows}
+    # The Board's roster — "regular flight numbers that have produced a Feed card this viewer would see" —
+    # needs a pass over every flight_arrivals row of the candidate flight numbers (up to ~50k rows at the
+    # busiest airport) with the per-viewer tag stripping, so it is cached for a couple of minutes per
+    # (airport, owner). New triggers show within the TTL; filter-list edits likewise.
+    _BOARD_ROSTER_TTL = 120
+    _board_roster_cache: dict = {}
 
-        # Has this flight number produced a Feed card THIS viewer would see? Same per-viewer
-        # stripping chain as /api/feed (exclusion list, livery exclude keywords, rare-plane
-        # threshold, owned watchlists); Cancelled/Swapped cards never materialised, so they don't count.
-        trig_ts: dict = {}
-        cities: dict = {}
-        if fns:
+    def _board_roster(cfg_, user) -> dict:
+        """{flight_number: {"arrival_ts": [...], "last_ts", "last_reg", "airline_icao"}} for every candidate
+        flight number that still has at least one Feed card surviving this viewer's own filters. Cards that
+        were Cancelled/Swapped never materialised and don't count. Expires with flight_arrivals itself
+        (3 years, store.FLIGHT_ARRIVALS_RETENTION_DAYS)."""
+        import json as _json
+        key = (cfg_.airport_iata, _owner_id(user))
+        hit = _board_roster_cache.get(key)
+        if hit and time.time() - hit[0] < _BOARD_ROSTER_TTL:
+            return hit[1]
+        store_ = cfg_.store
+        cand = sorted(store_.board_candidate_flight_numbers(cfg_.airport_iata))
+        roster: dict = {}
+        if cand:
+            frows = []
             with store_._connect() as conn:
-                ph = ",".join("?" * len(fns))
-                frows = conn.execute(
-                    f"SELECT flight_number, registration, arrival_ts, notif_types, extra_info, airline_icao, "
-                    f"aircraft_type, rare_absence_days FROM flight_arrivals "
-                    f"WHERE flight_number IN ({ph}) AND COALESCE(current_status,'') NOT IN ('Cancelled','Swapped') "
-                    f"AND registration NOT IN (SELECT registration FROM filter_exclusions WHERE owner_user_id = ?)",
-                    (*fns, _owner_id(user))).fetchall()
+                for i in range(0, len(cand), 400):
+                    chunk = cand[i:i + 400]
+                    frows += conn.execute(
+                        f"SELECT flight_number, registration, arrival_ts, notif_types, extra_info, airline_icao, "
+                        f"aircraft_type, rare_absence_days FROM flight_arrivals "
+                        f"WHERE flight_number IN ({','.join('?' * len(chunk))}) "
+                        f"AND COALESCE(current_status,'') NOT IN ('Cancelled','Swapped') "
+                        f"AND registration NOT IN (SELECT registration FROM filter_exclusions WHERE owner_user_id = ?)",
+                        (*chunk, _owner_id(user))).fetchall()
                 _livery_excl = _viewer_livery_exclude_keywords(conn, user)
                 _rare_min_days = _viewer_rare_plane_min_days(conn, user)
-                origins = {r["origin_iata"] for r in rows if r["origin_iata"]}
-                if origins:
-                    cities = {c["iata"]: c["city"] for c in conn.execute(
-                        f"SELECT iata, city FROM airports WHERE iata IN ({','.join('?' * len(origins))})",
-                        tuple(origins)).fetchall()}
             _watchlist_sets = _viewer_watchlist_sets(store_, user)
             for fr in frows:
                 try:
@@ -4742,24 +4745,58 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                 nt = _resolve_rare_plane_tag(nt, fr["rare_absence_days"], _rare_min_days)
                 nt = _strip_unowned_watchlist_tags(nt, fr["registration"], fr["aircraft_type"],
                                                    fr["airline_icao"], _watchlist_sets)
-                if nt and fr["arrival_ts"]:
-                    trig_ts.setdefault(fr["flight_number"], []).append(fr["arrival_ts"])
+                if not nt or not fr["arrival_ts"]:
+                    continue
+                e = roster.setdefault(fr["flight_number"], {"arrival_ts": [], "last_ts": 0, "last_reg": "", "airline_icao": ""})
+                e["arrival_ts"].append(fr["arrival_ts"])
+                if fr["arrival_ts"] >= e["last_ts"]:
+                    e["last_ts"], e["last_reg"] = fr["arrival_ts"], fr["registration"] or ""
+                    e["airline_icao"] = fr["airline_icao"] or e["airline_icao"]
+        _board_roster_cache[key] = (time.time(), roster)
+        return roster
 
-        days =[{"date": (d0 + _dtm.timedelta(days=i)).isoformat(),
-                 "label": "Today" if i == 0 else "Tomorrow", "rows": []} for i in range(2)]
+    def _build_board_payload(cfg_, user) -> dict:
+        """The Board is a stable list: EVERY roster flight number (regular + has triggered a card before,
+        minus the ones the Controller hid) appears on both day cards every day. A day card shows the flight's
+        scheduled row when FR24 has one (landed / cancelled / unlisted flights stay, with their status);
+        otherwise a compact "not scheduled" entry. Flights only leave the list by being hidden or when their
+        trigger history expires. A hidden flight number reappears on a day it has a real Feed card."""
+        import datetime as _dtm, pytz
+        store_ = cfg_.store
+        tz_name = getattr(cfg_, "airport_tz", None) or "UTC"
+        tz = pytz.timezone(tz_name)
+        now_ts = int(time.time())
+        d0 = _dtm.datetime.fromtimestamp(now_ts, tz).date()
+        starts = [int(tz.localize(_dtm.datetime.combine(d0 + _dtm.timedelta(days=i), _dtm.time.min)).timestamp())
+                  for i in range(3)]
+        meta = store_.get_board_meta()
+        through = int(meta["data_through_ts"]) if meta.get("data_through_ts") else None
+
+        roster = _board_roster(cfg_, user)
+        hidden = set(store_.get_board_hidden(_owner_id(user)))
+        rows = [r for r in store_.get_board_rows(starts[0], starts[2]) if r["flight_number"] in roster]
+        profiles = store_.get_board_flight_profiles(cfg_.airport_iata, roster.keys())
+
+        iatas = {r["origin_iata"] for r in rows if r["origin_iata"]} | {p["origin_iata"] for p in profiles.values()}
+        cities: dict = {}
+        if iatas:
+            with store_._connect() as conn:
+                cities = {c["iata"]: c["city"] for c in conn.execute(
+                    f"SELECT iata, city FROM airports WHERE iata IN ({','.join('?' * len(iatas))})",
+                    tuple(iatas)).fetchall()}
+
+        days = [{"date": (d0 + _dtm.timedelta(days=i)).isoformat(), "label": "Today" if i == 0 else "Tomorrow",
+                 "rows": [], "absent": [], "horizon_reached": bool(through and through >= starts[i + 1] - 3600)}
+                for i in range(2)]
+        listed = [set(), set()]
         for r in rows:
             fn = r["flight_number"]
-            if fn not in trig_ts:
-                continue                                    # not (or no longer) a flight number this viewer cares about
             eff = r["estimated_ts"] or r["scheduled_ts"]
-            if r["status_text"] in ("Arrived", "Cancelled", "Diverted"):
-                continue
-            if eff < now_ts - 20 * 60:                      # data is up to a check interval old — treat as landed
-                continue
             is_hidden = fn in hidden
-            if is_hidden and not any(abs(t - r["scheduled_ts"]) <= 12 * 3600 for t in trig_ts[fn]):
+            if is_hidden and not any(abs(t - r["scheduled_ts"]) <= 12 * 3600 for t in roster[fn]["arrival_ts"]):
                 continue                                    # hidden, and no Feed card for this flight → stays hidden
             idx = 0 if eff < starts[1] else 1
+            listed[idx].add(fn)
             days[idx]["rows"].append({
                 "flight_number": fn, "scheduled_ts": r["scheduled_ts"], "estimated_ts": r["estimated_ts"],
                 "eff_ts": eff, "registration": r["registration"], "aircraft_type": r["aircraft_type"],
@@ -4768,12 +4805,20 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                 "origin_city": cities.get(r["origin_iata"], "") or "",
                 "status": r["status_text"], "hidden": is_hidden,
             })
-        meta = store_.get_board_meta()
+        for fn in sorted(roster):
+            if fn in hidden:
+                continue
+            info, prof = roster[fn], profiles.get(fn, {})
+            entry = {"flight_number": fn, "airline_name": prof.get("airline_name"), "airline_icao": info["airline_icao"],
+                     "origin_iata": prof.get("origin_iata"), "origin_city": cities.get(prof.get("origin_iata"), "") or "",
+                     "last_trigger_ts": info["last_ts"], "last_trigger_reg": info["last_reg"]}
+            for i in range(2):
+                if fn not in listed[i]:
+                    days[i]["absent"].append(entry)
         return {
             "airport_iata": cfg_.airport_iata, "timezone": tz_name, "now_ts": now_ts,
             "updated_ts": int(meta["updated_ts"]) if meta.get("updated_ts") else None,
-            "data_through_ts": int(meta["data_through_ts"]) if meta.get("data_through_ts") else None,
-            "hidden": sorted(hidden), "days": days,
+            "data_through_ts": through, "hidden": sorted(hidden), "roster_size": len(roster), "days": days,
         }
 
     @app.get("/api/board")
@@ -4799,6 +4844,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         body = await request.json()
         store = _cfg_for_user(user).store
         store.add_rego_watch(body.get("airline", ""), body["registration"], body.get("description", ""), _owner_for(user))
+        _board_roster_cache.clear()   # the Board's roster depends on these lists
         return JSONResponse({"ok": True})
 
     @app.delete("/api/filters/rego/{registration}")
@@ -4806,6 +4852,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         store = _cfg_for_user(user).store
         with store._connect() as conn:
             conn.execute("DELETE FROM filter_regos WHERE registration = ? AND owner_user_id = ?", (registration, _owner_for(user)))
+        _board_roster_cache.clear()   # the Board's roster depends on these lists
         return JSONResponse({"ok": True})
 
     @app.post("/api/filters/type")
@@ -4813,6 +4860,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         body = await request.json()
         store = _cfg_for_user(user).store
         store.add_type_watch(body["airline"], body["aircraft_type"], _owner_for(user))
+        _board_roster_cache.clear()   # the Board's roster depends on these lists
         return JSONResponse({"ok": True})
 
     @app.delete("/api/filters/type")
@@ -4824,6 +4872,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                 "DELETE FROM filter_types WHERE airline = ? AND aircraft_type = ? AND owner_user_id = ?",
                 (body["airline"], body["aircraft_type"], _owner_for(user)),
             )
+        _board_roster_cache.clear()   # the Board's roster depends on these lists
         return JSONResponse({"ok": True})
 
     @app.post("/api/filters/airline")
@@ -4831,6 +4880,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         body = await request.json()
         store = _cfg_for_user(user).store
         store.add_airline_watch(body["icao_code"], body.get("entry_type", "airline"), body.get("name", ""), _owner_for(user))
+        _board_roster_cache.clear()   # the Board's roster depends on these lists
         return JSONResponse({"ok": True})
 
     @app.delete("/api/filters/airline/{icao_code}")
@@ -4841,6 +4891,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                 "DELETE FROM filter_airlines WHERE icao_code = ? AND entry_type = ? AND owner_user_id = ?",
                 (icao_code.upper(), entry_type, _owner_for(user)),
             )
+        _board_roster_cache.clear()   # the Board's roster depends on these lists
         return JSONResponse({"ok": True})
 
     # Universal — every role can subscribe, each under their own push identity

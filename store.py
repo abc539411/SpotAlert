@@ -1084,8 +1084,8 @@ class SqliteStore:
     def replace_board_rows(self, rows: list, seen_window: Optional[tuple], prune_before_ts: int,
                             now_ts: int, data_through_ts: Optional[int]) -> None:
         """Upsert this check's board rows; drop rows from past days; and — only when
-        `seen_window` = (min_ts, max_ts) is given (every page of this check fetched OK) — drop rows
-        inside that observed time span that were NOT seen this check (cancelled / removed from the
+        `seen_window` = (min_ts, max_ts) is given (every page of this check fetched OK) — mark rows
+        inside that observed time span that were NOT seen this check as 'Unlisted' (removed from the
         board). Rows outside the span (FR24's page depth ended before them) are left alone.
 
         rows: dicts with flight_number, scheduled_ts, estimated_ts, registration, aircraft_type,
@@ -1116,9 +1116,13 @@ class SqliteStore:
                 (prune_before_ts,),
             )
             if seen_window:
+                # A flight FR24 no longer lists is kept, marked 'Unlisted' (it comes back to its real
+                # status if FR24 relists it) — the Board never silently drops a flight; only past days
+                # (above) and hidden flight numbers leave it.
                 lo, hi = seen_window
                 conn.execute(
-                    "DELETE FROM board_flights WHERE scheduled_ts BETWEEN ? AND ? AND updated_ts < ?",
+                    "UPDATE board_flights SET status_text = 'Unlisted' WHERE scheduled_ts BETWEEN ? AND ? "
+                    "AND updated_ts < ? AND COALESCE(status_text, '') NOT IN ('Arrived', 'Cancelled', 'Diverted', 'Unlisted')",
                     (lo, hi, now_ts),
                 )
             if data_through_ts:
@@ -1137,6 +1141,24 @@ class SqliteStore:
                 "AND COALESCE(estimated_ts, scheduled_ts) < ? ORDER BY COALESCE(estimated_ts, scheduled_ts) ASC",
                 (start_ts, end_ts),
             ).fetchall()]
+
+    def get_board_flight_profiles(self, airport_iata: str, flight_numbers) -> dict:
+        """Latest known airline + origin per flight number (from route_type_tracker, which is never
+        pruned) — lets the Board describe a flight number on days it has no schedule row.
+        Returns {flight_number: {"airline_name", "origin_iata"}}."""
+        fns = list(flight_numbers)
+        out: dict = {}
+        with self._connect() as conn:
+            for i in range(0, len(fns), 400):
+                chunk = fns[i:i + 400]
+                for r in conn.execute(
+                    f"SELECT flight_number, airline, origin_iata FROM route_type_tracker "
+                    f"WHERE airport_iata = ? AND origin_iata IS NOT NULL AND origin_iata != '' "
+                    f"AND flight_number IN ({','.join('?' * len(chunk))}) ORDER BY last_seen_ts ASC",
+                    (airport_iata, *chunk),
+                ).fetchall():
+                    out[r["flight_number"]] = {"airline_name": r["airline"], "origin_iata": r["origin_iata"]}
+        return out
 
     def get_board_meta(self) -> dict:
         with self._connect() as conn:

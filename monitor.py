@@ -1438,7 +1438,8 @@ async def run_check(context: ContextTypes.DEFAULT_TYPE) -> None:
                               # free on the call already made below, no extra API hit
     board_arrivals: list = [] # every raw live-board arrival (even with no aircraft assigned yet),
                               # for the Board tab (Step 6b) — same fetch, no extra API hit
-    _pages_failed = 0         # Step 6b only deletes "vanished" rows when every page loaded
+    board_hist: list = []     # same for the negative (recently landed) pages, so landed flights stay on the Board
+    _pages_failed = 0         # Step 6b only marks "vanished" rows when every page loaded
 
     try:
         import asyncio
@@ -1481,6 +1482,8 @@ async def run_check(context: ContextTypes.DEFAULT_TYPE) -> None:
                 hist_data     = await asyncio.to_thread(cfg.fr_api.get_airport_details, code=cfg.airport_code, page=hist_page)
                 hist_schedule = hist_data["airport"]["pluginData"]["schedule"]
                 board_photos.update(_extract_board_photos(hist_data))
+                board_hist.extend((e.get("flight") or {}) for e in (hist_schedule.get("arrivals", {}).get("data") or [])
+                                  if isinstance(e, dict))
                 for entry in (hist_schedule.get("arrivals", {}).get("data") or []):
                     parsed = _parse_aircraft(entry)
                     if not parsed:
@@ -1826,7 +1829,8 @@ async def run_check(context: ContextTypes.DEFAULT_TYPE) -> None:
                 return
             _now_dt = datetime.now(_tz_obj)
             _rows, _window, _through = _board_rows_from_entries(
-                board_arrivals, cfg.store.board_candidate_flight_numbers(cfg.airport_iata), _tz_obj, _now_dt)
+                board_arrivals + board_hist, cfg.store.board_candidate_flight_numbers(cfg.airport_iata),
+                _tz_obj, _now_dt)
             _midnight = _tz_obj.localize(datetime(_now_dt.year, _now_dt.month, _now_dt.day))
             cfg.store.replace_board_rows(
                 _rows,
