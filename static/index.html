@@ -103,9 +103,10 @@
          DOM order is Spotting, Collection, Feed, Search, Settings (mobile's order) — reorder visually here only. */
       .nav-tab[data-tab="recommendation"] { order: 1; }
       .nav-tab[data-tab="history"]        { order: 2; }
-      .nav-tab[data-tab="collection"]     { order: 3; }
-      .nav-tab[data-tab="search"]         { order: 4; }
-      .nav-tab[data-tab="settings"]       { order: 5; }
+      .nav-tab[data-tab="board"]          { order: 3; }
+      .nav-tab[data-tab="collection"]     { order: 4; }
+      .nav-tab[data-tab="search"]         { order: 5; }
+      .nav-tab[data-tab="settings"]       { order: 6; }
     }
 
     /* iOS Safari auto-zooms the whole page on focus for any text input/select/textarea
@@ -641,6 +642,54 @@
     .detail-quick-exclude.detail-quick-armed { background: var(--danger); color: #fff; border-color: var(--danger); }
     .detail-quick-watchlist.detail-quick-armed { background: var(--accent); color: #fff; border-color: var(--accent); }
     .detail-quick-mute.detail-quick-armed { background: var(--warn); color: #fff; border-color: var(--warn); }
+    /* ── Board tab (Controller-only): two day cards of regular flight numbers ───────────────── */
+    #tab-board { padding: 0; gap: 0; overflow: hidden; }
+    .bd-top { display: flex; align-items: center; gap: 10px; padding: 10px 14px 8px; flex-shrink: 0; }
+    .bd-meta { flex: 1; min-width: 0; font-size: 11px; color: var(--dim); line-height: 1.4; }
+    .bd-switch { display: none; flex-shrink: 0; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 2px; gap: 2px; }
+    .bd-switch button { background: transparent; border: none; color: var(--dim); font-size: 12px; font-weight: 600; padding: 5px 12px; border-radius: 6px; cursor: pointer; }
+    .bd-switch button.active { background: var(--accent); color: #fff; }
+    .bd-hidden-btn { flex-shrink: 0; background: none; border: 1px solid var(--border); color: var(--dim); font-size: 11px; padding: 4px 10px; border-radius: 12px; cursor: pointer; }
+    .bd-hidden-btn:hover, .bd-hidden-btn.open { color: var(--text); border-color: var(--accent); }
+    .bd-hidden-btn.hidden { display: none; }
+    .bd-hidden-panel { display: none; flex-shrink: 0; margin: 0 14px 8px; padding: 8px 10px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); font-size: 12px; }
+    .bd-hidden-panel.open { display: block; }
+    .bd-hidden-note { color: var(--dim); font-size: 11px; margin-bottom: 6px; }
+    .bd-hidden-chip { display: inline-flex; align-items: center; gap: 6px; margin: 0 6px 6px 0; padding: 3px 4px 3px 10px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface2); }
+    .bd-hidden-chip button { background: none; border: none; color: var(--accent); font-size: 11px; cursor: pointer; padding: 0 6px; }
+    .bd-wrap { flex: 1; min-height: 0; display: flex; gap: 12px; padding: 0 14px 14px; overflow-x: auto; scroll-snap-type: x mandatory; scroll-padding-inline: 14px; scrollbar-width: none; }
+    .bd-wrap::-webkit-scrollbar { display: none; }
+    .bd-card { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); overflow: hidden; scroll-snap-align: start; }
+    .bd-card-hd { display: flex; align-items: baseline; gap: 8px; padding: 11px 14px; border-bottom: 1px solid var(--border); background: var(--surface2); flex-shrink: 0; }
+    .bd-card-hd .t { font-size: 14px; font-weight: 700; }
+    .bd-card-hd .d { font-size: 11px; color: var(--dim); }
+    .bd-card-hd .n { margin-left: auto; font-size: 11px; color: var(--dim); }
+    .bd-rows { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+    .bd-row { display: grid; grid-template-columns: 52px minmax(0, 1fr) auto auto; gap: 10px; align-items: center; padding: 9px 12px; border-top: 1px solid var(--border); }
+    .bd-row:first-child { border-top: none; }
+    .bd-time { font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; }
+    .bd-time small { display: block; font-size: 10px; font-weight: 500; color: var(--dim); }
+    .bd-main { min-width: 0; }
+    .bd-fn { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 700; color: var(--text); text-decoration: none; }
+    .bd-fn:hover { color: var(--accent); }
+    .bd-sub { font-size: 11px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px; }
+    .bd-ac { text-align: right; font-size: 12px; line-height: 1.3; }
+    .bd-ac a { color: var(--text); font-weight: 700; text-decoration: none; letter-spacing: .03em; }
+    .bd-ac .ty { color: var(--dim); font-size: 11px; }
+    .bd-na { color: var(--dim); font-size: 11px; font-style: italic; }
+    .bd-hide { background: none; border: 1px solid transparent; color: var(--dim); width: 26px; height: 26px; border-radius: 50%; padding: 0; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+    .bd-hide:hover { color: var(--text); border-color: var(--border); }
+    .bd-hide.is-hidden { color: var(--warn); }
+    .bd-hide svg { width: 14px; height: 14px; }
+    .bd-empty { padding: 26px 16px; text-align: center; color: var(--dim); font-size: 12px; }
+    @media (max-width: 767px) {
+      .bd-top { flex-wrap: wrap; }
+      .bd-meta { order: 3; flex-basis: 100%; }
+      .bd-hidden-btn { margin-left: auto; }
+      .bd-switch { display: flex; }
+      .bd-card { flex: 0 0 100%; }
+      .bd-row { grid-template-columns: 46px minmax(0, 1fr) auto auto; gap: 8px; padding: 9px 10px; }
+    }
     /* ── Route bar ───────────────────────────────────────────────────────── */
     .rb { display: flex; align-items: flex-start; margin: 10px 0 0; padding: 12px 0; border-top: 1px solid var(--border); }
     .flight-bars-scroll { overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
@@ -1927,6 +1976,8 @@
     <button class="nav-tab" data-tab="recommendation"><span class="tab-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 21s-7-6.6-7-12a7 7 0 0 1 14 0c0 5.4-7 12-7 12z"/><circle cx="12" cy="9" r="2.4"/></svg></span><span data-i18n="nav.spotting">Spotting</span></button>
     <button class="nav-tab" data-tab="collection"><span class="tab-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 8.5a1.5 1.5 0 0 1 1.5-1.5h2l1-2h7l1 2h2A1.5 1.5 0 0 1 20 8.5v9A1.5 1.5 0 0 1 18.5 19h-13A1.5 1.5 0 0 1 4 17.5z"/><circle cx="12" cy="12.5" r="3.3"/></svg></span><span data-i18n="nav.collection">Collection</span></button>
     <button class="nav-tab active" data-tab="history"><span class="tab-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 11a8 8 0 0 1 16 0"/><path d="M7.5 11a4.5 4.5 0 0 1 9 0"/><circle cx="12" cy="11" r="1.6" fill="currentColor" stroke="none"/><path d="M12 12.6V21"/><path d="M8.5 21h7"/></svg></span><span data-i18n="nav.feed">Feed</span></button>
+    <!-- Board: Controller-only (hidden here, un-hidden by _applyRoleUI) -->
+    <button class="nav-tab hidden" data-tab="board"><span class="tab-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M7.5 9h5M7.5 12.5h9M7.5 16h3.5"/></svg></span><span data-i18n="nav.board">Board</span></button>
     <button class="nav-tab" data-tab="search"><span class="tab-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.3 15.3 20 20"/></svg></span><span data-i18n="nav.search">Search</span></button>
     <button class="nav-tab" data-tab="settings"><span class="tab-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="2.8"/><path d="M12 3.5v2.4M12 18.1v2.4M20.5 12h-2.4M5.9 12H3.5M17.8 6.2l-1.7 1.7M7.9 16.1l-1.7 1.7M17.8 17.8l-1.7-1.7M7.9 7.9 6.2 6.2"/></svg></span><span data-i18n="nav.settings">Settings</span></button>
   </nav>
@@ -2142,6 +2193,20 @@
   </div>
 
   <!-- Search -->
+  <!-- Board (Controller-only): two day cards — regular flight numbers that have triggered a card before -->
+  <div class="page hidden" id="tab-board">
+    <div class="bd-top">
+      <div class="bd-switch" id="bd-switch">
+        <button type="button" class="active" onclick="bdGo(0)" data-i18n="board.today">Today</button>
+        <button type="button" onclick="bdGo(1)" data-i18n="board.tomorrow">Tomorrow</button>
+      </div>
+      <div class="bd-meta" id="bd-meta"></div>
+      <button type="button" class="bd-hidden-btn" id="bd-hidden-btn" onclick="bdToggleHiddenPanel()"></button>
+    </div>
+    <div class="bd-hidden-panel" id="bd-hidden-panel"></div>
+    <div class="bd-wrap" id="bd-wrap"></div>
+  </div>
+
   <div class="page hidden" id="tab-search">
     <div class="srch-subtab-bar">
       <button class="srch-subtab active" data-srch-subtab="flights" onclick="_srchSubtab('flights')" data-i18n="srch.tab.flights">Last Seen</button>

@@ -10,6 +10,12 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 log = logging.getLogger(__name__)
 
+# How long flight_arrivals rows (Feed cards) are kept. Feed only reads the last 30 days; the
+# long tail exists so the Board can tell whether a flight number has EVER triggered a card.
+FLIGHT_ARRIVALS_RETENTION_DAYS = 3 * 365
+# A flight number is "regular" on the Board once it has been seen this many separate times.
+BOARD_MIN_APPEARANCES = 2
+
 
 @dataclass(frozen=True)
 class TableView:
@@ -144,6 +150,33 @@ class SqliteStore:
                 )
             """)
             conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_muted_reg ON filter_muted(owner_user_id, registration)")
+            # Board (Controller-only tab): upcoming arrivals of "regular" flight numbers, refreshed by
+            # monitor.run_check every check. Keyed by SCHEDULED time (stable) rather than date, so a
+            # flight delayed past midnight updates its own row instead of leaving a stale duplicate.
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS board_flights (
+                    flight_number TEXT NOT NULL,
+                    scheduled_ts  INTEGER NOT NULL,
+                    estimated_ts  INTEGER,
+                    registration  TEXT,
+                    aircraft_type TEXT,
+                    airline_name  TEXT,
+                    airline_icao  TEXT,
+                    origin_iata   TEXT,
+                    origin_name   TEXT,
+                    status_text   TEXT,
+                    updated_ts    INTEGER NOT NULL,
+                    PRIMARY KEY (flight_number, scheduled_ts)
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS board_hidden (
+                    owner_user_id TEXT NOT NULL DEFAULT 'controller',
+                    flight_number TEXT NOT NULL,
+                    PRIMARY KEY (owner_user_id, flight_number)
+                )
+            """)
+            conn.execute("CREATE TABLE IF NOT EXISTS board_meta (key TEXT PRIMARY KEY, value TEXT)")
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS livery_cooldowns (
                     registration TEXT PRIMARY KEY,
@@ -339,6 +372,14 @@ class SqliteStore:
                     "CREATE UNIQUE INDEX IF NOT EXISTS idx_fe_reg_fn_date "
                     "ON flight_arrivals(registration, flight_number, COALESCE(arrival_date,''))"
                 )
+            # flight_arrivals is now kept for FLIGHT_ARRIVALS_RETENTION_DAYS (3 years, for the
+            # Board's "has this flight number ever triggered") instead of 30 days. Feed
+            # (first_seen_ts), the timeline rebuild (arrival_date) and the Board
+            # (flight_number) all filter on columns that had no index — fine at a few hundred
+            # rows, a full scan at ~50k — so index them (cheap, built once).
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_fe_first_seen ON flight_arrivals(first_seen_ts)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_fe_arrival_date ON flight_arrivals(arrival_date)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_fe_flight_number ON flight_arrivals(flight_number)")
 
             # flight_departures: one row per arrival, linked via arrival_id FK.
             # Departures are independent display items for the feed and timeline.
@@ -1011,6 +1052,112 @@ class SqliteStore:
                 (owner_user_id, registration),
             ).fetchone() is not None
 
+    # ------------------------------------------------------------------
+    # Board (Controller-only tab) — see monitor.run_check "Step 6b" and web.py /api/board
+    # ------------------------------------------------------------------
+
+    def board_candidate_flight_numbers(self, airport_iata: str,
+                                        min_appearances: int = BOARD_MIN_APPEARANCES) -> set:
+        """Flight numbers worth tracking on the Board: seen as an ARRIVAL at this airport on at
+        least `min_appearances` separate occasions (route_type_tracker.count already de-dupes
+        sightings < 4 h apart; origin_iata IS NOT NULL keeps departure-only numbers out) AND
+        having produced at least one Feed card (flight_arrivals row with tags, not Cancelled/
+        Swapped). A viewer-agnostic SUPERSET: web.py's /api/board re-applies the Controller's
+        own exclusion/keyword/watchlist stripping before a number actually shows."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT r.flight_number FROM route_type_tracker r
+                WHERE r.airport_iata = ? AND r.origin_iata IS NOT NULL AND r.origin_iata != ''
+                GROUP BY r.flight_number
+                HAVING SUM(r.count) >= ?
+                   AND r.flight_number IN (
+                       SELECT flight_number FROM flight_arrivals
+                       WHERE notif_types IS NOT NULL AND notif_types NOT IN ('', '[]')
+                         AND COALESCE(current_status, '') NOT IN ('Cancelled', 'Swapped')
+                   )
+                """,
+                (airport_iata, int(min_appearances)),
+            ).fetchall()
+        return {r[0] for r in rows}
+
+    def replace_board_rows(self, rows: list, seen_window: Optional[tuple], prune_before_ts: int,
+                            now_ts: int, data_through_ts: Optional[int]) -> None:
+        """Upsert this check's board rows; drop rows from past days; and — only when
+        `seen_window` = (min_ts, max_ts) is given (every page of this check fetched OK) — drop rows
+        inside that observed time span that were NOT seen this check (cancelled / removed from the
+        board). Rows outside the span (FR24's page depth ended before them) are left alone.
+
+        rows: dicts with flight_number, scheduled_ts, estimated_ts, registration, aircraft_type,
+        airline_name, airline_icao, origin_iata, origin_name, status_text."""
+        with self._connect() as conn:
+            conn.executemany(
+                """
+                INSERT INTO board_flights
+                    (flight_number, scheduled_ts, estimated_ts, registration, aircraft_type,
+                     airline_name, airline_icao, origin_iata, origin_name, status_text, updated_ts)
+                VALUES (:flight_number, :scheduled_ts, :estimated_ts, :registration, :aircraft_type,
+                        :airline_name, :airline_icao, :origin_iata, :origin_name, :status_text, :now)
+                ON CONFLICT(flight_number, scheduled_ts) DO UPDATE SET
+                    estimated_ts  = excluded.estimated_ts,
+                    registration  = excluded.registration,
+                    aircraft_type = excluded.aircraft_type,
+                    airline_name  = COALESCE(excluded.airline_name, board_flights.airline_name),
+                    airline_icao  = COALESCE(excluded.airline_icao, board_flights.airline_icao),
+                    origin_iata   = COALESCE(excluded.origin_iata, board_flights.origin_iata),
+                    origin_name   = COALESCE(excluded.origin_name, board_flights.origin_name),
+                    status_text   = excluded.status_text,
+                    updated_ts    = excluded.updated_ts
+                """,
+                [{**r, "now": now_ts} for r in rows],
+            )
+            conn.execute(
+                "DELETE FROM board_flights WHERE COALESCE(estimated_ts, scheduled_ts) < ?",
+                (prune_before_ts,),
+            )
+            if seen_window:
+                lo, hi = seen_window
+                conn.execute(
+                    "DELETE FROM board_flights WHERE scheduled_ts BETWEEN ? AND ? AND updated_ts < ?",
+                    (lo, hi, now_ts),
+                )
+            if data_through_ts:
+                conn.execute(
+                    "INSERT INTO board_meta(key, value) VALUES('data_through_ts', ?) "
+                    "ON CONFLICT(key) DO UPDATE SET value = excluded.value", (str(int(data_through_ts)),))
+            conn.execute(
+                "INSERT INTO board_meta(key, value) VALUES('updated_ts', ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value", (str(int(now_ts)),))
+
+    def get_board_rows(self, start_ts: int, end_ts: int) -> list:
+        """Board rows whose effective arrival (estimated, else scheduled) is in [start_ts, end_ts)."""
+        with self._connect() as conn:
+            return [dict(r) for r in conn.execute(
+                "SELECT * FROM board_flights WHERE COALESCE(estimated_ts, scheduled_ts) >= ? "
+                "AND COALESCE(estimated_ts, scheduled_ts) < ? ORDER BY COALESCE(estimated_ts, scheduled_ts) ASC",
+                (start_ts, end_ts),
+            ).fetchall()]
+
+    def get_board_meta(self) -> dict:
+        with self._connect() as conn:
+            return {r["key"]: r["value"] for r in conn.execute("SELECT key, value FROM board_meta").fetchall()}
+
+    def get_board_hidden(self, owner_user_id: str = "controller") -> list:
+        with self._connect() as conn:
+            return [r[0] for r in conn.execute(
+                "SELECT flight_number FROM board_hidden WHERE owner_user_id = ? ORDER BY flight_number",
+                (owner_user_id,)).fetchall()]
+
+    def add_board_hidden(self, flight_number: str, owner_user_id: str = "controller") -> None:
+        with self._connect() as conn:
+            conn.execute("INSERT OR IGNORE INTO board_hidden(owner_user_id, flight_number) VALUES (?,?)",
+                         (owner_user_id, flight_number.strip()))
+
+    def remove_board_hidden(self, flight_number: str, owner_user_id: str = "controller") -> None:
+        with self._connect() as conn:
+            conn.execute("DELETE FROM board_hidden WHERE owner_user_id = ? AND flight_number = ?",
+                         (owner_user_id, flight_number.strip()))
+
     def add_rego_watch(self, airline: str, registration: str, description: str,
                         owner_user_id: str = "controller") -> None:
         with self._connect() as conn:
@@ -1553,17 +1700,22 @@ class SqliteStore:
                 return cursor.lastrowid, cursor.rowcount > 0
 
     def cleanup_arrived_flights(self, now_ts: int) -> None:
-        """Prune complete days older than 30 days â€” never cuts through a partial day.
+        """Prune complete days past retention â€” never cuts through a partial day.
         Uses arrival_date (YYYY-MM-DD) so only fully-elapsed days are removed.
-        Falls back to first_seen_ts for rows with no arrival_date set."""
+        Falls back to first_seen_ts for rows with no arrival_date set.
+
+        flight_arrivals is kept FLIGHT_ARRIVALS_RETENTION_DAYS (3 years) so the Board can tell
+        whether a flight number has EVER triggered a card; Feed only ever reads the last 30
+        days of it (first_seen_ts cutoff), and the timeline cache is still pruned at 30 days."""
         try:
             import system_status as _ss; _ss.record_task('feed_cleanup', True)
         except Exception:
             pass
         import datetime as _dt
         today = _dt.date.fromtimestamp(now_ts)
-        cutoff_date = (today - _dt.timedelta(days=30)).isoformat()
-        cutoff_ts   = now_ts - 30 * 86400
+        cutoff_date = (today - _dt.timedelta(days=FLIGHT_ARRIVALS_RETENTION_DAYS)).isoformat()
+        cutoff_ts   = now_ts - FLIGHT_ARRIVALS_RETENTION_DAYS * 86400
+        cache_cutoff_date = (today - _dt.timedelta(days=30)).isoformat()
         with self._connect() as conn:
             conn.execute(
                 "DELETE FROM flight_arrivals WHERE "
@@ -1573,7 +1725,7 @@ class SqliteStore:
             )
             conn.execute(
                 "DELETE FROM timeline_cache WHERE date < ?",
-                (cutoff_date,),
+                (cache_cutoff_date,),
             )
 
     # ------------------------------------------------------------------

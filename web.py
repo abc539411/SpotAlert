@@ -1207,7 +1207,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         for cfg in app.state.cfgs.values():
             with cfg.store._connect() as conn:
                 conn.execute("DELETE FROM settings WHERE user_id = ?", (target_id,))
-                for tbl in ("filter_exclusions", "filter_muted", "filter_regos", "filter_types", "filter_airlines"):
+                for tbl in ("filter_exclusions", "filter_muted", "board_hidden", "filter_regos", "filter_types", "filter_airlines"):
                     conn.execute(f"DELETE FROM {tbl} WHERE owner_user_id = ?", (target_id,))
 
         catalog_path = target["catalog_path"]
@@ -4691,6 +4691,107 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         store = _cfg_for_user(user).store
         with store._connect() as conn:
             conn.execute("DELETE FROM filter_muted WHERE registration = ? AND owner_user_id = ?", (registration.strip().upper(), _owner_for(user)))
+        return JSONResponse({"ok": True})
+
+    # ── Board (Controller-only tab) ─────────────────────────────────────────
+    # Upcoming arrivals of "regular" flight numbers (>= 2 sightings AND have produced a Feed card),
+    # for the airport-local today + tomorrow. Rows are written by monitor.run_check Step 6b from
+    # the same live-board fetch the Feed pipeline uses, so coverage is exactly as deep as the Feed's
+    # (FETCH_PAGES) — see docs/13-board.md.
+    def _build_board_payload(cfg_, user) -> dict:
+        import datetime as _dtm, json as _json, pytz
+        store_ = cfg_.store
+        tz_name = getattr(cfg_, "airport_tz", None) or "UTC"
+        tz = pytz.timezone(tz_name)
+        now_ts = int(time.time())
+        d0 = _dtm.datetime.fromtimestamp(now_ts, tz).date()
+        starts = [int(tz.localize(_dtm.datetime.combine(d0 + _dtm.timedelta(days=i), _dtm.time.min)).timestamp())
+                  for i in range(3)]
+        rows = store_.get_board_rows(starts[0], starts[2])
+        hidden = set(store_.get_board_hidden(_owner_id(user)))
+        fns = {r["flight_number"] for r in rows}
+
+        # Has this flight number produced a Feed card THIS viewer would see? Same per-viewer
+        # stripping chain as /api/feed (exclusion list, livery exclude keywords, rare-plane
+        # threshold, owned watchlists); Cancelled/Swapped cards never materialised, so they don't count.
+        trig_ts: dict = {}
+        cities: dict = {}
+        if fns:
+            with store_._connect() as conn:
+                ph = ",".join("?" * len(fns))
+                frows = conn.execute(
+                    f"SELECT flight_number, registration, arrival_ts, notif_types, extra_info, airline_icao, "
+                    f"aircraft_type, rare_absence_days FROM flight_arrivals "
+                    f"WHERE flight_number IN ({ph}) AND COALESCE(current_status,'') NOT IN ('Cancelled','Swapped') "
+                    f"AND registration NOT IN (SELECT registration FROM filter_exclusions WHERE owner_user_id = ?)",
+                    (*fns, _owner_id(user))).fetchall()
+                _livery_excl = _viewer_livery_exclude_keywords(conn, user)
+                _rare_min_days = _viewer_rare_plane_min_days(conn, user)
+                origins = {r["origin_iata"] for r in rows if r["origin_iata"]}
+                if origins:
+                    cities = {c["iata"]: c["city"] for c in conn.execute(
+                        f"SELECT iata, city FROM airports WHERE iata IN ({','.join('?' * len(origins))})",
+                        tuple(origins)).fetchall()}
+            _watchlist_sets = _viewer_watchlist_sets(store_, user)
+            for fr in frows:
+                try:
+                    nt = _json.loads(fr["notif_types"] or "[]")
+                except Exception:
+                    nt = [fr["notif_types"]] if fr["notif_types"] else []
+                nt = _strip_excluded_livery_tag(nt, fr["extra_info"], _livery_excl)
+                nt = _resolve_rare_plane_tag(nt, fr["rare_absence_days"], _rare_min_days)
+                nt = _strip_unowned_watchlist_tags(nt, fr["registration"], fr["aircraft_type"],
+                                                   fr["airline_icao"], _watchlist_sets)
+                if nt and fr["arrival_ts"]:
+                    trig_ts.setdefault(fr["flight_number"], []).append(fr["arrival_ts"])
+
+        days =[{"date": (d0 + _dtm.timedelta(days=i)).isoformat(),
+                 "label": "Today" if i == 0 else "Tomorrow", "rows": []} for i in range(2)]
+        for r in rows:
+            fn = r["flight_number"]
+            if fn not in trig_ts:
+                continue                                    # not (or no longer) a flight number this viewer cares about
+            eff = r["estimated_ts"] or r["scheduled_ts"]
+            if r["status_text"] in ("Arrived", "Cancelled", "Diverted"):
+                continue
+            if eff < now_ts - 20 * 60:                      # data is up to a check interval old — treat as landed
+                continue
+            is_hidden = fn in hidden
+            if is_hidden and not any(abs(t - r["scheduled_ts"]) <= 12 * 3600 for t in trig_ts[fn]):
+                continue                                    # hidden, and no Feed card for this flight → stays hidden
+            idx = 0 if eff < starts[1] else 1
+            days[idx]["rows"].append({
+                "flight_number": fn, "scheduled_ts": r["scheduled_ts"], "estimated_ts": r["estimated_ts"],
+                "eff_ts": eff, "registration": r["registration"], "aircraft_type": r["aircraft_type"],
+                "airline_name": r["airline_name"], "airline_icao": r["airline_icao"],
+                "origin_iata": r["origin_iata"], "origin_name": r["origin_name"],
+                "origin_city": cities.get(r["origin_iata"], "") or "",
+                "status": r["status_text"], "hidden": is_hidden,
+            })
+        meta = store_.get_board_meta()
+        return {
+            "airport_iata": cfg_.airport_iata, "timezone": tz_name, "now_ts": now_ts,
+            "updated_ts": int(meta["updated_ts"]) if meta.get("updated_ts") else None,
+            "data_through_ts": int(meta["data_through_ts"]) if meta.get("data_through_ts") else None,
+            "hidden": sorted(hidden), "days": days,
+        }
+
+    @app.get("/api/board")
+    async def get_board(user=Depends(_auth_require_role("controller"))):
+        return JSONResponse(await asyncio.to_thread(_build_board_payload, _cfg_for_user(user), user))
+
+    @app.post("/api/board/hidden")
+    async def add_board_hidden(request: Request, user=Depends(_auth_require_role("controller"))):
+        body = await request.json()
+        fn = str(body.get("flight_number") or "").strip()
+        if not fn:
+            raise HTTPException(400, "flight_number required")
+        _cfg_for_user(user).store.add_board_hidden(fn, _owner_for(user))
+        return JSONResponse({"ok": True})
+
+    @app.delete("/api/board/hidden/{flight_number}")
+    async def remove_board_hidden(flight_number: str, user=Depends(_auth_require_role("controller"))):
+        _cfg_for_user(user).store.remove_board_hidden(flight_number, _owner_for(user))
         return JSONResponse({"ok": True})
 
     @app.post("/api/filters/rego")

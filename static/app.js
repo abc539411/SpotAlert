@@ -26,6 +26,9 @@ const I18N = {
     'nav.spotting': '拍机',
     'nav.collection': '相册',
     'nav.feed': '动态',
+    'nav.board': '看板',
+    'board.today': '今天',
+    'board.tomorrow': '明天',
     'nav.search': '搜索',
     'nav.settings': '设置',
     'settings.tab.general': '常规',
@@ -349,6 +352,13 @@ const UI_ZH = {
   'Username and a password of at least 8 characters are required': '需要用户名以及至少 8 位的密码',
   'New password must be at least 8 characters': '新密码至少需要 8 个字符',
   'Refresh Feed': '刷新动态', 'Refresh Collection': '刷新收藏', 'Refresh Spotting': '刷新拍机',
+  'Refresh Board': '刷新看板', 'Refreshing the Board…': '正在刷新看板…', 'Could not load the Board.': '无法加载看板。',
+  'Not assigned yet': '尚未分配机号', 'No regular flights to show.': '暂无需要关注的常规航班。',
+  'Updated': '更新于', 'Data through': '数据截至', 'just now': '刚刚',
+  'Hidden': '已隐藏', 'Unhide': '取消隐藏', 'Hide': '隐藏', 'hidden': '已隐藏', 'unhidden': '已取消隐藏',
+  'Hidden flights only disappear from the Board — their Feed cards and notifications are unaffected. A hidden flight still reappears on a day it gets a Feed card.':
+    '隐藏的航班只会从看板中消失——动态卡片和通知不受影响。隐藏的航班在当天出现动态卡片时仍会重新显示。',
+  'Hide this flight number from the Board': '从看板隐藏该航班号',
   'Restart Server': '重启服务器',
   'Add': '添加', 'Add keyword…': '添加关键词…',
   'No catalog uploaded yet.': '尚未上传目录。', 'Uploaded:': '已上传：',
@@ -667,6 +677,7 @@ function setLanguage(lang) {
     _colLoaded = false;
     _srchFlData = null;
     if (activeTab === 'history') loadFeed();
+    else if (activeTab === 'board') loadBoard();
     else if (activeTab === 'recommendation') loadRecommendation(false);
     else if (activeTab === 'collection') loadCollection(false);
     else if (activeTab === 'search') {
@@ -843,6 +854,9 @@ function _applyRoleUI(role) {
   // both are catalog-backed views a read-only viewer has no use for.
   const collectionTab = document.querySelector('.nav-tab[data-tab="collection"]');
   if (collectionTab) collectionTab.classList.toggle('hidden', isPassenger);
+  // Board is a Controller-only tab (server-side routes are controller-gated too).
+  const boardTab = document.querySelector('.nav-tab[data-tab="board"]');
+  if (boardTab) boardTab.classList.toggle('hidden', !isController);
   const catalogueSubtab = document.querySelector('.srch-subtab[data-srch-subtab="catalog"]');
   if (catalogueSubtab) catalogueSubtab.classList.toggle('hidden', isPassenger);
 
@@ -2946,7 +2960,7 @@ let _feedAirportIata = '';
 let _feedAirportName = '';
 let _feedTimezone   = '';
 
-const TABS = ['recommendation', 'history', 'collection', 'search', 'settings'];
+const TABS = ['recommendation', 'history', 'board', 'collection', 'search', 'settings'];
 let activeTab = 'history';
 
 function switchTab(name) {
@@ -2969,6 +2983,9 @@ function switchTab(name) {
     } else if (name === 'recommendation') {
       btn.onclick = () => { _recLoaded = false; toast('Plotting the windows…'); loadRecommendation(true); };
       lbl.textContent = tt('Refresh Spotting');
+    } else if (name === 'board') {
+      btn.onclick = () => { toast(tt('Refreshing the Board…')); loadBoard(); };
+      lbl.textContent = tt('Refresh Board');
     } else if (name === 'settings') {
       btn.onclick = () => armRestartBackend();
       btn.classList.add('btn-danger');
@@ -3031,6 +3048,139 @@ async function loadHistory() {
     el.innerHTML = `<div class="empty">${esc(e.message)}</div>`;
   }
 }
+
+// ── Board (Controller-only) ──────────────────────────────────────────────────
+// Two day cards (Today / Tomorrow, airport timezone) listing the upcoming flights of "regular"
+// flight numbers (seen 2+ times) that have produced a Feed card before, with whichever aircraft FR24
+// currently has on them — so the Controller can eyeball what might trigger. Rows are written
+// server-side by the monitor every check (see docs/13-board.md); this just polls while the tab is open.
+let _bdData = null;
+let _bdTimer = null;
+
+const _BD_EYE     = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12z"/><circle cx="12" cy="12" r="2.6"/></svg>';
+const _BD_EYE_OFF = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3l18 18"/><path d="M10.6 6.1A10 10 0 0 1 12 6c6.4 0 10 6 10 6a17 17 0 0 1-3.2 3.9M6.3 7.7C3.9 9.3 2 12 2 12s3.6 6 10 6c1.6 0 3-.3 4.2-.9"/><path d="M9.9 10a3 3 0 0 0 4.1 4.1"/></svg>';
+
+function _bdAgo(ts) {
+  const mins = Math.max(0, Math.round((Date.now() / 1000 - ts) / 60));
+  if (mins < 1) return tt('just now');
+  return _lang === 'zh' ? `${mins} 分钟前` : `${mins} min ago`;
+}
+
+async function loadBoard() {
+  clearTimeout(_bdTimer);
+  try {
+    _bdData = await api('/board');
+  } catch (e) {
+    $('bd-wrap').innerHTML = `<div class="bd-empty" style="width:100%">${esc(tt('Could not load the Board.'))}</div>`;
+    return;
+  }
+  renderBoard();
+  _bdTimer = setTimeout(() => { if (activeTab === 'board') loadBoard(); }, 60000);
+}
+
+function _bdRow(r, isMobile) {
+  const fn = esc(r.flight_number);
+  const late = r.estimated_ts && Math.abs(r.estimated_ts - r.scheduled_ts) >= 600;
+  const time = `${esc(fmtTs(r.eff_ts))}${late ? `<small>${esc(fmtTs(r.scheduled_ts))}</small>` : ''}`;
+  const originLabel = isMobile ? (r.origin_iata || '') : (r.origin_city || r.origin_name || r.origin_iata || '');
+  const origin = originLabel
+    ? `${r.origin_iata ? _flag(_airportCountry(r.origin_iata), { h: 11 }) : ''}${esc(originLabel)}` : '';
+  const airline = r.airline_name
+    ? `<span data-ext-name="${esc(r.airline_name)}">${esc(tExternalName(r.airline_name))}</span>` : '';
+  const sub = [airline, origin].filter(Boolean).join(' · ');
+  const ac = r.registration
+    ? `${_flag(_regoCountryCode(r.registration), { h: 11 })}<a href="${_fr24AircraftUrl(r.registration)}" target="_blank" rel="noopener">${esc(r.registration)}</a>` +
+      `${r.aircraft_type ? `<div class="ty">${esc(r.aircraft_type)}</div>` : ''}`
+    : `<span class="bd-na">${esc(tt('Not assigned yet'))}</span>${r.aircraft_type ? `<div class="ty">${esc(r.aircraft_type)}</div>` : ''}`;
+  const pill = r.status === 'Arriving' ? ` ${_statusPillInline(r.status)}` : '';
+  return `<div class="bd-row">
+      <div class="bd-time">${time}</div>
+      <div class="bd-main">
+        <a class="bd-fn" href="${_fr24FlightUrl(r.flight_number)}" target="_blank" rel="noopener">${_srchLogoWithFallback(r.airline_icao, r.airline_name, 16, '')}${fn}</a>${pill}
+        <div class="bd-sub">${sub}</div>
+      </div>
+      <div class="bd-ac">${ac}</div>
+      <button type="button" class="bd-hide${r.hidden ? ' is-hidden' : ''}" data-fn="${fn}" data-hidden="${r.hidden ? 1 : 0}"
+              title="${esc(r.hidden ? tt('Unhide') : tt('Hide this flight number from the Board'))}"
+              onclick="bdToggle(this)">${r.hidden ? _BD_EYE : _BD_EYE_OFF}</button>
+    </div>`;
+}
+
+function renderBoard() {
+  const d = _bdData;
+  if (!d) return;
+  const wrap = $('bd-wrap');
+  const keepX = wrap.scrollLeft;
+  const keepY = [...wrap.querySelectorAll('.bd-rows')].map(el => el.scrollTop);
+  const isMobile = window.innerWidth < 768;
+
+  const bits = [];
+  if (d.updated_ts) bits.push(`${tt('Updated')} ${_bdAgo(d.updated_ts)}`);
+  if (d.data_through_ts) bits.push(`${tt('Data through')} ${fmtTs(d.data_through_ts, { weekday: 'short' })}`);
+  $('bd-meta').textContent = bits.join(' · ');
+  renderBoardHidden();
+
+  wrap.innerHTML = (d.days || []).map(day => {
+    const dateLbl = new Date(`${day.date}T12:00:00`).toLocaleDateString(_locale(), { weekday: 'short', day: 'numeric', month: 'short' });
+    return `<div class="bd-card">
+      <div class="bd-card-hd"><span class="t">${esc(tFeedDayLabel(day.date, day.label))}</span><span class="d">${esc(dateLbl)}</span><span class="n">${day.rows.length}</span></div>
+      <div class="bd-rows">${day.rows.length ? day.rows.map(r => _bdRow(r, isMobile)).join('') : `<div class="bd-empty">${esc(tt('No regular flights to show.'))}</div>`}</div>
+    </div>`;
+  }).join('');
+  wrap.scrollLeft = keepX;
+  wrap.querySelectorAll('.bd-rows').forEach((el, i) => { el.scrollTop = keepY[i] || 0; });
+  if (_lang === 'zh') {
+    _translateNamesForZh((d.days || []).flatMap(day => day.rows.map(r => r.airline_name)).filter(Boolean));
+  }
+}
+
+function renderBoardHidden() {
+  const fns = (_bdData && _bdData.hidden) || [];
+  const btn = $('bd-hidden-btn'), panel = $('bd-hidden-panel');
+  btn.classList.toggle('hidden', fns.length === 0);
+  btn.textContent = `${tt('Hidden')} (${fns.length})`;
+  if (!fns.length) { panel.classList.remove('open'); btn.classList.remove('open'); }
+  panel.innerHTML = `<div class="bd-hidden-note">${esc(tt('Hidden flights only disappear from the Board — their Feed cards and notifications are unaffected. A hidden flight still reappears on a day it gets a Feed card.'))}</div>` +
+    fns.map(fn => `<span class="bd-hidden-chip">${esc(fn)}<button type="button" data-fn="${esc(fn)}" onclick="bdUnhide(this.dataset.fn)">${esc(tt('Unhide'))}</button></span>`).join('');
+}
+
+function bdToggleHiddenPanel() {
+  const open = !$('bd-hidden-panel').classList.contains('open');
+  $('bd-hidden-panel').classList.toggle('open', open);
+  $('bd-hidden-btn').classList.toggle('open', open);
+}
+
+async function bdToggle(btn) {
+  const fn = btn.dataset.fn;
+  if (btn.dataset.hidden === '1') return bdUnhide(fn);
+  try {
+    await api('/board/hidden', { method: 'POST', body: JSON.stringify({ flight_number: fn }) });
+    toast(`${fn} ${tt('hidden')}`);
+    await loadBoard();
+  } catch (e) { toast('Error: ' + e.message); }
+}
+
+async function bdUnhide(fn) {
+  try {
+    await api('/board/hidden/' + encodeURIComponent(fn), { method: 'DELETE' });
+    toast(`${fn} ${tt('unhidden')}`);
+    await loadBoard();
+  } catch (e) { toast('Error: ' + e.message); }
+}
+
+// Mobile: Today / Tomorrow switch drives (and follows) the horizontal swipe between the two cards.
+function _bdPitch() {
+  const cards = $('bd-wrap').querySelectorAll('.bd-card');
+  return cards.length > 1 ? cards[1].offsetLeft - cards[0].offsetLeft : 0;   // card width + gap
+}
+function bdGo(i) {
+  $('bd-wrap').scrollTo({ left: i * _bdPitch(), behavior: 'smooth' });
+}
+$('bd-wrap').addEventListener('scroll', () => {
+  const p = _bdPitch();
+  const i = p ? Math.round($('bd-wrap').scrollLeft / p) : 0;
+  document.querySelectorAll('#bd-switch button').forEach((b, k) => b.classList.toggle('active', k === i));
+}, { passive: true });
 
 // ── Filters ───────────────────────────────────────────────────────────────────
 
@@ -3629,6 +3779,7 @@ async function _doAndroidInstall() {
 function loadTab(name) {
   if (name === 'recommendation') loadRecommendation(false);
   if (name === 'history')        loadFeed();
+  if (name === 'board')          loadBoard();
   if (name === 'collection')     loadCollection();
   if (name === 'search')         {
     if (!_srchTabInited) {

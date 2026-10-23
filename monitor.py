@@ -1370,6 +1370,58 @@ def _first_matching_filter(arriving_flight: dict, cfg) -> Optional[tuple]:
 # Periodic arrivals check
 # ------------------------------------------------------------------
 
+def _board_rows_from_entries(entries: list, candidates: set, tz, now_dt) -> tuple:
+    """Turn this check's raw live-board arrival entries (inner "flight" dicts, INCLUDING the ones
+    with no aircraft assigned yet that _parse_aircraft drops) into Board rows.
+
+    Only flight numbers in `candidates` (regular AND previously triggered — see
+    SqliteStore.board_candidate_flight_numbers) whose effective arrival (real, else estimated,
+    else scheduled) falls on the airport-local today or tomorrow become rows. Also returns
+    seen_window = (min, max) scheduled arrival across EVERY entry (not just candidates) — the
+    time span this check actually covered, used to tell "vanished from the board" apart from
+    "beyond FR24's page depth" — and data_through_ts (latest scheduled arrival seen).
+
+    Returns (rows, seen_window | None, data_through_ts | None)."""
+    today = now_dt.astimezone(tz).date()
+    last_day = today + timedelta(days=1)
+    rows: dict = {}
+    sched_seen: list = []
+    for flight in entries:
+        if not isinstance(flight, dict):
+            continue
+        sched = _safe_get(flight, "time", "scheduled", "arrival", default=None)
+        if not isinstance(sched, (int, float)):
+            continue
+        sched = int(sched)
+        sched_seen.append(sched)
+        fn = str(_safe_get(flight, "identification", "number", "default", default="") or "").strip()
+        if not fn or fn in ("N/A", "N\\A") or fn not in candidates:
+            continue
+        est  = _safe_get(flight, "time", "estimated", "arrival", default=None)
+        real = _safe_get(flight, "time", "real", "arrival", default=None)
+        est  = int(est) if isinstance(est, (int, float)) else None
+        eff  = int(real) if isinstance(real, (int, float)) else (est if est is not None else sched)
+        if not (today <= datetime.fromtimestamp(eff, tz).date() <= last_day):
+            continue
+        fr24_text, _diverted = _get_fr24_status(flight)
+        status = "Cancelled" if fr24_text == "canceled" else "Diverted" if fr24_text == "diverted" \
+            else get_flight_status(flight)
+        rows[(fn, sched)] = {
+            "flight_number": fn,
+            "scheduled_ts":  sched,
+            "estimated_ts":  est,
+            "registration":  (_safe_get(flight, "aircraft", "registration", default=None) or "").strip() or None,
+            "aircraft_type": _safe_get(flight, "aircraft", "model", "code", default=None) or None,
+            "airline_name":  _clean_airline_name(_safe_get(flight, "airline", "name", default="") or "") or None,
+            "airline_icao":  _safe_get(flight, "airline", "code", "icao", default=None) or None,
+            "origin_iata":   _safe_get(flight, "airport", "origin", "code", "iata", default=None) or None,
+            "origin_name":   _safe_get(flight, "airport", "origin", "name", default=None) or None,
+            "status_text":   status,
+        }
+    window = (min(sched_seen), max(sched_seen)) if sched_seen else None
+    return list(rows.values()), window, (max(sched_seen) if sched_seen else None)
+
+
 async def run_check(context: ContextTypes.DEFAULT_TYPE) -> None:
     cfg = context.bot_data["cfg"]
     chat_id = context.job.data if context.job else cfg.chat_id
@@ -1384,6 +1436,9 @@ async def run_check(context: ContextTypes.DEFAULT_TYPE) -> None:
     hist_departures: dict = {}  # reg → list[flight]  (real departure only, negative pages)
     board_photos:  dict = {}  # reg → photo_url, from get_airport_details' own aircraftImages —
                               # free on the call already made below, no extra API hit
+    board_arrivals: list = [] # every raw live-board arrival (even with no aircraft assigned yet),
+                              # for the Board tab (Step 6b) — same fetch, no extra API hit
+    _pages_failed = 0         # Step 6b only deletes "vanished" rows when every page loaded
 
     try:
         import asyncio
@@ -1400,7 +1455,10 @@ async def run_check(context: ContextTypes.DEFAULT_TYPE) -> None:
                 _fr24_ok = True
             except Exception as exc:
                 log.warning("Failed to fetch arrivals (page %d): %s", page, exc)
+                _pages_failed += 1
                 continue
+
+            board_arrivals.extend((e.get("flight") or {}) for e in arrivals if isinstance(e, dict))
 
             for entry in arrivals:
                 parsed = _parse_aircraft(entry)
@@ -1754,6 +1812,34 @@ async def run_check(context: ContextTypes.DEFAULT_TYPE) -> None:
                                                      arr_label="Arrived")
 
         await asyncio.to_thread(_step6_hist_status)
+
+        await asyncio.sleep(0)  # cooperative yield — see Step 2's comment above
+
+        # ── Step 6b: Board rows (Controller-only Board tab) ───────────────────────────────
+        # Runs AFTER filter matching/storage (Step 3/4) so a flight number that triggered in
+        # THIS check is already a candidate (regular AND has produced a card) and shows up on the
+        # Board immediately. Candidates' arrivals for the airport-local today/tomorrow — including
+        # flights with no aircraft assigned yet — are upserted from the same live-board fetch above
+        # (no extra FR24 calls); coverage is therefore exactly as deep as FETCH_PAGES, like Feed.
+        def _step6b_board():
+            if not board_arrivals:
+                return
+            _now_dt = datetime.now(_tz_obj)
+            _rows, _window, _through = _board_rows_from_entries(
+                board_arrivals, cfg.store.board_candidate_flight_numbers(cfg.airport_iata), _tz_obj, _now_dt)
+            _midnight = _tz_obj.localize(datetime(_now_dt.year, _now_dt.month, _now_dt.day))
+            cfg.store.replace_board_rows(
+                _rows,
+                _window if _pages_failed == 0 else None,   # a failed page must never wipe real rows
+                prune_before_ts=int(_midnight.timestamp()),
+                now_ts=int(datetime.now().timestamp()),
+                data_through_ts=_through,
+            )
+
+        try:
+            await asyncio.to_thread(_step6b_board)
+        except Exception as _bexc:
+            log.warning("Step 6b (board) failed: %s", _bexc, exc_info=True)
 
         await asyncio.sleep(0)  # cooperative yield — see Step 2's comment above
 
@@ -2355,9 +2441,14 @@ async def run_check(context: ContextTypes.DEFAULT_TYPE) -> None:
             _spotted_map: dict = {}          # reg → total session count (non-livery flights)
             if _catalog and getattr(cfg, 'spot_rec_max_spotted_times', 0):
                 try:
+                    # Bounded to the last 30 days: flight_arrivals is now kept for 3 years (Board),
+                    # and this loop runs one Lightroom-catalog query per registration on every
+                    # timeline rebuild — it must not grow with that history.
+                    _spot_cutoff = (datetime.now(_tz_c) - timedelta(days=30)).strftime("%Y-%m-%d")
                     with cfg.store._connect() as _sc:
                         _regs = [r[0] for r in _sc.execute(
-                            "SELECT DISTINCT registration FROM flight_arrivals").fetchall()]
+                            "SELECT DISTINCT registration FROM flight_arrivals WHERE arrival_date >= ?",
+                            (_spot_cutoff,)).fetchall()]
                     for _r in _regs:
                         try:
                             _spotted_map[_r] = _catalog.get_session_count_at_airport(
