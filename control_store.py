@@ -50,6 +50,8 @@ class ControlStore:
             _wu_cols = {row[1] for row in conn.execute("PRAGMA table_info(web_users)").fetchall()}
             if "language" not in _wu_cols:
                 conn.execute("ALTER TABLE web_users ADD COLUMN language TEXT DEFAULT NULL")
+            if "last_seen_ts" not in _wu_cols:
+                conn.execute("ALTER TABLE web_users ADD COLUMN last_seen_ts INTEGER DEFAULT NULL")
 
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS user_airport_access (
@@ -217,6 +219,17 @@ class ControlStore:
     def count_users(self) -> int:
         with self._connect() as conn:
             return conn.execute("SELECT COUNT(*) FROM web_users").fetchone()[0]
+
+    def touch_last_seen(self, user_id: str) -> None:
+        """Updates web_users.last_seen_ts, throttled to once/60s per user so an
+        active session doesn't write to the DB on every single API request."""
+        now = int(time.time())
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE web_users SET last_seen_ts = ? WHERE user_id = ? "
+                "AND (last_seen_ts IS NULL OR last_seen_ts < ?)",
+                (now, user_id, now - 60),
+            )
 
     def get_controller_catalog_path(self) -> Optional[str]:
         """Catalogs are per-user, but the background monitor loop's shared

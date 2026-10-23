@@ -129,6 +129,21 @@ class SqliteStore:
             conn.execute("CREATE UNIQUE INDEX idx_type_uniq ON filter_types(owner_user_id, airline, aircraft_type)")
             conn.execute("DROP INDEX IF EXISTS idx_airline_uniq")
             conn.execute("CREATE UNIQUE INDEX idx_airline_uniq ON filter_airlines(owner_user_id, icao_code, entry_type)")
+            # Notification Mute List: registrations that never trigger a push notification, while
+            # staying completely visible in the app (Feed, clustering, Spotting — unlike
+            # filter_exclusions, which hides them). Same per-owner scoping as the tables above, but
+            # created with owner_user_id from the start (no retrofit needed) and deliberately NOT
+            # seeded from the Controller into new Pilots (see copy_controller_filters_to_owner) —
+            # muting is a personal notification preference, not shared detection data.
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS filter_muted (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    registration TEXT NOT NULL,
+                    description TEXT,
+                    owner_user_id TEXT NOT NULL DEFAULT 'controller'
+                )
+            """)
+            conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_muted_reg ON filter_muted(owner_user_id, registration)")
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS livery_cooldowns (
                     registration TEXT PRIMARY KEY,
@@ -975,6 +990,26 @@ class SqliteStore:
                 "INSERT OR IGNORE INTO filter_exclusions(airline, registration, description, owner_user_id) VALUES (?,?,?,?)",
                 (airline.strip(), registration.strip(), description.strip(), owner_user_id),
             )
+
+    def add_muted(self, registration: str, description: str, owner_user_id: str = "controller") -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT OR IGNORE INTO filter_muted(registration, description, owner_user_id) VALUES (?,?,?)",
+                (registration.strip().upper(), description.strip(), owner_user_id),
+            )
+
+    def is_notification_muted(self, registration: str, owner_user_id: str = "controller") -> bool:
+        """True if owner_user_id has muted push notifications for this registration.
+        Only ever consulted by the push paths (monitor._send_filter_match_push,
+        military.py) — Feed/clustering never look at filter_muted."""
+        registration = (registration or "").strip().upper()
+        if not registration:
+            return False
+        with self._connect() as conn:
+            return conn.execute(
+                "SELECT 1 FROM filter_muted WHERE owner_user_id = ? AND registration = ? LIMIT 1",
+                (owner_user_id, registration),
+            ).fetchone() is not None
 
     def add_rego_watch(self, airline: str, registration: str, description: str,
                         owner_user_id: str = "controller") -> None:

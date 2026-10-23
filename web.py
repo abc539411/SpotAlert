@@ -5,6 +5,7 @@ Or create via create_app(cfg) for integration with the monitor loop.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -657,8 +658,14 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
     async def _require_session(request: Request, call_next):
         if request.url.path.startswith("/api/") and request.url.path not in _AUTH_EXEMPT_PATHS:
             from auth import get_current_user_optional
-            if get_current_user_optional(request) is None:
+            user = get_current_user_optional(request)
+            if user is None:
                 return JSONResponse({"detail": "Not authenticated"}, status_code=401)
+            # Throttled to one write/60s per user inside touch_last_seen itself,
+            # but still dispatched off-thread - this runs on every authenticated
+            # request, and sync sqlite calls on the event loop are what caused the
+            # web-UI freeze bug (see NAS migration notes).
+            asyncio.ensure_future(asyncio.to_thread(app.state.control_store.touch_last_seen, user.user_id))
         return await call_next(request)
 
     def _fleet_bg_refresh_loop() -> None:
@@ -1071,6 +1078,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                 "id": u["user_id"], "username": u["username"], "role": u["role"],
                 "airport_iatas": [] if u["role"] == "controller" else cstore.get_user_airports(u["user_id"]),
                 "created_ts": u["created_ts"],
+                "last_seen_ts": u["last_seen_ts"],
             })
         return JSONResponse({"users": out})
 
@@ -1199,7 +1207,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         for cfg in app.state.cfgs.values():
             with cfg.store._connect() as conn:
                 conn.execute("DELETE FROM settings WHERE user_id = ?", (target_id,))
-                for tbl in ("filter_exclusions", "filter_regos", "filter_types", "filter_airlines"):
+                for tbl in ("filter_exclusions", "filter_muted", "filter_regos", "filter_types", "filter_airlines"):
                     conn.execute(f"DELETE FROM {tbl} WHERE owner_user_id = ?", (target_id,))
 
         catalog_path = target["catalog_path"]
@@ -4649,6 +4657,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                 return [dict(r) for r in conn.execute(sql, (owner,)).fetchall()]
         return JSONResponse({
             "filter_exclusions":  _fetch_rows("SELECT id, registration, description FROM filter_exclusions WHERE owner_user_id = ? ORDER BY id"),
+            "filter_muted":  _fetch_rows("SELECT id, registration, description FROM filter_muted WHERE owner_user_id = ? ORDER BY id"),
             "filter_regos":  _fetch_rows("SELECT id, registration, description FROM filter_regos WHERE owner_user_id = ? ORDER BY id"),
             "filter_types":  _fetch_rows("SELECT id, airline, aircraft_type FROM filter_types WHERE owner_user_id = ? ORDER BY id"),
             "filter_airlines": _fetch_rows("SELECT id, icao_code, entry_type, name FROM filter_airlines WHERE owner_user_id = ? ORDER BY id"),
@@ -4666,6 +4675,22 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         store = _cfg_for_user(user).store
         with store._connect() as conn:
             conn.execute("DELETE FROM filter_exclusions WHERE registration = ? AND owner_user_id = ?", (registration, _owner_for(user)))
+        return JSONResponse({"ok": True})
+
+    # Notification Mute List — a registration that never triggers a push notification for this
+    # owner, but is otherwise unaffected (Feed, clustering, Spotting all ignore this table).
+    @app.post("/api/filters/mute")
+    async def add_muted(request: Request, user=Depends(_auth_require_role("controller", "pilot"))):
+        body = await request.json()
+        store = _cfg_for_user(user).store
+        store.add_muted(body["registration"], body.get("description", ""), _owner_for(user))
+        return JSONResponse({"ok": True})
+
+    @app.delete("/api/filters/mute/{registration}")
+    async def delete_muted(registration: str, user=Depends(_auth_require_role("controller", "pilot"))):
+        store = _cfg_for_user(user).store
+        with store._connect() as conn:
+            conn.execute("DELETE FROM filter_muted WHERE registration = ? AND owner_user_id = ?", (registration.strip().upper(), _owner_for(user)))
         return JSONResponse({"ok": True})
 
     @app.post("/api/filters/rego")
@@ -4841,6 +4866,25 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         f = STATIC_DIR / "icons" / name
         if f.exists():
             return FileResponse(str(f))
+        raise HTTPException(404)
+
+    # iOS also probes these root paths for the Home Screen icon. Without explicit routes they
+    # fell through to spa_fallback below, which answers 200 with index.html (HTML, not an image) -
+    # the proxy log showed iOS downloading all ~46KB of that HTML as /favicon.ico on every
+    # Add to Home Screen attempt, which is a plausible reason the icon fell back to a letter tile.
+    @app.get("/favicon.ico")
+    async def favicon():
+        f = STATIC_DIR / "icons" / "favicon.ico"
+        if f.exists():
+            return FileResponse(str(f), media_type="image/x-icon")
+        raise HTTPException(404)
+
+    @app.get("/apple-touch-icon.png")
+    @app.get("/apple-touch-icon-precomposed.png")
+    async def apple_touch_icon():
+        f = STATIC_DIR / "icons" / "apple-touch-icon.png"
+        if f.exists():
+            return FileResponse(str(f), media_type="image/png")
         raise HTTPException(404)
 
     @app.get("/{full_path:path}")

@@ -1127,6 +1127,11 @@ async def _send_filter_match_push(cfg, registration: str, notif_types: list, det
             # Re-apply THIS recipient's own filters — same treatment Feed
             # gives every viewer at display time.
             filter_owner = push_owner_id if role == "pilot" else "controller"
+            # Notification Mute List (filter_muted): this recipient never wants a push for this
+            # registration — but, unlike the Exclusion List just below, the flight itself stays
+            # in their Feed and clustering untouched (those never read filter_muted).
+            if cfg.store.is_notification_muted(registration, filter_owner):
+                continue
             with cfg.store._connect() as conn:
                 # Registration Exclusion List (filter_exclusions) — Feed's own
                 # query (_owner_id(user)-scoped, no inheritance) already hides

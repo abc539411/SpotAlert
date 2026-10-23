@@ -4,12 +4,16 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <!-- EXPERIMENT (iOS 27.2 home-screen app showed a blurred/dimmed header under the status bar
+       with black-translucent): 'black' keeps content below the status bar instead of under it.
+       Revert to black-translucent if this doesn't help. -->
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
   <meta name="theme-color" content="#111111">
   <title>SpotAlert</title>
   <link rel="manifest" href="/manifest.json">
   <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png">
   <link rel="icon" type="image/png" sizes="512x512" href="/icons/icon-512.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon.png">
   <link rel="apple-touch-icon" href="/icons/icon-192.png">
   <style>
     :root {
@@ -128,13 +132,24 @@
       .btn-refresh-label { display: none; }
       body {
         background: linear-gradient(to bottom, var(--bg) calc(100% - 34px), var(--surface) calc(100% - 34px));
+        /* Anchor the app to the layout viewport's own top/bottom instead of sizing it with 100vh.
+           With status-bar-style: black the web view starts below the status bar, and 100vh was
+           taller than what's actually visible, so the bottom of every page sat ~status-bar-height
+           below the screen edge — i.e. underneath the (position: fixed) nav bar, cutting content
+           off. The nav bar is anchored to this same viewport edge, so they now always agree. */
+        right: 0; bottom: 0; width: auto; height: auto;
       }
+      /* The bar sits flush with the bottom of the layout viewport; its bottom padding is the home-
+         indicator inset minus 12px, which keeps the icons/labels low (the "lowered" look) while
+         staying fully on-screen. This used to push the whole bar OFF the bottom by
+         (inset + 7px) — tuned for a layout viewport that was ~60px shorter than the screen, so
+         once the viewport became correct (status-bar-style: black) the labels were cut off. */
       .nav-tabs {
         position: fixed;
-        bottom: calc(-1 * env(safe-area-inset-bottom) - 7px);
+        bottom: 0;
         left: 0; right: 0;
         background: var(--surface); border-top: 1px solid var(--border);
-        padding-bottom: env(safe-area-inset-bottom);
+        padding-bottom: max(0px, calc(env(safe-area-inset-bottom) - 12px));
         z-index: 100;
       }
       .nav-tab {
@@ -145,7 +160,7 @@
       .nav-tab.active { color: var(--accent); border-bottom: none; }
       .tab-icon { display: block; font-size: 20px; line-height: 1; }
       .tab-icon svg { width: 21px; height: 21px; display: block; }
-      #app { padding-bottom: calc(56px + env(safe-area-inset-bottom) + 21px); }
+      #app { padding-bottom: calc(62px + max(0px, calc(env(safe-area-inset-bottom) - 12px))); }
 
       /* Feed cards: shrink filter/type badges, rego badge, and tail logo */
       .sq-rego { font-size: 11px !important; padding: 2px 5px; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
@@ -295,6 +310,14 @@
     .detail-sheet-scroll {
       padding: 12px;
       max-height: 60vh; overflow-y: auto;
+    }
+    /* Mobile bottom sheet (Feed + Spotting cards): never taller than the visible layout viewport
+       (a fixed element's % height is relative to it) — --app-vvh alone could exceed it in the iOS
+       home-screen app, pushing the sheet's bottom off-screen — and keep the last row clear of the
+       home indicator. */
+    @media (max-width: 767px) {
+      .detail-modal { max-height: 100%; }
+      .detail-sheet-scroll { padding-bottom: calc(12px + env(safe-area-inset-bottom)); }
     }
     @media (min-width: 768px) {
       .detail-sheet {
@@ -458,8 +481,27 @@
     .header-whoami .picker-role-pill { font-size: 9px; padding: 1px 8px; }
     .header-whoami-airport { display: flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 600; color: var(--text); flex-shrink: 0; white-space: nowrap; }
     .header-whoami-divider { width: 1px; align-self: stretch; background: var(--border); flex-shrink: 0; margin: 0 9px; }
+    /* Live airport-local clock: desktop shows it inside .header-whoami-airport (after the IATA);
+       mobile hides that whole block, so it gets its own chip on the otherwise-empty left of the
+       header (the logo is centred, the switch/refresh buttons sit on the right). Both are filled by
+       _startHeaderClock(). Hidden by default and :empty-hidden — no .hidden class toggling. */
+    .header-whoami-airport .hdr-clock-time { font-weight: 500; color: var(--dim); font-variant-numeric: tabular-nums; }
+    .header-whoami-airport .hdr-clock-abbr { font-weight: 500; color: var(--dim); font-size: 11px; }
+    .header-clock { display: none; }
     @media (max-width: 767px) {
       .header-whoami { display: none; }
+      /* Two stacked lines (flag + IATA over the time) — only ~50px wide, so it fits left of the
+         centred logo even on a 320px phone, where a single "SYD 10:51pm" line got clipped. */
+      .header-clock {
+        display: flex; flex-direction: column; justify-content: center; align-items: flex-start; gap: 1px;
+        align-self: center; flex-shrink: 1; min-width: 0; max-width: calc(50% - 64px);
+        line-height: 1.15; white-space: nowrap; overflow: hidden;
+      }
+      .header-clock:empty { display: none; }
+      .header-clock .hc-top { display: flex; align-items: center; gap: 3px; font-size: 12px; font-weight: 700; color: var(--text); }
+      .header-clock .hc-top img { margin: 0; }
+      .header-clock .hc-code { letter-spacing: .02em; }
+      .header-clock .hdr-clock-time { font-size: 11px; font-weight: 500; color: var(--dim); font-variant-numeric: tabular-nums; }
     }
     /* Uploading a Lightroom .lrcat catalog only makes sense from a PC (the file lives
        on desktop Lightroom's own machine) — hide the upload card on mobile entirely
@@ -548,6 +590,7 @@
     .user-mgmt-username { font-weight: 600; font-size: 13px; flex: 1; }
     .user-mgmt-role { font-size: 10px; text-transform: uppercase; letter-spacing: .04em; color: var(--dim); background: var(--surface2); padding: 2px 7px; border-radius: 10px; }
     .user-mgmt-airports { font-size: 11px; color: var(--dim); margin-top: 4px; }
+    .user-mgmt-last-seen { font-size: 11px; color: var(--dim); margin-top: 2px; }
     .user-mgmt-actions { display: flex; gap: 6px; margin-top: 8px; }
     .user-mgmt-actions button {
       background: var(--surface2); border: 1px solid var(--border); color: var(--dim);
@@ -584,11 +627,20 @@
     }
     .detail-quick-btn svg { width: 13px; height: 13px; }
     .detail-quick-exclude { color: var(--danger); border-color: rgba(239,68,68,0.35); }
-    .detail-quick-exclude:hover { background: rgba(239,68,68,0.14); border-color: var(--danger); }
-    .detail-quick-exclude.detail-quick-armed { background: var(--danger); color: #fff; border-color: var(--danger); }
     .detail-quick-watchlist { color: var(--accent); border-color: rgba(59,130,246,0.35); }
+    .detail-quick-mute { color: var(--warn); border-color: rgba(245,158,11,0.35); }
+    .detail-quick-exclude:hover { background: rgba(239,68,68,0.14); border-color: var(--danger); }
     .detail-quick-watchlist:hover { background: rgba(59,130,246,0.14); border-color: var(--accent); }
+    .detail-quick-mute:hover { background: rgba(245,158,11,0.14); border-color: var(--warn); }
+    /* Lit state: this registration is already on that list — a tinted fill + solid ring. Declared
+       after the hover rules and before the armed rules so "armed, click again to confirm" (a solid
+       fill) still wins when a lit button is armed to be removed. */
+    .detail-quick-exclude.detail-quick-on { background: rgba(239,68,68,0.22); border-color: var(--danger); }
+    .detail-quick-watchlist.detail-quick-on { background: rgba(59,130,246,0.22); border-color: var(--accent); }
+    .detail-quick-mute.detail-quick-on { background: rgba(245,158,11,0.22); border-color: var(--warn); }
+    .detail-quick-exclude.detail-quick-armed { background: var(--danger); color: #fff; border-color: var(--danger); }
     .detail-quick-watchlist.detail-quick-armed { background: var(--accent); color: #fff; border-color: var(--accent); }
+    .detail-quick-mute.detail-quick-armed { background: var(--warn); color: #fff; border-color: var(--warn); }
     /* ── Route bar ───────────────────────────────────────────────────────── */
     .rb { display: flex; align-items: flex-start; margin: 10px 0 0; padding: 12px 0; border-top: 1px solid var(--border); }
     .flight-bars-scroll { overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
@@ -1878,6 +1930,7 @@
     <button class="nav-tab" data-tab="search"><span class="tab-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.3 15.3 20 20"/></svg></span><span data-i18n="nav.search">Search</span></button>
     <button class="nav-tab" data-tab="settings"><span class="tab-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="2.8"/><path d="M12 3.5v2.4M12 18.1v2.4M20.5 12h-2.4M5.9 12H3.5M17.8 6.2l-1.7 1.7M7.9 16.1l-1.7 1.7M17.8 17.8l-1.7-1.7M7.9 7.9 6.2 6.2"/></svg></span><span data-i18n="nav.settings">Settings</span></button>
   </nav>
+  <div id="header-clock" class="header-clock"></div>
   <div style="margin-left:auto;display:flex;align-items:center;gap:8px;min-width:0">
     <div id="header-whoami" class="header-whoami"></div>
     <div id="rapid-badge" style="flex-shrink:0">RAPID</div>
@@ -2282,6 +2335,18 @@
               <input id="excl-rego" placeholder="Registration" data-i18n-placeholder="filters.ph.registration" style="max-width:110px">
               <input id="excl-desc" placeholder="Description" data-i18n-placeholder="filters.ph.description">
               <button class="add-btn" onclick="addExclusion()" data-i18n="filters.add">Add</button>
+            </div>
+          </div>
+
+          <!-- Notification Mute List: no push for these regos, but still shown everywhere in the app -->
+          <div class="page-col-block">
+            <div class="section-heading" data-i18n="filters.mute.heading">Notification Mute List</div>
+            <div class="detail" style="padding:0 2px 8px" data-i18n="filters.mute.hint">Never sends a push notification for these registrations. They still appear in the Feed and Spotting as normal.</div>
+            <div class="filter-section" id="fl-muted"></div>
+            <div class="add-row filter-add-row">
+              <input id="mute-rego" placeholder="Registration" data-i18n-placeholder="filters.ph.registration" style="max-width:110px">
+              <input id="mute-desc" placeholder="Description" data-i18n-placeholder="filters.ph.description">
+              <button class="add-btn" onclick="addMuted()" data-i18n="filters.add">Add</button>
             </div>
           </div>
         </div>

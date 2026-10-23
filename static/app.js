@@ -101,6 +101,8 @@ const I18N = {
     'srch.search': '搜索',
 
     'filters.exclusion.heading': '排除列表',
+    'filters.mute.heading': '通知静音列表',
+    'filters.mute.hint': '不会为这些注册号发送推送通知，但它们仍会正常显示在动态和拍机推荐中。',
     'filters.rego.heading': '注册号关注列表',
     'filters.type.heading': '机型关注列表',
     'filters.airline.heading': '航空公司 / 运营商关注列表',
@@ -342,6 +344,7 @@ const UI_ZH = {
   'Edit': '编辑', 'Delete': '删除', 'Approve': '批准', 'Decline': '拒绝',
   'No users yet.': '暂无用户。',
   'Could not load users.': '无法加载用户列表。',
+  'Last seen': '最近访问', 'Never': '从未',
   'Username is required': '用户名不能为空',
   'Username and a password of at least 8 characters are required': '需要用户名以及至少 8 位的密码',
   'New password must be at least 8 characters': '新密码至少需要 8 个字符',
@@ -960,8 +963,9 @@ async function _authBoot() {
   // ahead of the existing "Logged in as" block, since a Controller/Pilot with
   // multiple watched airports can otherwise lose track of which one they're on.
   const _curAirport = (me.airports || []).find(a => a.iata === me.airport);
+  const _clockTz = (_curAirport && _curAirport.tz) || _appTz;
   const _airportHtml = _curAirport ? `
-    <span class="header-whoami-airport">${_flag(_curAirport.country_code, { h: 14 })}${esc(_curAirport.iata)}</span>
+    <span class="header-whoami-airport">${_flag(_curAirport.country_code, { h: 14 })}${esc(_curAirport.iata)}${_clockTz ? `<span class="hdr-clock-time"></span><span class="hdr-clock-abbr">${esc(_curAirport.tz_abbr || '')}</span>` : ''}</span>
     <span class="header-whoami-divider"></span>
   ` : '';
   $('header-whoami').innerHTML = me.user.username ? `
@@ -969,7 +973,17 @@ async function _authBoot() {
     <span class="header-whoami-user">${tt('Logged in as:')} ${esc(me.user.username)}</span>
     <span class="picker-role-pill role-${esc(_role)}">${esc(tRole(_role))}</span>
   ` : '';
+  // Mobile counterpart of the desktop time above (that block is display:none under 768px):
+  // a compact flag + IATA + time chip on the header's free left side.
+  $('header-clock').innerHTML = (_curAirport && _clockTz)
+    ? `<span class="hc-top">${_flag(_curAirport.country_code, { h: 11 })}<span class="hc-code">${esc(_curAirport.iata)}</span></span><span class="hdr-clock-time"></span>`
+    : '';
+  _startHeaderClock(_clockTz);
   _applyRoleUI(me.user.role);
+  // The cards' mute/exclude/watch buttons light up from the filter lists, which otherwise
+  // only load when the Settings tab is opened — so fetch them at boot (Controller/Pilot only,
+  // the only roles that get those buttons).
+  if (_role === 'controller' || _role === 'pilot') loadFilters(true);
   _hideAuthViews();
   _handleDeepLinkFlight();
   _handleDeepLinkSpotting();
@@ -1103,6 +1117,37 @@ function _pickerAirportTime(tz, tzAbbr) {
     return tzAbbr ? `${time} ${tzAbbr}` : time;
   } catch (e) { return ''; }
 }
+
+// Live local time of the airport being viewed, in the header (see .header-clock /
+// .header-whoami-airport in index.html). Same "3:42pm" style as fmtTs; "15:42" for zh.
+function _airportClockText(tz) {
+  if (!tz) return '';
+  try {
+    return new Intl.DateTimeFormat(_locale(), {
+      hour: 'numeric', minute: '2-digit', hour12: _lang !== 'zh', timeZone: tz,
+    }).format(new Date()).replace(/\s?([AP])M$/i, (m, c) => c.toLowerCase() + 'm');
+  } catch (e) { return ''; }
+}
+
+let _headerClockTimer = null;
+let _headerClockTick = null;
+function _startHeaderClock(tz) {
+  clearTimeout(_headerClockTimer);
+  const els = document.querySelectorAll('.hdr-clock-time');
+  if (!tz || !els.length) return;
+  _headerClockTick = () => {
+    clearTimeout(_headerClockTimer);
+    const txt = _airportClockText(tz);
+    els.forEach(el => { el.textContent = txt; });
+    // Re-fire just after the next minute boundary so the display never lags a minute.
+    _headerClockTimer = setTimeout(_headerClockTick, 60000 - (Date.now() % 60000) + 50);
+  };
+  _headerClockTick();
+}
+// Phones throttle/suspend timers while backgrounded — refresh the moment the app is visible again.
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && _headerClockTick) _headerClockTick();
+});
 
 function _tickPickerClocks() {
   document.querySelectorAll('.airport-pick-time[data-tz]').forEach(el => {
@@ -1453,12 +1498,14 @@ async function loadUserManagement() {
     _pickerUsersCache = users;
     listEl.innerHTML = users.map(u => {
       const airportsTxt = u.role === 'controller' ? tt('All airports') : (u.airport_iatas.join(', ') || tt('No airports assigned'));
+      const lastSeenTxt = u.last_seen_ts ? fmtTs(u.last_seen_ts, { month: 'short', day: 'numeric', year: 'numeric' }) : tt('Never');
       return `<div class="user-mgmt-row">
         <div class="user-mgmt-row-hdr">
           <span class="user-mgmt-username">${esc(u.username)}</span>
           <span class="picker-role-pill role-${esc(u.role)}">${esc(tRole(u.role))}</span>
         </div>
         <div class="user-mgmt-airports">${esc(airportsTxt)}</div>
+        <div class="user-mgmt-last-seen">${tt('Last seen')}: ${esc(lastSeenTxt)}</div>
         <div class="user-mgmt-actions">
           <button onclick="_showEditUserForm('${esc(u.id)}')">${tt('Edit')}</button>
           <button class="danger" onclick="_deleteUser(this,'${esc(u.id)}','${esc(u.username)}')">${tt('Delete')}</button>
@@ -2099,21 +2146,74 @@ function _expandRow(r) {
   return [{ ...r, _eventTs: r.arrival_ts, _cardType: 'arrival' }];
 }
 
+// Quick-action buttons on every card: mute notifications / exclude / registration watchlist.
+// Each button lights up (.detail-quick-on) when this registration is already on that list for the
+// current user, and then acts as a toggle — click (twice, to confirm) to take it off again.
+const _QUICK_FILTERS = {
+  mute: {
+    path: 'mute', list: 'filter_muted',
+    add:    r => `Mute notifications for ${r}`,
+    remove: r => `Muted — click to unmute ${r}`,
+    confirmAdd:    'Click again to confirm mute (it will still show in the app)',
+    confirmRemove: 'Click again to confirm unmute',
+    doneAdd:    r => `${r} muted`,
+    doneRemove: r => `${r} unmuted`,
+  },
+  exclude: {
+    path: 'exclusion', list: 'filter_exclusions',
+    add:    r => `Exclude ${r}`,
+    remove: r => `Excluded — click to remove ${r} from the exclusion list`,
+    confirmAdd:    'Click again to confirm exclude',
+    confirmRemove: 'Click again to confirm removing the exclusion',
+    doneAdd:    r => `${r} excluded`,
+    doneRemove: r => `${r} no longer excluded`,
+  },
+  watch: {
+    path: 'rego', list: 'filter_regos',
+    add:    r => `Add ${r} to registration watchlist`,
+    remove: r => `On the watchlist — click to remove ${r}`,
+    confirmAdd:    'Click again to confirm add to watchlist',
+    confirmRemove: 'Click again to confirm removing from the watchlist',
+    doneAdd:    r => `${r} added to watchlist`,
+    doneRemove: r => `${r} removed from watchlist`,
+  },
+};
+
+function _quickFilterOn(kind, rego) {
+  const rows = (_filtersCache || {})[_QUICK_FILTERS[kind].list] || [];
+  return rows.some(r => (r.registration || '').toUpperCase() === (rego || '').toUpperCase());
+}
+
+// Re-applies the lit/unlit state + tooltip to every quick-action button currently in the DOM —
+// called whenever the cached filter lists change (and once they first load, since a card can be
+// opened before /api/filters has answered).
+function _syncQuickFilterBtns() {
+  document.querySelectorAll('.detail-quick-btn[data-kind]').forEach(btn => {
+    const q = _QUICK_FILTERS[btn.dataset.kind], rego = btn.dataset.rego;
+    const on = _quickFilterOn(btn.dataset.kind, rego);
+    btn.classList.toggle('detail-quick-on', on);
+    btn.dataset.on = on ? '1' : '0';
+    if (btn.dataset.armed !== '1') btn.title = on ? q.remove(rego) : q.add(rego);
+  });
+}
+
 function _detailQuickFilterBtns(registration) {
-  // Exclude / Add-to-watchlist quick actions — Controller/Pilot only (both
+  // Mute-notifications / Exclude / Add-to-watchlist quick actions — Controller/Pilot only (all
   // endpoints are server-side role-gated too; this is just UI, not the
   // enforcement boundary). Passengers never see filter management at all.
   if (_appRole !== 'controller' && _appRole !== 'pilot') return '';
   const reg = esc(registration);
+  const btn = (kind, svg) => {
+    const on = _quickFilterOn(kind, registration);
+    const q = _QUICK_FILTERS[kind];
+    return `<button class="detail-quick-btn detail-quick-${kind === 'watch' ? 'watchlist' : kind}${on ? ' detail-quick-on' : ''}"
+            data-kind="${kind}" data-rego="${reg}" data-on="${on ? 1 : 0}" title="${esc(on ? q.remove(registration) : q.add(registration))}"
+            onclick="event.stopPropagation(); quickFilterToggle(this)">${svg}</button>`;
+  };
   return `<div style="display:flex;gap:6px;flex-shrink:0">
-    <button class="detail-quick-btn detail-quick-exclude" title="Exclude ${reg}"
-            onclick="event.stopPropagation(); quickExcludeRego(this, '${reg}')">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><line x1="6.5" y1="6.5" x2="17.5" y2="17.5"/></svg>
-    </button>
-    <button class="detail-quick-btn detail-quick-watchlist" title="Add ${reg} to registration watchlist"
-            onclick="event.stopPropagation(); quickWatchlistRego(this, '${reg}')">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12z"/><circle cx="12" cy="12" r="2.6"/></svg>
-    </button>
+    ${btn('mute', '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/><line x1="3" y1="3" x2="21" y2="21"/></svg>')}
+    ${btn('exclude', '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><line x1="6.5" y1="6.5" x2="17.5" y2="17.5"/></svg>')}
+    ${btn('watch', '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12z"/><circle cx="12" cy="12" r="2.6"/></svg>')}
   </div>`;
 }
 
@@ -2140,22 +2240,15 @@ function _armOrConfirm(btn, confirmedTitle, armedTitle, onConfirm, armedClass = 
   btn.dataset.armTimer = String(timer);
 }
 
-async function quickExcludeRego(btn, rego) {
-  _armOrConfirm(btn, `Exclude ${rego}`, `Click again to confirm exclude`, async () => {
+async function quickFilterToggle(btn) {
+  const kind = btn.dataset.kind, rego = btn.dataset.rego, q = _QUICK_FILTERS[kind];
+  const removing = btn.dataset.on === '1';
+  _armOrConfirm(btn, removing ? q.remove(rego) : q.add(rego), removing ? q.confirmRemove : q.confirmAdd, async () => {
     try {
-      await api('/filters/exclusion', { method: 'POST', body: JSON.stringify({ registration: rego, description: '' }) });
-      toast(`${rego} excluded`);
-      if (typeof loadFilters === 'function') loadFilters().catch(() => {});
-    } catch (e) { toast('Error: ' + e.message); }
-  });
-}
-
-async function quickWatchlistRego(btn, rego) {
-  _armOrConfirm(btn, `Add ${rego} to registration watchlist`, `Click again to confirm add to watchlist`, async () => {
-    try {
-      await api('/filters/rego', { method: 'POST', body: JSON.stringify({ registration: rego, description: '' }) });
-      toast(`${rego} added to watchlist`);
-      if (typeof loadFilters === 'function') loadFilters().catch(() => {});
+      if (removing) await api(`/filters/${q.path}/${encodeURIComponent(rego)}`, { method: 'DELETE' });
+      else await api(`/filters/${q.path}`, { method: 'POST', body: JSON.stringify({ registration: rego, description: '' }) });
+      toast(removing ? q.doneRemove(rego) : q.doneAdd(rego));
+      await loadFilters(true);   // refreshes the cache, the Filters tab and every lit button
     } catch (e) { toast('Error: ' + e.message); }
   });
 }
@@ -2943,18 +3036,19 @@ async function loadHistory() {
 
 let _filtersCache = null;
 
-async function loadFilters() {
+async function loadFilters(quiet = false) {
   try {
     _filtersCache = await api('/filters');
     renderFilters();
   } catch (e) {
-    toast('Failed to load filters: ' + e.message);
+    if (!quiet) toast('Failed to load filters: ' + e.message);
   }
 }
 
 function renderFilters() {
   if (!_filtersCache) return;
   const f = _filtersCache;
+  _syncQuickFilterBtns();   // card buttons light up from the same cache
   // Passengers are always read-only for filter/watchlist lists (server 403s
   // any write anyway) — never render the delete button for them.
   const delBtn = (onclick, title) => _appRole === 'passenger' ? '' :
@@ -2967,6 +3061,15 @@ function renderFilters() {
         ${r.description ? `<div class="filter-secondary">${esc(r.description)}</div>` : ''}
       </div>
       ${delBtn(`delExclusion('${esc(r.registration)}')`, 'Remove')}
+    </div>`).join('') || '<div class="detail" style="padding:4px 2px">Empty</div>';
+
+  $('fl-muted').innerHTML = (f.filter_muted || []).map(r => `
+    <div class="filter-row">
+      <div class="main">
+        <div class="filter-primary">${esc(r.registration)}</div>
+        ${r.description ? `<div class="filter-secondary">${esc(r.description)}</div>` : ''}
+      </div>
+      ${delBtn(`delMuted('${esc(r.registration)}')`, 'Remove')}
     </div>`).join('') || '<div class="detail" style="padding:4px 2px">Empty</div>';
 
   $('fl-rego').innerHTML = (f.filter_regos || f.rego_watchlist || []).map(r => `
@@ -3010,6 +3113,22 @@ async function addExclusion() {
 
 async function delExclusion(rego) {
   try { await api('/filters/exclusion/' + encodeURIComponent(rego), { method: 'DELETE' }); toast('Removed'); await loadFilters(); }
+  catch (e) { toast('Error: ' + e.message); }
+}
+
+async function addMuted() {
+  const rego = $('mute-rego').value.trim().toUpperCase();
+  const desc = $('mute-desc').value.trim();
+  if (!rego) { toast(tt('Enter a registration')); return; }
+  try {
+    await api('/filters/mute', { method: 'POST', body: JSON.stringify({ registration: rego, description: desc }) });
+    $('mute-rego').value = ''; $('mute-desc').value = '';
+    toast('Added'); await loadFilters();
+  } catch (e) { toast('Error: ' + e.message); }
+}
+
+async function delMuted(rego) {
+  try { await api('/filters/mute/' + encodeURIComponent(rego), { method: 'DELETE' }); toast('Removed'); await loadFilters(); }
   catch (e) { toast('Error: ' + e.message); }
 }
 
@@ -6781,6 +6900,54 @@ function _syncRecScrollHeight() {
 _syncRecScrollHeight();
 window.addEventListener('resize', _syncRecScrollHeight);
 if (window.visualViewport) window.visualViewport.addEventListener('resize', _syncRecScrollHeight);
+
+// Layout readout for chasing iOS home-screen-app quirks from a phone screenshot (top blur after
+// an airport switch, content running under the bottom nav) — they don't reproduce on desktop.
+// Tap the header logo 5 times quickly to toggle it; hidden otherwise.
+(function _initLayoutDebug() {
+  const logo = document.querySelector('.header-logo');
+  if (!logo) return;
+  let taps = [], box = null, timer = null;
+  const unit = css => {
+    const d = document.createElement('div');
+    d.style.cssText = 'position:fixed;left:0;top:0;visibility:hidden;pointer-events:none;' + css;
+    document.body.appendChild(d);
+    const h = Math.round(d.getBoundingClientRect().height);
+    d.remove();
+    return h;
+  };
+  const edge = el => { const b = el && el.getBoundingClientRect(); return b ? `${Math.round(b.top)}→${Math.round(b.bottom)}` : '-'; };
+  const render = () => {
+    const vv = window.visualViewport;
+    box.textContent = [
+      `inner ${innerWidth}x${innerHeight}   screen ${screen.width}x${screen.height}`,
+      `visualViewport h ${vv ? Math.round(vv.height) : '-'} top ${vv ? Math.round(vv.offsetTop) : '-'}   scrollY ${Math.round(scrollY)}`,
+      `vh ${unit('height:100vh')}  dvh ${unit('height:100dvh')}  svh ${unit('height:100svh')}  lvh ${unit('height:100lvh')}`,
+      `safe-area top ${unit('padding-top:env(safe-area-inset-top)')}  bottom ${unit('padding-bottom:env(safe-area-inset-bottom)')}`,
+      `body ${edge(document.body)}   header ${edge(document.querySelector('header'))}`,
+      `#app ${edge($('app'))}   nav ${edge($('nav-tabs'))}`,
+      ...(($('detail-modal') && !$('detail-modal').classList.contains('hidden')) ? (() => {
+        const sc = $('detail-modal').querySelector('.detail-sheet-scroll');
+        return [`card modal ${edge($('detail-modal'))}   sheet ${edge($('detail-modal').querySelector('.detail-sheet'))}`,
+                `card scroll ${Math.round(sc.scrollTop)}+${sc.clientHeight}/${sc.scrollHeight}   --app-vvh ${getComputedStyle(document.documentElement).getPropertyValue('--app-vvh')}`];
+      })() : []),
+      `standalone ${navigator.standalone}   ${matchMedia('(display-mode: standalone)').matches ? 'display-mode standalone' : 'display-mode browser'}`,
+    ].join('\n');
+  };
+  logo.addEventListener('click', () => {
+    const now = Date.now();
+    taps = taps.filter(t => now - t < 2500).concat(now);
+    if (taps.length < 5) return;
+    taps = [];
+    if (box) { clearInterval(timer); box.remove(); box = null; return; }
+    box = document.createElement('div');
+    box.style.cssText = 'position:fixed;left:6px;right:6px;top:38%;z-index:99999;pointer-events:none;white-space:pre;' +
+      'font:11px/1.45 ui-monospace,Menlo,monospace;color:#7CFC00;background:rgba(0,0,0,.82);padding:8px;border-radius:6px';
+    document.body.appendChild(box);
+    render();
+    timer = setInterval(render, 500);
+  });
+})();
 _srchSyncClearVisibility();
 
 // Search tab: once results are shown, collapse the filter fields down to just the Clear button (mobile only)

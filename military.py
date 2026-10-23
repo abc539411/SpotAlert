@@ -411,6 +411,12 @@ async def check_military(context: ContextTypes.DEFAULT_TYPE, military: List[dict
                         _disabled = set(cfg.control_store.get_disabled_push_notif_types(_push_owner_id))
                         if "Military" in _disabled:
                             continue
+                        # Notification Mute List — same owner resolution as
+                        # monitor._send_filter_match_push (Pilot = own list, everyone
+                        # else = the Controller's); the visit's Feed card is unaffected.
+                        if cfg.store.is_notification_muted(
+                                registration, _push_owner_id if _role == "pilot" else "controller"):
+                            continue
                         _lang = _push_recipient_lang(cfg.control_store, _push_owner_id, _role)
                         _title = "军机接近中" if _lang == "zh" else "Military Aircraft Approaching"
                         # Country + bare type code (no dash) reads better than the
