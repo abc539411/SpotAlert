@@ -352,7 +352,9 @@ const UI_ZH = {
   'Username and a password of at least 8 characters are required': '需要用户名以及至少 8 位的密码',
   'New password must be at least 8 characters': '新密码至少需要 8 个字符',
   'Refresh Feed': '刷新动态', 'Refresh Collection': '刷新收藏', 'Refresh Spotting': '刷新拍机',
-  'Refresh Board': '刷新看板', 'Refreshing the Board…': '正在刷新看板…', 'Could not load the Board.': '无法加载看板。',
+  'Refresh Board': '刷新看板', 'Checking FR24…': '正在检查 FR24…', 'Board updated': '看板已更新',
+  "Waiting for this airport's first check — tap Refresh to run one now.": '正在等待该机场的首次检查——点击刷新立即检查。',
+  'Could not load the Board.': '无法加载看板。',
   'Not assigned yet': '尚未分配机号', 'No regular flights to show.': '暂无需要关注的常规航班。',
   'Updated': '更新于', 'Data through': '数据截至', 'just now': '刚刚',
   'Hidden': '已隐藏', 'Unhide': '取消隐藏', 'Hide': '隐藏', 'hidden': '已隐藏', 'unhidden': '已取消隐藏',
@@ -2984,7 +2986,7 @@ function switchTab(name) {
       btn.onclick = () => { _recLoaded = false; toast('Plotting the windows…'); loadRecommendation(true); };
       lbl.textContent = tt('Refresh Spotting');
     } else if (name === 'board') {
-      btn.onclick = () => { toast(tt('Refreshing the Board…')); loadBoard(); };
+      btn.onclick = () => refreshBoard();
       lbl.textContent = tt('Refresh Board');
     } else if (name === 'settings') {
       btn.onclick = () => armRestartBackend();
@@ -3078,6 +3080,27 @@ async function loadBoard() {
   _bdTimer = setTimeout(() => { if (activeTab === 'board') loadBoard(); }, 60000);
 }
 
+// Header "Refresh Board": the Board only changes when the monitor runs its FR24 check for this airport,
+// so (like Feed's refresh) ask it to run one right now, then reload the Board as the result lands —
+// the monitor polls for requests every 2 s and a check takes several seconds.
+async function refreshBoard() {
+  const btn = $('btn-refresh');
+  btn.classList.add('spinning');
+  btn.disabled = true;
+  try {
+    toast(tt('Checking FR24…'));
+    await api('/force-check', { method: 'POST' });
+    await loadBoard();
+    setTimeout(() => { if (activeTab === 'board') loadBoard(); }, 12000);
+    setTimeout(() => { if (activeTab === 'board') { loadBoard(); toast(tt('Board updated')); } }, 25000);
+  } catch (e) {
+    toast('Check failed: ' + e.message);
+  } finally {
+    btn.classList.remove('spinning');
+    btn.disabled = false;
+  }
+}
+
 function _bdRow(r, isMobile) {
   const fn = esc(r.flight_number);
   const late = r.estimated_ts && Math.abs(r.estimated_ts - r.scheduled_ts) >= 600;
@@ -3124,7 +3147,7 @@ function renderBoard() {
     const dateLbl = new Date(`${day.date}T12:00:00`).toLocaleDateString(_locale(), { weekday: 'short', day: 'numeric', month: 'short' });
     return `<div class="bd-card">
       <div class="bd-card-hd"><span class="t">${esc(tFeedDayLabel(day.date, day.label))}</span><span class="d">${esc(dateLbl)}</span><span class="n">${day.rows.length}</span></div>
-      <div class="bd-rows">${day.rows.length ? day.rows.map(r => _bdRow(r, isMobile)).join('') : `<div class="bd-empty">${esc(tt('No regular flights to show.'))}</div>`}</div>
+      <div class="bd-rows">${day.rows.length ? day.rows.map(r => _bdRow(r, isMobile)).join('') : `<div class="bd-empty">${esc(d.updated_ts ? tt('No regular flights to show.') : tt("Waiting for this airport's first check — tap Refresh to run one now."))}</div>`}</div>
     </div>`;
   }).join('');
   wrap.scrollLeft = keepX;
