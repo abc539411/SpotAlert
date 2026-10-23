@@ -13,6 +13,7 @@ from utils.fr24_lookup import FR24Lookup
 from utils.file_handler import FileOrganizer
 from utils.thumbnail import get_thumbnail, extract_embedded_jpeg
 from utils.lr_catalog import update_catalog, is_lightroom_running, get_keywords
+from utils import spotalert_sync
 
 app = Flask(__name__)
 
@@ -316,10 +317,16 @@ def organize():
     aircraft_manufacturer = data.get('aircraft_manufacturer', '')
     aircraft_type = data.get('aircraft_type', '')
     aircraft_url = data.get('aircraft_url', '')
+    aircraft_notes = (data.get('aircraft_notes') or '').strip()
     output = data.get('output', NAS_BASE_PATH)
     session = data.get('session', '').strip()
     paths = data.get('paths', [])
     keywords = data.get('keywords', [])
+
+    # Refuse outright while Lightroom is open — moving the files without being
+    # able to write the catalog would leave them organised but unregistered.
+    if data.get('catalog', LR_CATALOG_PATH) and is_lightroom_running():
+        return jsonify({'success': False, 'error': 'Lightroom is open — close it first'}), 409
 
     # If a session is selected, organise into {output}/{session}/...
     organizer_base = Path(output) / session if session else Path(output)
@@ -361,6 +368,7 @@ def organize():
                 'aircraft_manufacturer': aircraft_manufacturer,
                 'aircraft_type': aircraft_type,
                 'aircraft_url': aircraft_url,
+                'aircraft_notes': aircraft_notes,
                 'airport_iata': airport,
             }
             catalog_updated, catalog_errors = update_catalog(
@@ -375,6 +383,38 @@ def organize():
         'errors': errors, 'destination': str(folder),
         'catalog_updated': catalog_updated, 'catalog_errors': catalog_errors,
     })
+
+
+@app.route('/api/lightroom-status')
+def lightroom_status():
+    """Polled by the UI, which locks itself while Lightroom is open."""
+    return jsonify({'running': is_lightroom_running()})
+
+
+@app.route('/api/sync/status')
+def sync_status():
+    return jsonify(spotalert_sync.status())
+
+
+@app.route('/api/sync/connect', methods=['POST'])
+def sync_connect():
+    data = request.json or {}
+    ok, msg = spotalert_sync.connect(data.get('url', ''), data.get('username', '').strip(), data.get('password', ''))
+    return jsonify({**spotalert_sync.status(), 'success': ok, 'message': msg})
+
+
+@app.route('/api/sync/disconnect', methods=['POST'])
+def sync_disconnect():
+    spotalert_sync.disconnect()
+    return jsonify({'success': True, **spotalert_sync.status()})
+
+
+@app.route('/api/sync/upload', methods=['POST'])
+def sync_upload():
+    catalog = (request.json or {}).get('catalog') or LR_CATALOG_PATH
+    ok, msg = spotalert_sync.start_upload(catalog)
+    log.info(f"[sync] upload catalog={catalog} started={ok} msg={msg}")
+    return jsonify({**spotalert_sync.status(), 'success': ok, 'message': msg})
 
 
 @app.route('/api/move-orphans', methods=['POST'])

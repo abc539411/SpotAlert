@@ -52,6 +52,10 @@ scripts/
 studio/data/thumbnails/
 studio/data/inbox/
 studio/data/output/
+studio/data/cache/
+# Session token for the linked SpotAlert instance (catalog sync) — a secret
+studio/data/spotalert_sync.json
+studio/data/.fr24_cookies.pkl
 studio/server.log
 
 # Python

@@ -21,12 +21,23 @@ attributed to who's actually flying the aircraft, not who sold the ticket —
 same precedent applied here.
 """
 from typing import Dict, Optional, Tuple
+import re
 import sqlite3
 
 from config import CACHE_DIR, CACHE_EXPIRY_HOURS
 from flightradar24api.api import FlightRadar24API
 from utils.aircraft_meta import aircraft_manufacturer
 from utils.jetphotos_fallback import JetPhotosFallbackLookup
+
+
+def _livery_name(airline_name: str) -> str:
+    """Special-livery name FR24 appends to the marketing carrier's name in
+    parentheses, e.g. 'China Southern Airlines (15th National Games)' ->
+    '15th National Games'. Same rule as SpotAlert's
+    monitor.py::_is_special_livery_airline: at least 5 characters inside, so
+    short codes like '(CZ)' / '(CSN)' aren't mistaken for a livery."""
+    m = re.search(r'\((.{5,})\)', airline_name or '')
+    return m.group(1).strip() if m else ''
 
 
 class FR24Lookup:
@@ -54,6 +65,12 @@ class FR24Lookup:
                 last_accessed DATETIME
             )
         ''')
+        # aircraft_notes (special-livery name) was added later — rows cached
+        # before that have NULL here, which _get_cached_metadata treats as a
+        # miss so they get re-fetched instead of losing the livery for a week.
+        cols = {r[1] for r in conn.execute('PRAGMA table_info(aircraft_cache)')}
+        if 'aircraft_notes' not in cols:
+            conn.execute('ALTER TABLE aircraft_cache ADD COLUMN aircraft_notes TEXT')
         conn.commit()
         conn.close()
 
@@ -63,6 +80,7 @@ class FR24Lookup:
         row = conn.execute('''
             SELECT * FROM aircraft_cache
             WHERE registration = ?
+            AND aircraft_notes IS NOT NULL
             AND datetime(timestamp) > datetime('now', '-' || ? || ' hours')
         ''', (registration.upper(), CACHE_EXPIRY_HOURS)).fetchone()
         conn.close()
@@ -74,6 +92,7 @@ class FR24Lookup:
                 'aircraft_manufacturer': row['aircraft_manufacturer'],
                 'aircraft_type': row['aircraft_type'],
                 'aircraft_url': row['aircraft_url'],
+                'aircraft_notes': row['aircraft_notes'],
                 'cached': True,
             }
         return None
@@ -82,8 +101,8 @@ class FR24Lookup:
         conn = sqlite3.connect(self.cache_db)
         conn.execute('''
             INSERT OR REPLACE INTO aircraft_cache
-            (registration, airline, aircraft, aircraft_manufacturer, aircraft_type, aircraft_url, timestamp, last_accessed)
-            VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+            (registration, airline, aircraft, aircraft_manufacturer, aircraft_type, aircraft_url, aircraft_notes, timestamp, last_accessed)
+            VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
         ''', (
             registration.upper(),
             metadata.get('airline'),
@@ -91,6 +110,7 @@ class FR24Lookup:
             metadata.get('aircraft_manufacturer'),
             metadata.get('aircraft_type'),
             metadata.get('aircraft_url'),
+            metadata.get('aircraft_notes') or '',
         ))
         conn.commit()
         conn.close()
@@ -98,7 +118,8 @@ class FR24Lookup:
     def lookup(self, registration: str) -> Tuple[bool, Dict]:
         """
         Returns (success, metadata) where metadata contains:
-            registration, airline, aircraft, aircraft_manufacturer, aircraft_type, aircraft_url
+            registration, airline, aircraft, aircraft_manufacturer, aircraft_type,
+            aircraft_url, aircraft_notes (special-livery name, '' if none)
         On failure, metadata contains 'error' and 'reason'
         ('reg_not_found' | 'request_error').
         """
@@ -120,6 +141,7 @@ class FR24Lookup:
             # military aircraft, which FR24 doesn't track. Fall back to JetPhotos.
             success, jp_result = JetPhotosFallbackLookup().lookup(registration)
             if success:
+                jp_result.setdefault('aircraft_notes', '')
                 self._cache_metadata(registration, jp_result)
             return success, jp_result
 
@@ -148,6 +170,7 @@ class FR24Lookup:
             'aircraft_manufacturer': mfr,
             'aircraft_type': model.get('code') or '',
             'aircraft_url': aircraft_url,
+            'aircraft_notes': _livery_name(airline_name),
         }
 
         self._cache_metadata(registration, metadata)

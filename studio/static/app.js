@@ -122,19 +122,88 @@ async function deletePhoto(path) {
   // Remove from any group and from file list
   S.groups.forEach(g => { g.files = g.files.filter(p => p !== path); });
   S.files = S.files.filter(f => f.path !== path);
+  S.selected.delete(path);
   render();
   await api('POST', '/api/delete', { path, output: $('output-path').value });
 }
 
+// Delete every selected photo from disk — asks first, since it can be a lot at once
+function deleteSelected() {
+  const paths = [...S.selected];
+  if (paths.length === 0) return;
+  $('delete-sel-summary').innerHTML =
+    `<strong>${paths.length} photo${paths.length !== 1 ? 's' : ''}</strong> will be permanently deleted from disk.`;
+  $('delete-sel-modal').classList.remove('hidden');
+
+  $('delete-sel-cancel').onclick  = () => $('delete-sel-modal').classList.add('hidden');
+  $('delete-sel-confirm').onclick = async () => {
+    $('delete-sel-modal').classList.add('hidden');
+    const data = await api('POST', '/api/delete-batch', { paths, output: $('output-path').value });
+    if (data.success) {
+      const gone = new Set(paths);
+      S.groups.forEach(g => { g.files = g.files.filter(p => !gone.has(p)); });
+      S.files = S.files.filter(f => !gone.has(f.path));
+      S.selected.clear();
+      if (data.errors?.length) toast(`⚠️ Deleted ${data.deleted} of ${paths.length} · ${data.errors[0]}`, 6000);
+      else toast(`🗑 Deleted ${data.deleted} photo${data.deleted !== 1 ? 's' : ''}`);
+    } else {
+      toast(`❌ ${data.error ?? 'Delete failed'}`);
+    }
+    render();
+  };
+}
+
+// Store a successful lookup on the group. A special livery (carried in the
+// Notes field) also gets the 'Special Livery' tag — shown as a normal chip, so
+// it can still be removed by hand before organizing.
+const SPECIAL_LIVERY_TAG = 'Special Livery';
+function applyLookup(g, metadata) {
+  g.metadata = metadata;
+  if (!metadata.aircraft_notes) return;
+  if (!g.keywords) g.keywords = [];
+  if (!g.keywords.some(k => k.toLowerCase() === SPECIAL_LIVERY_TAG.toLowerCase())) g.keywords.push(SPECIAL_LIVERY_TAG);
+}
+
+// After a lookup, fold every group sharing a looked-up registration into one
+// (the open group if we're editing one, otherwise the earliest). Returns how
+// many groups were absorbed.
+function mergeDuplicateRegos() {
+  const norm = g => (g.registration || '').trim().toUpperCase();
+  const byRego = new Map();
+  for (const g of S.groups) {
+    const r = norm(g);
+    if (!r) continue;
+    if (!byRego.has(r)) byRego.set(r, []);
+    byRego.get(r).push(g);
+  }
+  let merged = 0;
+  for (const [rego, list] of byRego) {
+    if (list.length < 2 || !list.some(g => g.metadata)) continue;
+    const target = (S.view === 'group' && list.find(g => g.id === S.activeGroupId)) || list[0];
+    for (const g of list) {
+      if (g === target) continue;
+      for (const p of g.files) if (!target.files.includes(p)) target.files.push(p);
+      target.keywords = [...new Set([...(target.keywords || []), ...(g.keywords || [])])];
+      if (!target.metadata) target.metadata = g.metadata;
+      merged++;
+    }
+    target.registration = rego;
+    S.groups = S.groups.filter(g => g === target || !list.includes(g));
+  }
+  return merged;
+}
+const mergedNote = n => n ? ` · merged ${n} duplicate group${n !== 1 ? 's' : ''}` : '';
+
 async function lookupForGroup(groupId, registration) {
+  registration = (registration || '').trim().toUpperCase();
   if (!registration) return;
   const g = S.groups.find(gr => gr.id === groupId);
   if (!g) return;
   const data = await api('POST', '/api/lookup', { registration });
   if (data.success) {
     g.registration = registration;
-    g.metadata = data.data;
-    toast(`✓ ${registration} — ${data.data.airline}`);
+    applyLookup(g, data.data);
+    toast(`✓ ${registration} — ${data.data.airline}${mergedNote(mergeDuplicateRegos())}`);
   } else {
     const msgs = { reg_not_found: `${registration} not found`, wrong_reg: 'Wrong reg returned — check spelling' };
     toast(`❌ ${msgs[data.data?.reason] ?? data.data?.error ?? 'Lookup failed'}`);
@@ -154,7 +223,9 @@ async function lookupRegistration() {
   btn.textContent = 'Lookup →'; btn.disabled = false;
   if (data.success) {
     g.registration = registration;
-    g.metadata = data.data;
+    applyLookup(g, data.data);
+    const n = mergeDuplicateRegos();
+    if (n) { toast(`✓ ${registration}${mergedNote(n)}`); render(); return; }
   } else {
     const msgs = { reg_not_found: `${registration} not found`, wrong_reg: 'Wrong reg — check spelling' };
     toast(`❌ ${msgs[data.data?.reason] ?? data.data?.error ?? 'Lookup failed'}`);
@@ -172,7 +243,7 @@ async function lookupAll() {
   for (const g of pending) {
     const data = await api('POST', '/api/lookup', { registration: g.registration });
     if (data.success) {
-      g.metadata = data.data;
+      applyLookup(g, data.data);
       ok++;
     } else {
       const reason = data.data?.reason ?? 'error';
@@ -180,8 +251,9 @@ async function lookupAll() {
     }
   }
   if (btn) { btn.textContent = 'Lookup All'; btn.disabled = false; }
-  if (failures.length) toast(`❌ Failed: ${failures.join(', ')}`, 6000);
-  else toast(`✓ Lookup All: ${ok} found`);
+  const note = mergedNote(mergeDuplicateRegos());
+  if (failures.length) toast(`❌ Failed: ${failures.join(', ')}${note}`, 6000);
+  else toast(`✓ Lookup All: ${ok} found${note}`);
   render();
 }
 
@@ -197,6 +269,7 @@ async function organizeGroup() {
     aircraft_manufacturer: g.metadata.aircraft_manufacturer,
     aircraft_type: g.metadata.aircraft_type,
     aircraft_url: g.metadata.aircraft_url,
+    aircraft_notes: g.metadata.aircraft_notes || '',
     date: $('date-input').value,
     airport: $('airport-input').value.toUpperCase(),
     output: $('output-path').value,
@@ -214,6 +287,7 @@ async function organizeGroup() {
       : data.catalog_updated > 0 ? ` · LR ✓ ${data.catalog_updated}` : '';
     toast(`✅ Moved ${data.moved} photo${data.moved !== 1 ? 's' : ''} → ${data.destination}${catNote}`, 6000);
     backToTriage();
+    if (data.catalog_updated > 0) catalogChanged(S.files.length === 0);
   } else {
     toast(`❌ ${data.error}`);
   }
@@ -233,6 +307,11 @@ function renderTriage() {
   // Show/hide "Clear Selection" button
   const clearSelBtn = $('clear-sel-btn');
   if (clearSelBtn) clearSelBtn.classList.toggle('hidden', S.selected.size === 0);
+  const deleteSelBtn = $('delete-sel-btn');
+  if (deleteSelBtn) {
+    deleteSelBtn.classList.toggle('hidden', S.selected.size === 0);
+    deleteSelBtn.textContent = `🗑 Delete Selected (${S.selected.size})`;
+  }
 
   // Unsorted grid
   const grid = $('unsorted-grid');
@@ -283,8 +362,19 @@ function makeTriageCard(file) {
   zoom.className = 'card-btn zoom-btn';
   zoom.title = 'Zoom preview (⤢)';
   zoom.textContent = '⤢';
+  zoom.style.right = '30px';
   zoom.addEventListener('click', e => { e.stopPropagation(); openLightbox(file.path, unsorted().map(f => f.path)); });
   div.appendChild(zoom);
+
+  // Delete from disk — on a card that's part of a multi-selection, deletes the whole selection
+  const del = document.createElement('button');
+  del.className = 'card-btn del-btn'; del.title = 'Delete from disk'; del.textContent = '🗑';
+  del.addEventListener('click', e => {
+    e.stopPropagation();
+    if (S.selected.has(file.path) && S.selected.size > 1) deleteSelected();
+    else deletePhoto(file.path);
+  });
+  div.appendChild(del);
 
   // Drag handle — only this element is draggable, so rubber-band works everywhere else
   const handle = document.createElement('div');
@@ -309,7 +399,7 @@ function makeTriageCard(file) {
 
 function makeGroupCard(g) {
   const card = document.createElement('div');
-  card.className = 'group-card';
+  card.className = `group-card${g.metadata ? ' looked-up' : ''}`;
 
   // Header
   const hdr = document.createElement('div');
@@ -353,9 +443,24 @@ function makeGroupCard(g) {
     e.target.setSelectionRange(pos, pos);
     g.registration = e.target.value;
     g.metadata = null;
+    card.classList.remove('looked-up');
   });
 
+  // Per-group lookup (button or Enter in the rego box)
+  const lookupBtn = document.createElement('button');
+  lookupBtn.className = 'gc-lookup-btn';
+  lookupBtn.textContent = 'Lookup';
+  lookupBtn.title = 'Look up this registration';
+  const doLookup = async () => {
+    if (!g.registration?.trim()) { regoInput.focus(); return; }
+    lookupBtn.textContent = '⏳'; lookupBtn.disabled = true;
+    await lookupForGroup(g.id, g.registration);   // re-renders the sidebar when done
+  };
+  lookupBtn.onclick = e => { e.stopPropagation(); doLookup(); };
+  regoInput.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); doLookup(); } });
+
   regoRow.appendChild(regoInput);
+  regoRow.appendChild(lookupBtn);
   card.appendChild(regoRow);
 
   // Metadata line (shown after successful lookup)
@@ -489,7 +594,9 @@ function renderGroupControls(g) {
       <div class="meta-item"><label>Registration</label><span>${m.registration}</span></div>
       <div class="meta-item"><label>Airline</label><span>${m.airline}</span></div>
       <div class="meta-item"><label>Manufacturer</label><span>${m.aircraft_manufacturer}</span></div>
-      <div class="meta-item"><label>Type</label><span>${m.aircraft_type}</span></div>`;
+      <div class="meta-item"><label>Type</label><span>${m.aircraft_type}</span></div>`
+      + (m.aircraft_notes ? `
+      <div class="meta-item"><label>Notes</label><span>${m.aircraft_notes}</span></div>` : '');
     metaDiv.classList.remove('hidden');
     const date = $('date-input').value.replace(/-/g, '');
     const airport = $('airport-input').value.toUpperCase();
@@ -555,6 +662,7 @@ async function doMoveAll(groups) {
   if (btn) { btn.textContent = '⏳…'; btn.disabled = true; }
 
   let movedTotal = 0;
+  let catalogTouched = false;
   const failedGroups = [];
 
   for (const g of groups) {
@@ -566,6 +674,7 @@ async function doMoveAll(groups) {
       aircraft_manufacturer: g.metadata.aircraft_manufacturer,
       aircraft_type: g.metadata.aircraft_type,
       aircraft_url: g.metadata.aircraft_url,
+      aircraft_notes: g.metadata.aircraft_notes || '',
       date: $('date-input').value,
       airport: $('airport-input').value.toUpperCase(),
       output: $('output-path').value,
@@ -575,6 +684,7 @@ async function doMoveAll(groups) {
     }, { retries: 3, delayMs: 1500 });
     if (data.success) {
       movedTotal += data.moved;
+      if (data.catalog_updated > 0) catalogTouched = true;
       const movedSet = new Set(g.files);
       S.files  = S.files.filter(f => !movedSet.has(f.path));
       S.groups = S.groups.filter(gr => gr.id !== g.id);
@@ -585,6 +695,9 @@ async function doMoveAll(groups) {
   }
 
   if (btn) { btn.textContent = 'Move All ✈'; btn.disabled = false; }
+
+  // Leftover orphans never touch the catalog, so it's final as of here
+  if (catalogTouched || sync.dirty) catalogChanged(true);
 
   const orphans = unsorted();
   if (orphans.length === 0) {
@@ -646,6 +759,10 @@ async function cleanupInbox() {
 
 // ── Top-level render ───────────────────────────────────────────────────────────
 function render() {
+  // A group whose photos were all deleted / returned to the pool is dropped
+  S.groups = S.groups.filter(g => g.files.length > 0);
+  if (S.view === 'group' && !activeGroup()) { S.view = 'triage'; S.activeGroupId = null; }
+
   if (S.view === 'triage') {
     $('triage-view').classList.remove('hidden');
     $('group-view').classList.add('hidden');
@@ -1067,10 +1184,25 @@ async function init() {
 
   const clearSelBtn = $('clear-sel-btn');
   if (clearSelBtn) clearSelBtn.onclick = clearSelection;
+  const deleteSelBtn = $('delete-sel-btn');
+  if (deleteSelBtn) deleteSelBtn.onclick = deleteSelected;
+  // Del key deletes the current selection in the main (triage) view
+  document.addEventListener('keydown', e => {
+    if (e.key !== 'Delete' || S.view !== 'triage' || S.selected.size === 0) return;
+    if (e.target.closest('input, select, textarea')) return;
+    if (!$('lightbox').classList.contains('hidden') || document.querySelector('.modal-overlay:not(.hidden)')) return;
+    if ($('page-organise').offsetParent === null) return;
+    e.preventDefault();
+    deleteSelected();
+  });
   const lookupAllBtn = $('lookup-all-btn');
   if (lookupAllBtn) lookupAllBtn.onclick = lookupAll;
   const moveAllBtn = $('move-all-btn');
   if (moveAllBtn) moveAllBtn.onclick = moveAll;
+
+  initSidebarResize();
+  initSync();
+  initLightroomLock();
 
   $('rego-input').addEventListener('input', e => {
     const pos = e.target.selectionStart;
@@ -1081,6 +1213,167 @@ async function init() {
   });
 
   render();
+}
+
+// ── SpotAlert catalog sync ─────────────────────────────────────────────────────
+// Once organising has written to the Lightroom catalog, upload it to the linked
+// SpotAlert instance (see utils/spotalert_sync.py). `dirty` = the catalog has
+// changes that haven't been uploaded yet.
+const sync = { status: { linked: false, state: 'idle' }, dirty: false, polling: false };
+
+function syncAutoEnabled() { return localStorage.getItem('ss_sync_auto') !== '0'; }
+
+function renderSync() {
+  const st = sync.status;
+  const chip = $('sync-chip');
+  let cls = '', text = '', title = '';
+  if (st.linked) {
+    if (st.state === 'uploading') {
+      const pct = st.total ? Math.floor(st.sent / st.total * 100) : 0;
+      cls = 'uploading'; text = `⬆ Uploading catalog ${pct}%`; title = `Uploading to ${st.url}`;
+    } else if (st.state === 'error') {
+      cls = 'error'; text = '⚠ Catalog sync failed — retry'; title = st.message;
+    } else if (sync.dirty) {
+      cls = 'pending'; text = '⬆ Upload catalog'; title = `Catalog has changes not yet sent to ${st.url}`;
+    } else if (st.state === 'done') {
+      const t = new Date(st.finished_at * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      cls = 'done'; text = `✓ Catalog synced ${t}`; title = st.message;
+    }
+  }
+  chip.className = text ? cls : 'hidden';
+  chip.textContent = text;
+  chip.title = title;
+
+  $('sync-disconnect-btn').classList.toggle('hidden', !st.linked);
+  $('sync-upload-btn').classList.toggle('hidden', !st.linked);
+  $('sync-upload-btn').disabled = st.state === 'uploading';
+  $('sync-link-status').textContent = !st.linked ? 'Not connected.'
+    : st.state === 'uploading' ? `Connected as ${st.username} · uploading…`
+    : st.state === 'error' ? `Connected as ${st.username} · last upload failed: ${st.message}`
+    : `Connected to ${st.url} as ${st.username}.`;
+}
+
+async function pollSync() {
+  if (sync.polling) return;
+  sync.polling = true;
+  while (sync.status.state === 'uploading') {
+    await new Promise(r => setTimeout(r, 1500));
+    sync.status = await api('GET', '/api/sync/status');
+    renderSync();
+  }
+  sync.polling = false;
+  if (sync.status.state === 'done') toast(`✓ Catalog uploaded to ${sync.status.url}`, 5000);
+  else if (sync.status.state === 'error') { sync.dirty = true; toast(`❌ Catalog sync: ${sync.status.message}`, 7000); renderSync(); }
+}
+
+async function startCatalogUpload() {
+  if (sync.status.state === 'uploading') return;
+  const data = await api('POST', '/api/sync/upload', { catalog: $('catalog-path').value });
+  if (data.success) {
+    sync.dirty = false;
+    sync.status = data;
+    renderSync();
+    pollSync();
+  } else {
+    toast(`❌ Catalog sync: ${data.message ?? data.error ?? 'could not start'}`, 7000);
+    renderSync();
+  }
+}
+
+// Called when an organise run ends. `done` = the user has finished (Move All
+// completed, or the last photo left the inbox).
+function catalogChanged(done) {
+  sync.dirty = true;
+  if (done && sync.status.linked && syncAutoEnabled()) startCatalogUpload();
+  else renderSync();
+}
+
+async function initSync() {
+  $('sync-auto').checked = syncAutoEnabled();
+  $('sync-auto').onchange = e => localStorage.setItem('ss_sync_auto', e.target.checked ? '1' : '0');
+
+  $('sync-connect-btn').onclick = async () => {
+    const btn = $('sync-connect-btn');
+    btn.disabled = true; btn.textContent = '⏳ Connecting…';
+    const data = await api('POST', '/api/sync/connect', {
+      url: $('sync-url').value, username: $('sync-username').value, password: $('sync-password').value,
+    });
+    btn.disabled = false; btn.textContent = 'Connect';
+    if (data.success) { $('sync-password').value = ''; sync.status = data; }
+    toast(`${data.success ? '✓' : '❌'} ${data.message ?? data.error}`, 6000);
+    renderSync();
+  };
+  $('sync-disconnect-btn').onclick = async () => {
+    sync.status = await api('POST', '/api/sync/disconnect');
+    toast('Disconnected from SpotAlert');
+    renderSync();
+  };
+  $('sync-upload-btn').onclick = startCatalogUpload;
+  $('sync-chip').onclick = () => { if (sync.status.state !== 'uploading') startCatalogUpload(); };
+
+  sync.status = await api('GET', '/api/sync/status');
+  if (sync.status.linked) { $('sync-url').value = sync.status.url; $('sync-username').value = sync.status.username; }
+  renderSync();
+  if (sync.status.state === 'uploading') pollSync();
+}
+
+// ── Lightroom lock ─────────────────────────────────────────────────────────────
+// While Lightroom is open the whole app is covered by a blocking overlay, since
+// nothing Studio does to the catalog is safe then. Skipped when no catalog path
+// is configured (catalog updates are off, so Lightroom doesn't matter).
+async function checkLightroomLock() {
+  let running = false;
+  if ($('catalog-path').value.trim()) {
+    try { running = !!(await api('GET', '/api/lightroom-status')).running; } catch { /* server down — leave unlocked */ }
+  }
+  const lock = $('lr-lock');
+  if (running && lock.classList.contains('hidden')) document.activeElement?.blur();
+  lock.classList.toggle('hidden', !running);
+}
+
+async function initLightroomLock() {
+  await checkLightroomLock();
+  setInterval(checkLightroomLock, 3000);
+  // Catch up immediately when switching back from Lightroom
+  window.addEventListener('focus', checkLightroomLock);
+}
+
+// ── Resizable groups sidebar ───────────────────────────────────────────────────
+function initSidebarResize() {
+  const handle = $('sidebar-resizer');
+  const sidebar = $('triage-sidebar');
+  if (!handle || !sidebar) return;
+  const DEFAULT_W = 260, MIN_W = 220, MIN_MAIN_W = 240;
+
+  const apply = w => {
+    const max = Math.max(MIN_W, $('triage-view').clientWidth - MIN_MAIN_W);
+    sidebar.style.width = `${Math.min(Math.max(w, MIN_W), max)}px`;
+  };
+
+  const saved = parseInt(localStorage.getItem('ss_sidebar_width'), 10);
+  if (saved) apply(saved);
+
+  handle.addEventListener('pointerdown', e => {
+    e.preventDefault();
+    handle.setPointerCapture(e.pointerId);
+    handle.classList.add('dragging');
+    document.body.classList.add('resizing-sidebar');
+    const startX = e.clientX, startW = sidebar.offsetWidth;
+    const onMove = ev => apply(startW + (startX - ev.clientX));
+    const onUp = () => {
+      handle.removeEventListener('pointermove', onMove);
+      handle.classList.remove('dragging');
+      document.body.classList.remove('resizing-sidebar');
+      localStorage.setItem('ss_sidebar_width', sidebar.offsetWidth);
+    };
+    handle.addEventListener('pointermove', onMove);
+    handle.addEventListener('pointerup', onUp, { once: true });
+    handle.addEventListener('pointercancel', onUp, { once: true });
+  });
+  handle.addEventListener('dblclick', () => {
+    sidebar.style.width = `${DEFAULT_W}px`;
+    localStorage.removeItem('ss_sidebar_width');
+  });
 }
 
 document.addEventListener('DOMContentLoaded', init);

@@ -97,10 +97,23 @@
       position: relative;
     }
 
+    /* Drag handle between photo pool and groups sidebar */
+    .sidebar-resizer {
+      width: 5px;
+      flex-shrink: 0;
+      cursor: col-resize;
+      background: var(--border);
+      background-clip: content-box;
+      padding: 0 2px;
+      transition: background-color .15s;
+      touch-action: none;
+    }
+    .sidebar-resizer:hover, .sidebar-resizer.dragging { background-color: var(--accent); }
+    body.resizing-sidebar { cursor: col-resize; user-select: none; }
+
     .triage-sidebar {
       width: 260px;
       flex-shrink: 0;
-      border-left: 1px solid var(--border);
       background: var(--surface);
       display: flex;
       flex-direction: column;
@@ -227,9 +240,12 @@
     .gc-del { background: none; border: none; color: var(--dim); padding: 1px 5px; font-size: 14px; line-height: 1; }
     .gc-del:hover { color: var(--danger); background: none; }
 
-    .gc-thumbs { display: flex; gap: 3px; height: 52px; }
-    .gc-thumbs img { flex: 1; object-fit: cover; border-radius: 4px; background: var(--bg); min-width: 0; }
-    .gc-more { display: flex; align-items: center; justify-content: center; padding: 0 6px; background: var(--bg); border-radius: 4px; font-size: 11px; color: var(--dim); flex-shrink: 0; }
+    .group-card.looked-up { border-color: var(--success); box-shadow: 0 0 0 1px var(--success); }
+
+    /* Four equal columns that keep the photo's shape, so thumbs scale with the sidebar width */
+    .gc-thumbs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 3px; position: relative; }
+    .gc-thumbs img { width: 100%; aspect-ratio: 3 / 2; object-fit: cover; border-radius: 4px; background: var(--bg); display: block; }
+    .gc-more { position: absolute; right: 4px; bottom: 4px; padding: 1px 6px; background: rgba(0,0,0,.7); border-radius: 4px; font-size: 11px; color: #fff; pointer-events: none; }
 
     .gc-reg { font-size: 12px; color: var(--dim); }
     .gc-reg strong { color: var(--text); }
@@ -320,6 +336,20 @@
       font-weight: 600; font-size: 13px; align-self: flex-start;
     }
     .settings-save:hover { background: #2563eb; }
+    .settings-check { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
+    .settings-check input { width: auto; }
+    .sync-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    #sync-link-status { font-size: 12px; color: var(--dim); }
+
+    /* Catalog sync status chip (organise toolbar) */
+    #sync-chip {
+      font-size: 11px; padding: 4px 10px; border-radius: 12px; white-space: nowrap; flex-shrink: 0;
+      background: var(--surface2); border: 1px solid var(--border); color: var(--dim); cursor: pointer;
+    }
+    #sync-chip.pending   { border-color: var(--accent); color: var(--text); }
+    #sync-chip.uploading { border-color: var(--accent); color: var(--text); cursor: default; }
+    #sync-chip.done      { border-color: var(--success); color: var(--success); }
+    #sync-chip.error     { border-color: var(--danger); color: var(--danger); }
 
     /* ── Lightbox ─────────────────────────────────────────────────────────── */
     #lightbox {
@@ -433,6 +463,7 @@
       <input id="date-input"    type="date">
       <input id="airport-input" maxlength="3" placeholder="SYD">
       <select id="session-select" style="flex:1;min-width:160px"></select>
+      <button id="sync-chip" class="hidden"></button>
       <button id="scan-btn">📂 Scan Inbox</button>
     </div>
 
@@ -444,14 +475,17 @@
         <div class="section-label">
           Inbox <span id="unsorted-count"></span>
           <button id="clear-sel-btn" class="hidden" style="font-size:11px;padding:3px 9px">✕ Clear Selection</button>
+          <button id="delete-sel-btn" class="hidden btn-danger" style="font-size:11px;padding:3px 9px" title="Delete selected photos from disk (Del)">🗑 Delete Selected</button>
         </div>
         <div id="unsorted-grid" class="photo-grid">
           <p class="empty">Scan the inbox to see photos</p>
         </div>
       </div>
 
+      <div class="sidebar-resizer" id="sidebar-resizer" title="Drag to resize · double-click to reset"></div>
+
       <!-- Groups sidebar -->
-      <div class="triage-sidebar">
+      <div class="triage-sidebar" id="triage-sidebar">
         <div class="sidebar-header" style="display:flex;align-items:center;justify-content:space-between;gap:6px">
           <span>Groups</span>
           <div style="display:flex;gap:5px">
@@ -533,6 +567,36 @@
 
       <button class="settings-save" id="settings-save-btn">Save Settings</button>
 
+      <div class="settings-section">
+        <h2>SpotAlert catalog sync</h2>
+        <div class="settings-fields">
+          <div class="settings-field">
+            <label>Instance URL</label>
+            <input id="sync-url" placeholder="http://192.168.4.100:8088">
+            <span class="hint">The SpotAlert instance that should receive the updated catalog (it replaces your "My Catalog" there).</span>
+          </div>
+          <div class="settings-field">
+            <label>Username</label>
+            <input id="sync-username" autocomplete="username">
+          </div>
+          <div class="settings-field">
+            <label>Password</label>
+            <input id="sync-password" type="password" autocomplete="current-password">
+            <span class="hint">Used once to sign in — only the session is kept on this PC, not the password. Needs a Controller or Pilot account.</span>
+          </div>
+          <div class="sync-actions">
+            <button id="sync-connect-btn" class="btn-primary">Connect</button>
+            <button id="sync-disconnect-btn" class="hidden">Disconnect</button>
+            <button id="sync-upload-btn" class="hidden">⬆ Upload catalog now</button>
+            <span id="sync-link-status">Not connected.</span>
+          </div>
+          <label class="settings-check">
+            <input id="sync-auto" type="checkbox" checked>
+            Upload automatically when organising is finished
+          </label>
+        </div>
+      </div>
+
     </div>
   </div><!-- /page-settings -->
 
@@ -573,6 +637,18 @@
   </div>
 </div>
 
+<!-- Delete selected confirmation modal -->
+<div id="delete-sel-modal" class="modal-overlay hidden">
+  <div class="modal-box">
+    <h3>Delete from Disk</h3>
+    <p id="delete-sel-summary"></p>
+    <div class="modal-actions">
+      <button id="delete-sel-cancel">Cancel</button>
+      <button id="delete-sel-confirm" class="btn-danger">Delete from disk</button>
+    </div>
+  </div>
+</div>
+
 <!-- Orphan handling modal -->
 <div id="orphan-modal" class="modal-overlay hidden">
   <div class="modal-box">
@@ -583,6 +659,15 @@
       <button id="orphan-move">Move to 'Other' folder</button>
       <button id="orphan-delete" class="btn-danger">Delete from disk</button>
     </div>
+  </div>
+</div>
+
+<!-- Shown (and blocks the whole app) while Lightroom is open -->
+<div id="lr-lock" class="modal-overlay hidden" style="z-index:10000">
+  <div class="modal-box">
+    <h3>Lightroom is open</h3>
+    <p>Studio writes directly to the Lightroom catalog, so it's paused while Lightroom is running.</p>
+    <p><strong>Close Lightroom to continue</strong> — this will clear by itself.</p>
   </div>
 </div>
 
