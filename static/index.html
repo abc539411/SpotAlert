@@ -727,7 +727,7 @@
       /* Possible aircraft on phones: the pill stays on the row, the (long) livery / type text drops underneath it,
          right-aligned, and the row grows to fit. */
       .bd-trig-row { padding: 7px 8px; align-items: center; }
-      .bd-trig-right { flex-direction: column-reverse; align-items: flex-end; gap: 3px; max-width: 52%; }
+      .bd-trig-row .bd-trig-right { flex-direction: column-reverse; align-items: flex-end; gap: 3px; max-width: 52%; }   /* (.bd-trig-row prefix: must out-rank the base rule further down) */
       .bd-trig-right .bd-trig-lv { text-align: right; white-space: normal; line-height: 1.25; }
       /* keep the registration on one line; the "Arr. From … / status" group wraps underneath if it must */
       .bd-detail .detail-header { flex-wrap: wrap; gap: 6px 8px; }
@@ -749,7 +749,7 @@
     .bd-trig-row.is-shot > * { opacity: .35; filter: grayscale(1); }   /* photographed more than SPOT_MAX_SPOTTED times — same gate as Spotting */
     .bd-trig-row.is-current { box-shadow: inset 3px 0 0 var(--accent); }   /* the aircraft assigned to this flight now */
     .bd-trig-d { color: var(--dim); font-variant-numeric: tabular-nums; white-space: nowrap; min-width: 58px; }
-    .bd-trig-reg { color: var(--text); font-weight: 700; text-decoration: none; white-space: nowrap; min-width: 76px; }   /* fixed column so the count pills line up */
+    .bd-trig-reg { color: var(--text); font-weight: 700; text-decoration: none; white-space: nowrap; min-width: 62px; }   /* fixed column so the count pills line up */
     .bd-trig-chips { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-width: 0; }
     .bd-trig-chips .chip { height: 16px; padding: 0 6px; font-size: 9px; line-height: 1; margin: 0; }
     .bd-trig-lv { color: var(--dim); font-style: italic; font-size: 10px; }
