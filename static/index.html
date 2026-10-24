@@ -489,10 +489,14 @@
     .header-whoami-airport .hdr-clock-time { font-weight: 500; color: var(--dim); font-variant-numeric: tabular-nums; }
     .header-whoami-airport .hdr-clock-abbr { font-weight: 500; color: var(--dim); font-size: 11px; }
     .header-clock { display: none; }
-    /* Desktop nav bar: "Updated N min ago · Data through ..." on the Feed and Board tabs (moved out of the Board page). */
-    .header-updated { display: none; flex: 0 3 auto; font-size: 11px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; margin-left: 12px; align-self: center; line-height: 1; padding-bottom: 2px; /* the tabs reserve 2px for their underline — match it so the text sits on the same centre line as the tab labels */ }
+    /* "Updated N min ago · Data through …" pill shown by the first click on Refresh Feed / Refresh Board; the second
+       click actually refreshes. position:fixed popover => display:none as its base state. */
+    .refresh-pill { display: none; position: fixed; z-index: 1500; padding: 7px 14px; border-radius: 999px; background: var(--surface2);
+                    border: 1px solid var(--border); color: var(--text); font-size: 12px; white-space: nowrap; max-width: calc(100vw - 16px);
+                    overflow: hidden; text-overflow: ellipsis; box-shadow: 0 6px 20px rgba(0,0,0,.45); }
+    .refresh-pill.show { display: block; }
+    .refresh-pill .rp-hint { color: var(--accent); margin-left: 8px; }
     @media (min-width: 768px) {
-      .header-updated.show { display: block; }
       #tab-board .bd-meta { display: none; }
       #tab-board .bd-top:not(:has(.bd-hidden-btn:not(.hidden))) { display: none; }   /* nothing left in the bar */
       #tab-board .bd-top { padding-top: 8px; }
@@ -2031,6 +2035,7 @@
   </div>
 </div>
 
+<div id="refresh-pill" class="refresh-pill"></div>
 <header>
   <div class="header-logo"><span>✈</span>SpotAlert</div>
   <nav class="nav-tabs" id="nav-tabs">
@@ -2043,14 +2048,13 @@
     <button class="nav-tab" data-tab="settings"><span class="tab-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="2.8"/><path d="M12 3.5v2.4M12 18.1v2.4M20.5 12h-2.4M5.9 12H3.5M17.8 6.2l-1.7 1.7M7.9 16.1l-1.7 1.7M17.8 17.8l-1.7-1.7M7.9 7.9 6.2 6.2"/></svg></span><span data-i18n="nav.settings">Settings</span></button>
   </nav>
   <div id="header-clock" class="header-clock"></div>
-  <div id="header-updated" class="header-updated" title="Last FR24 check / how far ahead the board reaches"></div>
   <div style="margin-left:auto;display:flex;align-items:center;gap:8px;min-width:0">
     <div id="header-whoami" class="header-whoami"></div>
     <div id="rapid-badge" style="flex-shrink:0">RAPID</div>
     <button class="btn-refresh" id="btn-switch-airport" onclick="showAirportPicker()" title="Switch airport" style="flex-shrink:0">
       <span>✈</span>
     </button>
-    <button class="btn-refresh" id="btn-refresh" onclick="forceCheck()" title="Force FR24 check now" style="flex-shrink:0">
+    <button class="btn-refresh" id="btn-refresh" onclick="_refreshGate(forceCheck)" title="Force FR24 check now" style="flex-shrink:0">
       <span id="btn-refresh-icon">↻</span><span id="btn-refresh-label" class="btn-refresh-label">Refresh Feed</span>
     </button>
   </div>

@@ -355,7 +355,7 @@ const UI_ZH = {
   'Refresh Board': '刷新看板', 'Checking FR24…': '正在检查 FR24…', 'Board updated': '看板已更新',
   "Waiting for this airport's first check — tap Refresh to run one now.": '正在等待该机场的首次检查——点击刷新立即检查。',
   'Could not load the Board.': '无法加载看板。',
-  'Not assigned yet': '尚未分配机号', 'Not on board yet': '尚未上板', 'Possible aircraft': '可能的飞机', 'Added by hand (one-off) — in Feed and Spotting': '手动添加（仅此一次）— 已在 Feed 和拍机时间线', 'Add to Feed + Spotting (one-off)': '加入 Feed 和拍机时间线（仅此一次）', 'Remove this one-off flight from Feed + Spotting': '从 Feed 和拍机时间线移除此航班', 'Click again to add it to Feed + Spotting': '再点一次确认加入', 'Click again to remove it': '再点一次确认移除', 'added to Feed + Spotting': '已加入 Feed 和拍机时间线', 'removed': '已移除', 'Already photographed': '已拍摄', 'today': '今天', 'Last triggered': '上次触发原因', 'Hidden from Feed by the Exclusion List': '已被排除名单隐藏', 'No regular flights to show.': '暂无需要关注的常规航班。', 'No Feed cards': '无 Feed 卡片', 'Aircraft not assigned yet': '尚未分配飞机', 'Could not load aircraft details.': '无法加载飞机信息。',
+  'Not assigned yet': '尚未分配机号', 'Not on board yet': '尚未上板', 'Possible aircraft': '可能的飞机', 'No check yet': '尚未检查', 'Tap again to refresh': '再点一次刷新', 'Added by hand (one-off) — in Feed and Spotting': '手动添加（仅此一次）— 已在 Feed 和拍机时间线', 'Add to Feed + Spotting (one-off)': '加入 Feed 和拍机时间线（仅此一次）', 'Remove this one-off flight from Feed + Spotting': '从 Feed 和拍机时间线移除此航班', 'Click again to add it to Feed + Spotting': '再点一次确认加入', 'Click again to remove it': '再点一次确认移除', 'added to Feed + Spotting': '已加入 Feed 和拍机时间线', 'removed': '已移除', 'Already photographed': '已拍摄', 'today': '今天', 'Last triggered': '上次触发原因', 'Hidden from Feed by the Exclusion List': '已被排除名单隐藏', 'No regular flights to show.': '暂无需要关注的常规航班。', 'No Feed cards': '无 Feed 卡片', 'Aircraft not assigned yet': '尚未分配飞机', 'Could not load aircraft details.': '无法加载飞机信息。',
   'No equipment history yet.': '暂无机型使用记录。', 'Registration': '注册号', 'Aircraft': '飞机', 'Manufacturer': '制造商', 'Operator': '运营商',
   'Owner': '所有者', 'Livery': '涂装', 'Country': '国家/地区', 'Mode S': 'Mode S', 'Serial No.': '序列号', 'Built': '出厂年份', 'Feed cards here': '本场 Feed 卡片数',
   'Feed card': '动态卡片', 'Excluded': '已排除', 'Has a card in Feed': '动态中已有卡片',
@@ -1421,7 +1421,6 @@ function _pickerSubtab(name) {
 async function selectAirport(iata) {
   try {
     await api('/airport/select', { method: 'POST', body: JSON.stringify({ airport_iata: iata }) });
-    _hdrMeta = null; _hdrMetaTs = 0; if (typeof _syncHeaderMeta === 'function') _syncHeaderMeta(true);   // another airport's last-check time
     location.reload();
   } catch (e) {
     toast('Could not select that airport');
@@ -3015,7 +3014,7 @@ let activeTab = 'history';
 function switchTab(name) {
   if (!TABS.includes(name)) return;
   activeTab = name;
-  _syncHeaderMeta();
+  _hideRefreshPill();
   TABS.forEach(t => {
     $('tab-' + t).classList.toggle('hidden', t !== name);
   });
@@ -3034,14 +3033,14 @@ function switchTab(name) {
       btn.onclick = () => { _recLoaded = false; toast('Plotting the windows…'); loadRecommendation(true); };
       lbl.textContent = tt('Refresh Spotting');
     } else if (name === 'board') {
-      btn.onclick = () => refreshBoard();
+      btn.onclick = () => _refreshGate(refreshBoard);
       lbl.textContent = tt('Refresh Board');
     } else if (name === 'settings') {
       btn.onclick = () => armRestartBackend();
       btn.classList.add('btn-danger');
       lbl.textContent = tt('Restart Server');
     } else {
-      btn.onclick = () => forceCheck();
+      btn.onclick = () => _refreshGate(forceCheck);
       lbl.textContent = tt('Refresh Feed');
     }
     _syncRefreshBtnVisibility();
@@ -3111,33 +3110,34 @@ let _bdPositioned = false;   // true once the wrap has been scrolled to today's 
 const _BD_EYE     = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12z"/><circle cx="12" cy="12" r="2.6"/></svg>';
 const _BD_EYE_OFF = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3l18 18"/><path d="M10.6 6.1A10 10 0 0 1 12 6c6.4 0 10 6 10 6a17 17 0 0 1-3.2 3.9M6.3 7.7C3.9 9.3 2 12 2 12s3.6 6 10 6c1.6 0 3-.3 4.2-.9"/><path d="M9.9 10a3 3 0 0 0 4.1 4.1"/></svg>';
 
-// Desktop nav bar: "Updated N min ago · Data through Sun 9:35am" for the Feed and Board tabs. The numbers are the
-// monitor's last completed check for this airport (board_meta) — /api/status carries them for every role.
-let _hdrMeta = null, _hdrMetaTs = 0;
-function _renderHeaderMeta() {
-  const el = $('header-updated');
-  if (!el) return;
-  const show = (activeTab === 'board' || activeTab === 'history') && window.innerWidth >= 768 && _hdrMeta && _hdrMeta.updated_ts;
-  el.classList.toggle('show', !!show);
-  if (!show) { el.textContent = ''; return; }
-  const bits = [`${tt('Updated')} ${_bdAgo(_hdrMeta.updated_ts)}`];
-  if (_hdrMeta.data_through_ts) bits.push(`${tt('Data through')} ${fmtTs(_hdrMeta.data_through_ts, { weekday: 'short' })}`);
-  el.textContent = bits.join(' · ');
-  el.title = el.textContent;     // full text when the nav bar is tight and it gets clipped
+// First click on Refresh Feed / Refresh Board pops a pill with the monitor's last-check time and how far ahead FR24's
+// board reaches ("Updated N min ago · Data through Sun 9:35am"); a second click within a few seconds really refreshes.
+let _rfArmed = false, _rfTimer = null;
+function _hideRefreshPill() {
+  _rfArmed = false;
+  clearTimeout(_rfTimer);
+  const el = $('refresh-pill');
+  if (el) el.classList.remove('show');
 }
-async function _syncHeaderMeta(force) {
-  _renderHeaderMeta();
-  if (!(activeTab === 'board' || activeTab === 'history')) return;
-  if (!force && _hdrMeta && Date.now() - _hdrMetaTs < 30000) return;
-  _hdrMetaTs = Date.now();
-  try {
-    const st = await api('/status');
-    _hdrMeta = { updated_ts: st.updated_ts, data_through_ts: st.data_through_ts };
-    _renderHeaderMeta();
-  } catch (e) { /* header text is a nicety; ignore */ }
+async function _refreshGate(action) {
+  if (_rfArmed) { _hideRefreshPill(); action(); return; }
+  _rfArmed = true;
+  const btn = $('btn-refresh'), el = $('refresh-pill');
+  let m = null;
+  try { const st = await api('/status'); m = { u: st.updated_ts, t: st.data_through_ts }; } catch (e) { /* show the hint anyway */ }
+  if (!_rfArmed) return;                                   // switched tab / second click while fetching
+  const bits = [];
+  if (m && m.u) bits.push(`${tt('Updated')} ${_bdAgo(m.u)}`);
+  if (m && m.t) bits.push(`${tt('Data through')} ${fmtTs(m.t, { weekday: 'short' })}`);
+  el.innerHTML = `${esc(bits.join(' · ') || tt('No check yet'))}<span class="rp-hint">${esc(tt('Tap again to refresh'))}</span>`;
+  const r = btn.getBoundingClientRect();
+  el.style.top = (r.bottom + 8) + 'px';
+  el.style.right = Math.max(8, window.innerWidth - r.right) + 'px';
+  el.classList.add('show');
+  clearTimeout(_rfTimer);
+  _rfTimer = setTimeout(_hideRefreshPill, 6000);
 }
-setInterval(() => _syncHeaderMeta(), 30000);
-window.addEventListener('resize', _renderHeaderMeta);
+document.addEventListener('click', e => { if (_rfArmed && !e.target.closest('#btn-refresh')) _hideRefreshPill(); });
 
 function _bdAgo(ts) {
   const mins = Math.max(0, Math.round((Date.now() / 1000 - ts) / 60));
@@ -3416,7 +3416,6 @@ function renderBoard() {
   if (d.updated_ts) bits.push(`${tt('Updated')} ${_bdAgo(d.updated_ts)}`);
   if (d.data_through_ts) bits.push(`${tt('Data through')} ${fmtTs(d.data_through_ts, { weekday: 'short' })}`);
   $('bd-meta').textContent = bits.join(' · ');
-  _hdrMeta = { updated_ts: d.updated_ts, data_through_ts: d.data_through_ts }; _hdrMetaTs = Date.now(); _renderHeaderMeta();
   renderBoardHidden();
 
   wrap.innerHTML = (d.days || []).map(day => {
@@ -3996,7 +3995,7 @@ async function forceCheck() {
   try {
     toast('Binoculars out…');
     await api('/force-check', { method: 'POST' });
-    setTimeout(() => { loadFeed(); _recLoaded = false; _syncHeaderMeta(true); toast('Nothing missed. Probably.'); }, 8000);
+    setTimeout(() => { loadFeed(); _recLoaded = false; toast('Nothing missed. Probably.'); }, 8000);
   } catch (e) {
     toast('Check failed: ' + e.message);
   } finally {
