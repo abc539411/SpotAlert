@@ -1178,7 +1178,7 @@ function _pickerAirportTime(tz, tzAbbr) {
     // and passed in — the browser's own Intl 'short' timeZoneName falls back
     // to a bare GMT+offset for most non-US zones, so it can't be trusted here.
     const time = new Intl.DateTimeFormat(_locale(), {
-      ..._hourOpts(), minute: '2-digit', timeZone: tz,
+      hour: 'numeric', minute: '2-digit', hour12: _lang !== 'zh', timeZone: tz,
     }).format(new Date());
     return tzAbbr ? `${time} ${tzAbbr}` : time;
   } catch (e) { return ''; }
@@ -1190,7 +1190,7 @@ function _airportClockText(tz) {
   if (!tz) return '';
   try {
     return new Intl.DateTimeFormat(_locale(), {
-      ..._hourOpts(), minute: '2-digit', timeZone: tz,
+      hour: 'numeric', minute: '2-digit', hour12: _lang !== 'zh', timeZone: tz,
     }).format(new Date()).replace(/\s?([AP])M$/i, (m, c) => c.toLowerCase() + 'm');
   } catch (e) { return ''; }
 }
@@ -1784,16 +1784,13 @@ let _appTz = '';
 // 11:21", "7月12日周日") with no further string-munging needed — the
 // existing ' AM'/' PM' cleanup below simply doesn't match anything in
 // Chinese output, so it stays harmless for both languages.
-// Hour part of every clock: 12-hour (3:05 PM) in English, 24-hour in Chinese. `hour12: false` makes some browsers print
-// midnight as "24:01" or "0:01", so the 24-hour form asks for the h23 cycle with a two-digit hour ("00:01").
-function _hourOpts() { return _lang === 'zh' ? { hour: '2-digit', hourCycle: 'h23' } : { hour: 'numeric', hour12: true }; }
 function _locale() { return _lang === 'zh' ? 'zh-CN' : 'en-US'; }
 
 function fmtTs(ts, opts = {}) {
   if (!ts) return '—';
   const d = new Date(ts * 1000);
   const s = d.toLocaleString(_locale(), {
-    ..._hourOpts(), minute: '2-digit',
+    hour: 'numeric', minute: '2-digit', hour12: _lang !== 'zh',
     ...(_appTz ? { timeZone: _appTz } : {}), ...opts,
   });
   return s.replace(' AM', 'am').replace(' PM', 'pm');
@@ -6436,7 +6433,7 @@ function _nowHM(tzName, d) {
   if (!tzName) return { h: d.getHours(), m: d.getMinutes() };
   try {
     const parts = new Intl.DateTimeFormat('en-GB', {
-      timeZone: tzName, hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+      timeZone: tzName, hour: '2-digit', minute: '2-digit', hour12: false,
     }).formatToParts(d);
     return {
       h: parseInt(parts.find(p => p.type === 'hour').value, 10),
