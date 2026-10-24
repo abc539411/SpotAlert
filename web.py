@@ -4771,10 +4771,10 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                 if fr["registration"] in excl_regs:
                     # Would have been a card, but Feed hides it. Still evidence that this flight number is one
                     # worth watching (and what lets the Board colour its row) — just not a visible Feed card.
-                    excluded_cards.setdefault(fr["flight_number"], []).append((fr["arrival_ts"], fr["registration"], nt, fr["extra_info"]))
+                    excluded_cards.setdefault(fr["flight_number"], []).append((fr["arrival_ts"], fr["registration"], nt, fr["extra_info"], fr["aircraft_type"]))
                 else:
                     e["arrival_ts"].append(fr["arrival_ts"])
-                    e["cards"].append((fr["arrival_ts"], fr["registration"], nt, fr["extra_info"]))
+                    e["cards"].append((fr["arrival_ts"], fr["registration"], nt, fr["extra_info"], fr["aircraft_type"]))
         for _fn, _e in roster.items():
             _e["hist"] = hist.get(_fn) or {"ts": []}
         for _fn in excluded_cards:                      # an excluded-only flight number still qualifies
@@ -4870,7 +4870,8 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                 by_reg: dict = {}
                 for c, ex in sorted(allc, key=lambda x: x[0][0], reverse=True):      # newest first
                     e_ = by_reg.setdefault(c[1], {"ts": c[0], "registration": c[1], "card_types": c[2],
-                                                  "extra_info": c[3] or "", "excluded": ex, "count": 0})
+                                                  "extra_info": c[3] or "", "aircraft_type": c[4] or "",
+                                                  "excluded": ex, "count": 0})
                     e_["count"] += 1
                 past = list(by_reg.values())
             by_off[off]["rows"].append({

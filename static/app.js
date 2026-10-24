@@ -3276,13 +3276,16 @@ function _bdDetailHtml(r) {
       `<div class="bd-trig">${r.past_triggers.map(t => {
         const chips = (t.card_types || []).map(c => `<span class="chip ${chipClass(c)}">${esc(chipLabel(c))}</span>`).join('');
         const lv = (t.card_types || []).includes('Special Livery') && t.extra_info ? `<span class="bd-trig-lv">${esc(tLiveryName(t.extra_info))}</span>` : '';
+        // Rare-plane triggers: which type it was (that is what made it rare).
+        const rareType = (t.card_types || []).includes('Rare Plane/Airline') && t.aircraft_type
+          ? `<span class="fc-actype">${esc(t.aircraft_type)}</span>` : '';
         const days = Math.max(0, Math.floor((Date.now() / 1000 - t.ts) / 86400));
         const ago = days === 0 ? tt('today') : (_lang === 'zh' ? `${days} 天` : `${days} day${days === 1 ? '' : 's'}`);
         return `<div class="bd-trig-row${t.excluded ? ' is-excl' : ''}" title="${t.excluded ? esc(tt('Hidden from Feed by the Exclusion List')) : ''}">` +
           `<span class="bd-trig-d">${esc(ago)}</span>` +
           `<a href="${_fr24AircraftUrl(t.registration)}" target="_blank" rel="noopener" class="bd-trig-reg">${_flag(_regoCountryCode(t.registration), { h: 10 })}${esc(t.registration)}</a>` +
           `<span class="bd-trig-n">${t.count}x</span>` +
-          `<span class="bd-trig-right">${lv}<span class="bd-trig-chips">${chips}</span></span></div>`;
+          `<span class="bd-trig-right">${lv}${rareType}<span class="bd-trig-chips">${chips}</span></span></div>`;
       }).join('')}</div>`;
   }
 
