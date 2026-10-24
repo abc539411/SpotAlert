@@ -743,13 +743,15 @@
     }
     .flight-num { color: var(--dim); font-size: 13px; }
 
-    /* Detail-card badge row (Feed + Board): card-type chip, manufacturer and aircraft type share one size. */
-    .detail-badges .chip, .detail-badges .mfr, .detail-badges .fc-actype {
-      height: 20px; padding: 0 7px; box-sizing: border-box; border-radius: 4px; font-size: 11px; line-height: 1;
-      display: inline-flex; align-items: center; margin: 0;
+    /* Detail-card badge row (Feed + Board): card-type chip, manufacturer and aircraft type are all the same
+       fixed box — same height, font size, weight, tracking and border — so they line up exactly. */
+    .detail-badges > .chip, .detail-badges > .mfr, .detail-badges > .fc-actype {
+      display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; margin: 0;
+      height: 17px; padding: 0 6px; border: 1px solid transparent; border-radius: 4px;
+      font-size: 9px; line-height: 1; font-weight: 700; letter-spacing: .05em; text-transform: uppercase;
+      vertical-align: middle;
     }
-    .detail-badges .chip, .detail-badges .mfr { font-weight: 700; letter-spacing: .04em; }
-    .detail-badges .chip { border: 1px solid transparent; }
+    .detail-badges > .fc-actype { font-family: inherit; border-color: var(--border); }
     /* ── Type chips ──────────────────────────────────────────────────────── */
     .chip {
       display: inline-flex; align-items: center; height: 20px; padding: 0 7px; box-sizing: border-box;
