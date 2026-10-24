@@ -2187,6 +2187,29 @@ async function feedToggleOlder() {
     body.innerHTML = `<div class="empty">${esc(e.message)}</div>`;
   }
 }
+// Archive cards: if a saved picture no longer loads, ask the server to verify + replace it (once per aircraft).
+// The probe uses the same URL the card already requests, so a working picture costs nothing extra.
+const _feedPhotoChecked = new Set();
+function _feedProbePhotos(body, days) {
+  const jobs = (days || []).flatMap(d => d.cards || []).filter(g => g.photo_url);
+  jobs.forEach(g => {
+    const key = g.registration + '|' + g.photo_url;
+    if (_feedPhotoChecked.has(key)) return;
+    _feedPhotoChecked.add(key);
+    const im = new Image();
+    im.onerror = async () => {
+      try {
+        const r = await api('/feed/photo-refresh', { method: 'POST', body: JSON.stringify({ registration: g.registration, url: g.photo_url }) });
+        if (!r.url) return;
+        body.querySelectorAll('.sq-bg').forEach(bg => {
+          if ((bg.getAttribute('style') || '').includes(g.photo_url)) bg.style.backgroundImage = `url('${r.url}')`;
+        });
+      } catch (e) { /* the picture just stays blank */ }
+    };
+    im.src = g.photo_url;
+  });
+}
+
 function _feedShortDate(iso) {
   const [y, m, d] = iso.split('-').map(Number);
   return new Date(y, m - 1, d).toLocaleDateString(_locale(), { day: 'numeric', month: 'short' });
@@ -2211,6 +2234,7 @@ async function feedToggleWeek(btn) {
     const days = (data.days || []).filter(d => d.date < cut);          // the newest 7 days already have their own section
     body.innerHTML = days.length ? days.map(_feedDayHtml).join('') : `<div class="empty">${esc(tt('No cards this week.'))}</div>`;
     body.dataset.loaded = '1';
+    _feedProbePhotos(body, days);
     _translateNamesForZh(days.flatMap(day => (day.cards || []).map(g => _cardAirlineName(g))).filter(Boolean));
   } catch (e) {
     body.innerHTML = `<div class="empty">${esc(e.message)}</div>`;

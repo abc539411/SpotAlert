@@ -1655,6 +1655,55 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                 _photo_backfill_miss[(cfg_.airport_iata, reg)] = time.time()
         return out
 
+    # A saved photo link can die later (the picture is removed from JetPhotos). The browser tells us when an archive
+    # card's picture fails to load; the server then CHECKS the link itself (so a hiccup on the phone never swaps a good
+    # photo), and only if it really is dead fetches the latest picture and saves it over exactly that dead link.
+    def _refresh_dead_photo(cfg_, reg: str, bad_url: str) -> str:
+        import requests as _rq
+        store_ = cfg_.store
+        with store_._connect() as conn:
+            holds = conn.execute("SELECT 1 FROM flight_arrivals WHERE registration = ? AND photo_url = ? LIMIT 1", (reg, bad_url)).fetchone()
+            if not holds:                                   # already replaced earlier — just hand back what the card has now
+                cur = conn.execute("SELECT photo_url FROM flight_arrivals WHERE registration = ? AND photo_url IS NOT NULL AND photo_url != '' LIMIT 1", (reg,)).fetchone()
+                return cur[0] if cur else ""
+        try:
+            r = _rq.get(bad_url, stream=True, timeout=6, headers={"User-Agent": "Mozilla/5.0"})
+            alive = r.status_code < 400
+            r.close()
+            if alive:
+                return ""                                  # link works — leave the card alone
+        except Exception:
+            pass                                           # unreachable / DNS / timeout counts as dead
+        if time.time() - _photo_backfill_miss.get((cfg_.airport_iata, reg), 0) <= 7 * 86400 or not cfg_.fr_api:
+            return ""
+        url = ""
+        try:
+            rd = cfg_.fr_api.get_rego_details(reg.upper()) or {}
+            images = rd.get("aircraftImages") or []
+            if images:
+                imgs = images[0]["images"]
+                large = imgs.get("large") or imgs.get("medium") or []
+                url = large[0]["src"].replace("/640cb/", "/640/") if large else ""
+        except Exception as exc:
+            log.debug("Dead-photo refresh failed for %s: %s", reg, exc)
+        if not url or url == bad_url:
+            _photo_backfill_miss[(cfg_.airport_iata, reg)] = time.time()
+            return ""
+        with store_._connect() as conn:
+            conn.execute("UPDATE flight_arrivals SET photo_url = ? WHERE registration = ? AND photo_url = ?", (url, reg, bad_url))
+        store_.upsert_airframe_from_fr24(reg.upper(), photo_url=url)
+        return url
+
+    @app.post("/api/feed/photo-refresh")
+    async def feed_photo_refresh(request: Request, user=Depends(_auth_current_user)):
+        body = await request.json()
+        reg = str(body.get("registration") or "").strip()
+        bad = str(body.get("url") or "").strip()
+        cfg_ = _cfg_for_user(user)
+        if not reg or not bad or cfg_ is None:
+            raise HTTPException(400, "registration and url required")
+        return JSONResponse({"url": await asyncio.to_thread(_refresh_dead_photo, cfg_, reg, bad)})
+
     @app.get("/api/feed/weeks")
     async def get_feed_weeks(user=Depends(_auth_current_user)):
         """ISO weeks (Mon–Sun) that contain at least one Feed card, newest first, grouped client-side by year."""
