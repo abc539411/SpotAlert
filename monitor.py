@@ -1136,7 +1136,7 @@ async def _send_filter_match_push(cfg, registration: str, notif_types: list, det
             # Notification Mute List (filter_muted): this recipient never wants a push for this
             # registration — but, unlike the Exclusion List just below, the flight itself stays
             # in their Feed and clustering untouched (those never read filter_muted).
-            if cfg.store.is_notification_muted(registration, filter_owner):
+            if cfg.store.is_notification_muted(registration, push_owner_id):   # a Passenger's mutes are their own
                 continue
             with cfg.store._connect() as conn:
                 # Registration Exclusion List (filter_exclusions) — Feed's own

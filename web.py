@@ -4860,9 +4860,13 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         def _fetch_rows(sql):
             with store._connect() as conn:
                 return [dict(r) for r in conn.execute(sql, (owner,)).fetchall()]
+        def _fetch_muted():            # the one filter a Passenger owns: their notification mutes are personal, not the Controller's
+            with store._connect() as conn:
+                return [dict(r) for r in conn.execute(
+                    "SELECT id, registration, description FROM filter_muted WHERE owner_user_id = ? ORDER BY id", (_owner_for(user),)).fetchall()]
         return JSONResponse({
             "filter_exclusions":  _fetch_rows("SELECT id, registration, description FROM filter_exclusions WHERE owner_user_id = ? ORDER BY id"),
-            "filter_muted":  _fetch_rows("SELECT id, registration, description FROM filter_muted WHERE owner_user_id = ? ORDER BY id"),
+            "filter_muted":  _fetch_muted(),
             "filter_regos":  _fetch_rows("SELECT id, registration, description FROM filter_regos WHERE owner_user_id = ? ORDER BY id"),
             "filter_types":  _fetch_rows("SELECT id, airline, aircraft_type FROM filter_types WHERE owner_user_id = ? ORDER BY id"),
             "filter_airlines": _fetch_rows("SELECT id, icao_code, entry_type, name FROM filter_airlines WHERE owner_user_id = ? ORDER BY id"),
@@ -4887,20 +4891,20 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
     # Notification Mute List — a registration that never triggers a push notification for this
     # owner, but is otherwise unaffected (Feed, clustering, Spotting all ignore this table).
     @app.post("/api/filters/mute")
-    async def add_muted(request: Request, user=Depends(_auth_require_role("controller", "pilot"))):
+    async def add_muted(request: Request, user=Depends(_auth_current_user)):      # every role: a Passenger mutes into their own list
         body = await request.json()
         store = _cfg_for_user(user).store
         store.add_muted(body["registration"], body.get("description", ""), _owner_for(user))
         return JSONResponse({"ok": True})
 
     @app.delete("/api/filters/mute/{registration}")
-    async def delete_muted(registration: str, user=Depends(_auth_require_role("controller", "pilot"))):
+    async def delete_muted(registration: str, user=Depends(_auth_current_user)):
         store = _cfg_for_user(user).store
         with store._connect() as conn:
             conn.execute("DELETE FROM filter_muted WHERE registration = ? AND owner_user_id = ?", (registration.strip().upper(), _owner_for(user)))
         return JSONResponse({"ok": True})
 
-    # ── Board (every role; hiding is personal to each user, one-off "Manual" flights are Controller + Pilot) ─────────────────────────────────────────
+    # ── Board (every role; hiding and one-off "Manual" flights are Controller + Pilot — Passengers follow the Controller) ─────────────────────────────────────────
     # Upcoming arrivals of "regular" flight numbers (>= 2 sightings AND have produced a Feed card),
     # for the airport-local today + tomorrow. Rows are written by monitor.run_check Step 6b from
     # the same live-board fetch the Feed pipeline uses, so coverage is exactly as deep as the Feed's
@@ -5055,7 +5059,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
 
         roster, excluded_cards = _board_roster(cfg_, user)
         spotted_days = _spotted_dates(user, cfg_)
-        hidden = set(store_.get_board_hidden(_owner_for(user)))      # own list for everyone — a Passenger's hiding never touches the Controller's
+        hidden = set(store_.get_board_hidden(_owner_id(user)))      # Passengers follow the Controller's list; Pilots have their own
         pinned_cards = store_.get_pinned_cards((d0 + _dtm.timedelta(days=_lo_o - 1)).isoformat())
         rows = [r for r in store_.get_board_rows(starts[_lo_o], starts[_hi_o + 1]) if r["flight_number"] in roster]
 
@@ -5498,7 +5502,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         return JSONResponse({"ok": True})
 
     @app.post("/api/board/hidden")
-    async def add_board_hidden(request: Request, user=Depends(_auth_current_user)):
+    async def add_board_hidden(request: Request, user=Depends(_auth_require_role("controller", "pilot"))):
         body = await request.json()
         fn = str(body.get("flight_number") or "").strip()
         if not fn:
@@ -5507,7 +5511,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         return JSONResponse({"ok": True})
 
     @app.post("/api/board/hidden/batch")
-    async def batch_board_hidden(request: Request, user=Depends(_auth_current_user)):
+    async def batch_board_hidden(request: Request, user=Depends(_auth_require_role("controller", "pilot"))):
         """Board edit mode: hide and/or unhide many flight numbers in one call."""
         body = await request.json()
         store_ = _cfg_for_user(user).store
@@ -5521,7 +5525,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         return JSONResponse({"ok": True, "hidden": len(hide), "unhidden": len(unhide)})
 
     @app.delete("/api/board/hidden/{flight_number}")
-    async def remove_board_hidden(flight_number: str, user=Depends(_auth_current_user)):
+    async def remove_board_hidden(flight_number: str, user=Depends(_auth_require_role("controller", "pilot"))):
         _cfg_for_user(user).store.remove_board_hidden(flight_number, _owner_for(user))
         return JSONResponse({"ok": True})
 
