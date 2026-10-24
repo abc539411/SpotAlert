@@ -4134,7 +4134,22 @@ function renderBoard() {
       const nowTs = Date.now() / 1000;
       const row = todayDay.rows.find(r => r.eff_ts >= nowTs) || todayDay.rows[todayDay.rows.length - 1];
       const el = todayCard.querySelector(`.bd-row[data-key="${CSS.escape(_bdKey(row))}"]`), rows = todayCard.querySelector('.bd-rows');
-      if (el && rows) rows.scrollTop = Math.max(0, el.offsetTop - rows.clientHeight * 0.25);
+      if (el && rows) {
+        // Clamped to the real scroll range, and re-applied once the layout has settled: on iPhone the card can still be
+        // growing to its final height when this first runs, which left the list scrolled past its end (blank space under
+        // the last flight). Stops as soon as the user touches the list.
+        let touched = false;
+        ['touchstart', 'wheel', 'mousedown'].forEach(ev => rows.addEventListener(ev, () => { touched = true; }, { passive: true, once: true }));
+        const place = () => {
+          if (touched || !rows.isConnected) return;
+          const max = Math.max(0, rows.scrollHeight - rows.clientHeight);
+          rows.scrollTop = Math.max(0, Math.min(max, el.offsetTop - rows.clientHeight * 0.25));
+        };
+        place();
+        requestAnimationFrame(() => requestAnimationFrame(place));
+        setTimeout(place, 400);
+        setTimeout(place, 1200);
+      }
     }
   }
   if (_lang === 'zh') {
