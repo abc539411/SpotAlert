@@ -356,6 +356,8 @@ const UI_ZH = {
   "Waiting for this airport's first check — tap Refresh to run one now.": '正在等待该机场的首次检查——点击刷新立即检查。',
   'Could not load the Board.': '无法加载看板。',
   'Not assigned yet': '尚未分配机号', 'No regular flights to show.': '暂无需要关注的常规航班。',
+  'Feed card': '动态卡片', 'Excluded': '已排除', 'Has a card in Feed': '动态中已有卡片',
+  'Would have a Feed card, but the aircraft is on the Exclusion List': '本应有动态卡片，但该飞机在排除列表中',
   'Not scheduled': '未排班', 'Not on the schedule yet': '尚未出现在时刻表', 'Last card': '上次卡片',
   'Updated': '更新于', 'Data through': '数据截至', 'just now': '刚刚',
   'Hidden': '已隐藏', 'Unhide': '取消隐藏', 'Hide': '隐藏', 'hidden': '已隐藏', 'unhidden': '已取消隐藏',
@@ -1762,6 +1764,13 @@ const _REG_PREFIXES = [
   ['YR-','RO'],['YL-','LV'],['YA-','AF'],
   ['5N-','NG'],['5Y-','KE'],
   ['7T-','DZ'],['XU-','KH'],
+  // More common national prefixes (Canada was missing entirely, e.g. C-FIUA showed no flag)
+  ['C-','CA'],['HB-','CH'],['I-','IT'],['OO-','BE'],
+  ['PP-','BR'],['PR-','BR'],['PT-','BR'],['PS-','BR'],['PU-','BR'],
+  ['XA-','MX'],['XB-','MX'],['XC-','MX'],['LV-','AR'],['LQ-','AR'],['HK-','CO'],['OB-','PE'],['HP-','PA'],
+  ['TF-','IS'],['A4O','OM'],['9K-','KW'],['9A-','HR'],['S5-','SI'],['YU-','RS'],['EW-','BY'],['EK-','AM'],
+  ['4L-','GE'],['JU-','MN'],['XY-','MM'],['XZ-','MM'],['8Q-','MV'],['A5-','BT'],['5H-','TZ'],['5X-','UG'],
+  ['9J-','ZM'],['YK-','SY'],['YI-','IQ'],['3B-','MU'],['EX-','KG'],
 ];
 
 // ISO-3166 country name -> alpha-2 code, for military cards where the
@@ -3103,26 +3112,41 @@ async function refreshBoard() {
   }
 }
 
+// Row accent = the card's type colour (same palette as the Feed's .chip-* chips). First match in the same
+// priority order the filters run in; r,g,b for use as `rgba(var(--bd-rgb), a)`.
+const _BD_TYPE_RGB = { 'chip-military': '248,113,113', 'chip-livery': '59,130,246', 'chip-rego': '34,197,94',
+                       'chip-type': '168,85,247', 'chip-airline': '239,68,68', 'chip-rare': '245,158,11' };
+const _BD_TYPE_ORDER = ['Military', 'Special Livery', 'Watchlist Registration', 'Watchlist Aircraft Type',
+                        'Watchlist Airline', 'Watchlist Operator', 'Rare Plane/Airline'];
+function _bdAccentRgb(types) {
+  const t = _BD_TYPE_ORDER.find(x => (types || []).includes(x)) || (types || [])[0];
+  return _BD_TYPE_RGB[chipClass(t)] || '120,120,120';
+}
+
 function _bdRow(r, isMobile) {
   const fn = esc(r.flight_number);
   const late = r.estimated_ts && Math.abs(r.estimated_ts - r.scheduled_ts) >= 600;
   const time = `${esc(fmtTs(r.eff_ts))}${late ? `<small>${esc(fmtTs(r.scheduled_ts))}</small>` : ''}`;
   const originLabel = isMobile ? (r.origin_iata || '') : (r.origin_city || r.origin_name || r.origin_iata || '');
   const origin = originLabel
-    ? `${r.origin_iata ? _flag(_airportCountry(r.origin_iata), { h: 11 }) : ''}${esc(originLabel)}` : '';
+    ? `${r.origin_iata ? _flag(r.origin_country_code || _airportCountry(r.origin_iata), { h: 11 }) : ''}${esc(originLabel)}` : '';
   const airline = r.airline_name
     ? `<span data-ext-name="${esc(r.airline_name)}">${esc(tExternalName(r.airline_name))}</span>` : '';
   const sub = [airline, origin].filter(Boolean).join(' · ');
   const ac = r.registration
     ? `${_flag(_regoCountryCode(r.registration), { h: 11 })}<a href="${_fr24AircraftUrl(r.registration)}" target="_blank" rel="noopener">${esc(r.registration)}</a>` +
-      `${r.aircraft_type ? `<div class="ty">${esc(r.aircraft_type)}</div>` : ''}`
+      `${r.aircraft_type ? `<div class="ty">${esc(r.aircraft_type)}</div>` : ''}` +
+      `${r.kind === 'excluded' ? `<div class="bd-excl-tag">${esc(tt('Excluded'))}</div>` : ''}`
     : `<span class="bd-na">${esc(tt('Not assigned yet'))}</span>${r.aircraft_type ? `<div class="ty">${esc(r.aircraft_type)}</div>` : ''}`;
-  const pill = (r.status && r.status !== 'Scheduled' && r.status !== 'N/A') ? ` ${_statusPillInline(r.status)}` : '';
-  const done = (r.status === 'Arrived' || r.status === 'Cancelled' || r.status === 'Diverted' || r.status === 'Unlisted') ? ' bd-row-done' : '';
-  return `<div class="bd-row${done}">
+  const kindCls = r.kind === 'feed' ? ' bd-row-feed' : r.kind === 'excluded' ? ' bd-row-excl' : '';
+  const kindTip = r.kind === 'feed' ? tt('Has a card in Feed') : r.kind === 'excluded' ? tt('Would have a Feed card, but the aircraft is on the Exclusion List') : '';
+  const rgb = r.kind ? _bdAccentRgb(r.card_types) : '';
+  const chips = (r.kind && (r.card_types || []).length)
+    ? `<span class="bd-chips">${r.card_types.map(t => `<span class="chip ${chipClass(t)}">${esc(chipLabel(t))}</span>`).join('')}</span>` : '';
+  return `<div class="bd-row${kindCls}"${kindTip ? ` title="${esc(kindTip)}"` : ''}${rgb ? ` style="--bd-rgb:${rgb}"` : ''}>
       <div class="bd-time">${time}</div>
       <div class="bd-main">
-        <a class="bd-fn" href="${_fr24FlightUrl(r.flight_number)}" target="_blank" rel="noopener">${_srchLogoWithFallback(r.airline_icao, r.airline_name, 16, '')}${fn}</a>${pill}
+        <a class="bd-fn" href="${_fr24FlightUrl(r.flight_number)}" target="_blank" rel="noopener">${_srchLogoWithFallback(r.airline_icao, r.airline_name, 16, '')}${fn}</a>${chips}
         <div class="bd-sub">${sub}</div>
       </div>
       <div class="bd-ac">${ac}</div>
@@ -3137,7 +3161,7 @@ function _bdRow(r, isMobile) {
 function _bdAbsentRow(a, isMobile) {
   const fn = esc(a.flight_number);
   const originLabel = isMobile ? (a.origin_iata || '') : (a.origin_city || a.origin_iata || '');
-  const origin = originLabel ? `${a.origin_iata ? _flag(_airportCountry(a.origin_iata), { h: 11 }) : ''}${esc(originLabel)}` : '';
+  const origin = originLabel ? `${a.origin_iata ? _flag(a.origin_country_code || _airportCountry(a.origin_iata), { h: 11 }) : ''}${esc(originLabel)}` : '';
   const airline = a.airline_name ? `<span data-ext-name="${esc(a.airline_name)}">${esc(tExternalName(a.airline_name))}</span>` : '';
   const sub = [airline, origin].filter(Boolean).join(' · ');
   const last = a.last_trigger_ts

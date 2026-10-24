@@ -683,7 +683,18 @@
     .bd-hide svg { width: 14px; height: 14px; }
     .bd-empty { padding: 26px 16px; text-align: center; color: var(--dim); font-size: 12px; }
     .bd-group-hd { padding: 7px 14px; font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--dim); background: var(--surface2); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 1; }
-    .bd-row-done .bd-time, .bd-row-done .bd-fn { opacity: .55; }
+    /* Row colour = the accent of the card type it has in Feed (same palette as the .chip-* type chips:
+       livery blue, rare amber, rego green, type purple, airline/military red). --bd-rgb is set per row by app.js.
+       Solid bar = a visible Feed card; dashed bar + lighter tint = it WOULD have a card but the aircraft is on the Exclusion List. */
+    .bd-row-feed { background: rgba(var(--bd-rgb), 0.15); box-shadow: inset 3px 0 0 rgb(var(--bd-rgb)); }
+    .bd-row-excl {
+      background-image: linear-gradient(rgba(var(--bd-rgb), 0.07), rgba(var(--bd-rgb), 0.07)),
+                        repeating-linear-gradient(to bottom, rgb(var(--bd-rgb)) 0 6px, transparent 6px 10px);
+      background-size: 100% 100%, 3px 100%; background-repeat: no-repeat; background-position: 0 0, 0 0;
+    }
+    .bd-excl-tag { color: var(--dim); font-size: 10px; text-transform: uppercase; letter-spacing: .05em; }
+    .bd-chips { display: inline-flex; gap: 4px; margin-left: 6px; vertical-align: middle; }
+    .bd-chips .chip { margin: 0; }
     .bd-row-absent { padding-top: 6px; padding-bottom: 6px; }
     .bd-row-absent .bd-time { color: var(--dim); font-weight: 500; }
     .bd-row-absent .bd-fn { font-weight: 600; color: var(--dim); }
