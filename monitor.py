@@ -2506,7 +2506,7 @@ async def run_check(context: ContextTypes.DEFAULT_TYPE) -> None:
                 _fe_rows = _dbc.execute(f"""
                     SELECT fe.registration, fe.flight_number, fe.arrival_ts,
                            fe.notif_types, fe.detail, fe.extra_info, fe.airline_icao,
-                           fe.origin_iata, fe.current_status, fe.arr_label, fe.aircraft_type,
+                           fe.origin_iata, fe.current_status, fe.arr_label, fe.aircraft_type, fe.prev_equipment,
                            fd.dep_flight, fd.dep_ts, fd.dep_dest_iata, fd.dep_dest_name,
                            fd.dep_confidence, fd.dep_label,
                            fe.photo_url AS fe_photo_url, a.photo_url AS af_photo_url, a.manufacturer
@@ -2595,6 +2595,9 @@ async def run_check(context: ContextTypes.DEFAULT_TYPE) -> None:
                 "extra_info":    _fr["extra_info"] or "",
                 "airline_icao":  _fr["airline_icao"] or "",
                 "aircraft_type": _fr["aircraft_type"] or "",
+                # Rare Plane cards: what this flight number flew before (frozen at creation; tracker for older rows)
+                "prev_equipment": (_fr["prev_equipment"] or (cfg.store.get_prev_equipment(_fr["flight_number"], _fr["aircraft_type"])
+                                   if "Rare Plane/Airline" in _nt and _fr["aircraft_type"] else "")) or "",
                 # This day's own frozen-at-creation photo first (see
                 # store.record_filter_match_ex — backfill-only, never
                 # overwritten once set), falling back to the shared,

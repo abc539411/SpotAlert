@@ -5035,7 +5035,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                     chunk = cand[i:i + 400]
                     frows += conn.execute(
                         f"SELECT flight_number, registration, arrival_ts, notif_types, extra_info, airline_icao, "
-                        f"aircraft_type, rare_absence_days, origin_iata, origin_name, detail FROM flight_arrivals "
+                        f"aircraft_type, rare_absence_days, prev_equipment, origin_iata, origin_name, detail FROM flight_arrivals "
                         f"WHERE flight_number IN ({','.join('?' * len(chunk))}) "
                         f"AND COALESCE(current_status,'') NOT IN ('Cancelled','Swapped')",
                         tuple(chunk)).fetchall()
@@ -5070,10 +5070,10 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                 if fr["registration"] in excl_regs:
                     # Would have been a card, but Feed hides it. Still evidence that this flight number is one
                     # worth watching (and what lets the Board colour its row) — just not a visible Feed card.
-                    excluded_cards.setdefault(fr["flight_number"], []).append((fr["arrival_ts"], fr["registration"], nt, fr["extra_info"], fr["aircraft_type"]))
+                    excluded_cards.setdefault(fr["flight_number"], []).append((fr["arrival_ts"], fr["registration"], nt, fr["extra_info"], fr["aircraft_type"], fr["prev_equipment"]))
                 else:
                     e["arrival_ts"].append(fr["arrival_ts"])
-                    e["cards"].append((fr["arrival_ts"], fr["registration"], nt, fr["extra_info"], fr["aircraft_type"]))
+                    e["cards"].append((fr["arrival_ts"], fr["registration"], nt, fr["extra_info"], fr["aircraft_type"], fr["prev_equipment"]))
         for _fn, _e in roster.items():
             _e["hist"] = hist.get(_fn) or {"ts": []}
         for _fn in excluded_cards:                      # an excluded-only flight number still qualifies
@@ -5222,6 +5222,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
             # aircraft is on the Exclusion List (Feed hides it). Matched on flight number + registration + time.
             near = lambda cards: next((c for c in cards if c[1] == reg and abs(c[0] - r["scheduled_ts"]) <= 12 * 3600), None)
             kind, card_types, extra_info = None, [], ""
+            prev_eq = ""
             if reg:
                 hit = near(roster[fn]["cards"])
                 if hit:
@@ -5230,6 +5231,8 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                     hit = near(excluded_cards.get(fn, []))
                     if hit:
                         kind, card_types, extra_info = "excluded", hit[2], hit[3] or ""
+                if hit and "Rare Plane/Airline" in (hit[2] or []):       # what this flight number flew before (frozen on the card; tracker for older ones)
+                    prev_eq = (hit[5] if len(hit) > 5 else None) or store_.get_prev_equipment(fn, hit[4] or r["aircraft_type"]) or ""
             # FR24 attaches a bogus airline to some flights that have no aircraft yet (e.g. JL51 → "Jet Linx
             # Aviation" instead of Japan Airlines). Until an aircraft is assigned, trust the airline this flight
             # number has historically flown under.
@@ -5268,7 +5271,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                 "status": r["status_text"], "hidden": is_hidden, "fleet_missing": user.role != "passenger" and bool(rg_) and rg_ in fleet_missing,
                 "excluded_rego": bool(rg_) and rg_ in excl_row_regs,
                 "kind": kind, "card_types": card_types,
-                "extra_info": extra_info,
+                "extra_info": extra_info, "prev_equipment": prev_eq,
             })
         # Possible-aircraft lines show "days since this aircraft was last seen at the airport" (any flight, from
         # rego_sightings) and total appearances (flight_arrivals, any flight number), not "since it last operated this
