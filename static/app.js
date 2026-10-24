@@ -860,9 +860,9 @@ function _applyRoleUI(role) {
   // both are catalog-backed views a read-only viewer has no use for.
   const collectionTab = document.querySelector('.nav-tab[data-tab="collection"]');
   if (collectionTab) collectionTab.classList.toggle('hidden', isPassenger);
-  // Board is a Controller-only tab (server-side routes are controller-gated too).
+  // Board is open to every role (hide / one-off editing is Controller + Pilot only, see _bdCanEdit).
   const boardTab = document.querySelector('.nav-tab[data-tab="board"]');
-  if (boardTab) boardTab.classList.toggle('hidden', !isController);
+  if (boardTab) boardTab.classList.remove('hidden');
   const catalogueSubtab = document.querySelector('.srch-subtab[data-srch-subtab="catalog"]');
   if (catalogueSubtab) catalogueSubtab.classList.toggle('hidden', isPassenger);
 
@@ -3191,7 +3191,7 @@ function logoTap() {
   let startY = null, startX = 0, pull = 0, locked = false, busy = false, H = 0;
   const feed = () => document.getElementById('tab-history');
   const board = () => document.getElementById('tab-board');
-  const ready = () => !busy && window.innerWidth < 768 && typeof _appRole !== 'undefined' && _appRole === 'controller' && activeTab === 'history';
+  const ready = () => !busy && window.innerWidth < 768 && typeof _appRole !== 'undefined' && !!_appRole && activeTab === 'history';
 
   // The Board slides in over the Feed: a fixed layer between the header and the bottom bar, parked just above the
   // header (translateY(-H)) and dragged down with the finger.
@@ -3285,7 +3285,7 @@ function switchTab(name) {
   _hideRefreshPill();
   if (name !== 'board' && _bdEdit) { _bdEdit = false; _bdSel.clear(); renderBoard(); }
   const eb = $('btn-edit-board');
-  if (eb) { eb.classList.toggle('hidden', name !== 'board' || _appRole !== 'controller'); if (name === 'board') _bdSyncEditBar(); }
+  if (eb) { eb.classList.toggle('hidden', name !== 'board' || !_bdCanEdit()); if (name === 'board') _bdSyncEditBar(); }
   TABS.forEach(t => {
     $('tab-' + t).classList.toggle('hidden', t !== name);
   });
@@ -3396,6 +3396,7 @@ function _olderCutoffDate() {          // first date NOT in the default view (7 
 // flight numbers (seen 2+ times) that have produced a Feed card before, with whichever aircraft FR24
 // currently has on them — so the Controller can eyeball what might trigger. Rows are written
 // server-side by the monitor every check (see docs/13-board.md); this just polls while the tab is open.
+function _bdCanEdit() { return !!_appRole; }   // everyone can hide flights (their own list); one-offs are Controller + Pilot (server-side can_pin)
 let _bdData = null;
 let _bdTimer = null;
 let _bdPositioned = false;
@@ -3538,7 +3539,7 @@ async function bdOpen(rowEl) {
     jobs.push(api('/board/aircraft/' + encodeURIComponent(r.registration))
       .then(d => { _bdAc[r.registration] = d; }).catch(() => { _bdAc[r.registration] = 'err'; }));
   }
-  if (r.registration && !_bdSp[r.registration]) {
+  if (r.registration && !_bdSp[r.registration] && _appRole !== 'passenger') {   // Lightroom sessions: needs a catalog
     jobs.push(api('/aircraft/' + encodeURIComponent(r.registration))
       .then(d => { _bdSp[r.registration] = d; }).catch(() => { _bdSp[r.registration] = {}; }));
   }
@@ -3620,7 +3621,7 @@ function _bdDetailHtml(r) {
     const model = ac.model || r.aircraft_type || '';
     const typeCode = ac.type_code || r.aircraft_type || '';
     lastSeen = ac.last_seen_ts ? (_fmtLastSeen(ac.last_seen_ts) || '') : '';
-    const sp = _bdSp[r.registration];
+    const sp = _appRole === 'passenger' ? null : _bdSp[r.registration];
     if (sp) {
       const sess = sp.sessions || [];
       // Same section style as Possible aircraft: divider + small caps title, then the Lightroom session pills.

@@ -4900,7 +4900,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
             conn.execute("DELETE FROM filter_muted WHERE registration = ? AND owner_user_id = ?", (registration.strip().upper(), _owner_for(user)))
         return JSONResponse({"ok": True})
 
-    # ── Board (Controller-only tab) ─────────────────────────────────────────
+    # ── Board (every role; hiding is personal to each user, one-off "Manual" flights are Controller + Pilot) ─────────────────────────────────────────
     # Upcoming arrivals of "regular" flight numbers (>= 2 sightings AND have produced a Feed card),
     # for the airport-local today + tomorrow. Rows are written by monitor.run_check Step 6b from
     # the same live-board fetch the Feed pipeline uses, so coverage is exactly as deep as the Feed's
@@ -5055,7 +5055,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
 
         roster, excluded_cards = _board_roster(cfg_, user)
         spotted_days = _spotted_dates(user, cfg_)
-        hidden = set(store_.get_board_hidden(_owner_id(user)))
+        hidden = set(store_.get_board_hidden(_owner_for(user)))      # own list for everyone — a Passenger's hiding never touches the Controller's
         pinned_cards = store_.get_pinned_cards((d0 + _dtm.timedelta(days=_lo_o - 1)).isoformat())
         rows = [r for r in store_.get_board_rows(starts[_lo_o], starts[_hi_o + 1]) if r["flight_number"] in roster]
 
@@ -5095,6 +5095,8 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                             _spot_flag[(f_.get("registration", ""), (f_.get("extra_info") or "").strip().lower())] = int(rs_.split("_")[1] or 0)
             except Exception:
                 pass
+        if user.role != "controller":
+            _spot_flag.clear()                  # those flags come from the Controller's Lightroom catalog — not theirs
         for r in rows:
             fn = r["flight_number"]
             eff = r["estimated_ts"] or r["scheduled_ts"]
@@ -5145,7 +5147,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
             by_off[off]["rows"].append({
                 "past_triggers": past,
                 "pinned": is_pinned,
-                "can_pin": bool(reg) and (kind is None or is_pinned),
+                "can_pin": user.role in ("controller", "pilot") and bool(reg) and (kind is None or is_pinned),
                 "flight_number": fn, "scheduled_ts": r["scheduled_ts"], "estimated_ts": r["estimated_ts"],
                 "eff_ts": eff, "registration": r["registration"], "aircraft_type": r["aircraft_type"],
                 "airline_name": al_name, "airline_icao": al_icao,
@@ -5276,7 +5278,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         }
 
     @app.get("/api/board")
-    async def get_board(back: int = 7, month: str = "", user=Depends(_auth_require_role("controller"))):
+    async def get_board(back: int = 7, month: str = "", user=Depends(_auth_current_user)):
         return JSONResponse(await asyncio.to_thread(_build_board_payload, _cfg_for_user(user), user, back, month))
 
     # Expanded Board row: photo + aircraft facts for ONE registration. FR24's aircraft lookup is a live call
@@ -5352,7 +5354,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         return out
 
     @app.get("/api/board/aircraft/{registration}")
-    async def get_board_aircraft(registration: str, user=Depends(_auth_require_role("controller"))):
+    async def get_board_aircraft(registration: str, user=Depends(_auth_current_user)):
         return JSONResponse(await asyncio.to_thread(_board_aircraft_info, _cfg_for_user(user), registration))
 
     # ── One-off "add to Feed + Spotting" from the Board ───────────────────────────────────────────────────
@@ -5447,7 +5449,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         return sorted({_dtm.datetime.fromtimestamp(t, tz).date().isoformat() for t in tss if t})
 
     @app.post("/api/board/pin")
-    async def add_board_pin(request: Request, user=Depends(_auth_require_role("controller"))):
+    async def add_board_pin(request: Request, user=Depends(_auth_require_role("controller", "pilot"))):
         import datetime as _dtm, re as _re4, pytz
         body = await request.json()
         fn = str(body.get("flight_number") or "").strip()
@@ -5480,7 +5482,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         return JSONResponse({"ok": True})
 
     @app.delete("/api/board/pin/{flight_number}/{scheduled_ts}")
-    async def remove_board_pin(flight_number: str, scheduled_ts: int, user=Depends(_auth_require_role("controller"))):
+    async def remove_board_pin(flight_number: str, scheduled_ts: int, user=Depends(_auth_require_role("controller", "pilot"))):
         cfg_ = _cfg_for_user(user)
         store_ = cfg_.store
         for card in store_.get_pinned_cards(""):
@@ -5492,7 +5494,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         return JSONResponse({"ok": True})
 
     @app.post("/api/board/hidden")
-    async def add_board_hidden(request: Request, user=Depends(_auth_require_role("controller"))):
+    async def add_board_hidden(request: Request, user=Depends(_auth_current_user)):
         body = await request.json()
         fn = str(body.get("flight_number") or "").strip()
         if not fn:
@@ -5501,7 +5503,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         return JSONResponse({"ok": True})
 
     @app.post("/api/board/hidden/batch")
-    async def batch_board_hidden(request: Request, user=Depends(_auth_require_role("controller"))):
+    async def batch_board_hidden(request: Request, user=Depends(_auth_current_user)):
         """Board edit mode: hide and/or unhide many flight numbers in one call."""
         body = await request.json()
         store_ = _cfg_for_user(user).store
@@ -5515,7 +5517,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         return JSONResponse({"ok": True, "hidden": len(hide), "unhidden": len(unhide)})
 
     @app.delete("/api/board/hidden/{flight_number}")
-    async def remove_board_hidden(flight_number: str, user=Depends(_auth_require_role("controller"))):
+    async def remove_board_hidden(flight_number: str, user=Depends(_auth_current_user)):
         _cfg_for_user(user).store.remove_board_hidden(flight_number, _owner_for(user))
         return JSONResponse({"ok": True})
 

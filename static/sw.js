@@ -1,4 +1,4 @@
-const CACHE        = 'spotalert-v604';
+const CACHE        = 'spotalert-v605';
 const LOGOS_CACHE  = 'airline-logos-v3';  // persistent — never cleared on SW update
 const PRECACHE = ['/', '/static/app.js', '/manifest.json'];
 
@@ -39,8 +39,16 @@ self.addEventListener('fetch', e => {
 
   if (e.request.url.includes('/api/')) return;
 
+  // App shell (page, script, styles): network-first so the HTML and app.js always come from the same release — a
+  // cache-first page next to a freshly fetched script rendered new markup with old CSS. The cache is the offline fallback.
   e.respondWith(
-    caches.match(e.request).then(cached => cached || fetch(e.request))
+    fetch(e.request).then(resp => {
+      if (resp && resp.status === 200 && e.request.method === 'GET' && new URL(e.request.url).origin === self.location.origin) {
+        const copy = resp.clone();
+        caches.open(CACHE).then(c => c.put(e.request, copy)).catch(() => {});
+      }
+      return resp;
+    }).catch(() => caches.match(e.request, { ignoreSearch: true }))
   );
 });
 
