@@ -703,7 +703,8 @@
     .bd-chips { display: inline-flex; gap: 4px; margin-left: 6px; vertical-align: middle; }
     .bd-chips .chip { margin: 0; }
     /* Roster flight not on FR24's board yet: greyed out and not expandable (nothing to show). */
-    .bd-row.bd-row-pending { opacity: .25; cursor: default; }
+    .bd-row.bd-row-pending { cursor: default; }
+    .bd-row.bd-row-pending > * { opacity: .25; }   /* fade the content, not the row, so the divider line stays put */
     .bd-row.bd-row-pending .bd-fn img { filter: grayscale(1); }
     @media (max-width: 767px) {
       .bd-top { flex-wrap: wrap; }
