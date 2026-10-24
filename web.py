@@ -158,6 +158,52 @@ def _push_owner_id(user) -> str:
 # list stays empty (never falls back to the Controller's again).
 
 
+PIN_NOTIF_TYPE = "Added"     # chip shown on a Spotting card that was added by hand from the Board
+
+
+def spotting_pin_events(store, airport_iata: str, pins: list, dep_threshold: int = 0) -> list:
+    """Turn Board 'add to Spotting' pins into flat timeline events (the same shape monitor.py builds from
+    flight_arrivals rows): an arrival event at the pin's arrival time plus, when the airport's departure
+    patterns predict the aircraft's next flight, a departure event. No Feed card is involved."""
+    events: list = []
+    for pn in pins:
+        arr_ts = pn["arrival_ts"]
+        dep_fn = dep_ts = dest_iata = dest_name = dep_label = conf = None
+        try:
+            pred = store.get_predicted_departure(pn["flight_number"], airport_iata, dep_threshold)
+            if pred:
+                dep_fn, conf = pred[0], round(pred[1])
+                info = store.get_predicted_dep_info(dep_fn, airport_iata) or {}
+                dest_iata, dest_name = info.get("dest_iata"), info.get("dest_name")
+                if info.get("estimated_dep_ts"):
+                    dep_ts, dep_label = info["estimated_dep_ts"], "Estimated"
+                elif info.get("scheduled_dep_ts"):
+                    dep_ts, dep_label = info["scheduled_dep_ts"], "Scheduled"
+                elif info.get("turnaround_secs"):
+                    dep_ts, dep_label = arr_ts + info["turnaround_secs"], "Predicted"
+                if dep_ts and not (arr_ts <= dep_ts <= arr_ts + 36 * 3600):
+                    dep_ts = None
+        except Exception:
+            dep_ts = None
+        airline = pn.get("airline_name") or ""
+        common = {
+            "registration": pn["registration"], "flight_number": pn["flight_number"],
+            "notif_types": [PIN_NOTIF_TYPE],
+            "detail": f"{airline} ({pn.get('aircraft_type') or ''})" if airline else "",
+            "extra_info": "", "airline_icao": pn.get("airline_icao") or "",
+            "aircraft_type": pn.get("aircraft_type") or "", "photo_url": pn.get("photo_url") or "",
+            "manufacturer": pn.get("manufacturer") or "", "origin_iata": pn.get("origin_iata"),
+            "dep_flight": dep_fn, "dep_ts": dep_ts, "dep_dest_iata": dest_iata, "dep_dest_name": dest_name,
+            "dep_confidence": conf, "dep_label": dep_label,
+            "current_status": pn.get("status_text") if pn.get("status_text") not in ("Unlisted", None) else None,
+            "arrival_ts": arr_ts, "arr_label": None,
+        }
+        events.append({**common, "ts": arr_ts, "side": "arrival"})
+        if dep_ts:
+            events.append({**common, "ts": dep_ts, "side": "departure"})
+    return events
+
+
 def _repatch_spotted_gate(clusters: list, catalog, max_spotted: int, airport_iata: str) -> None:
     """The background clustering pass (monitor.py) bakes 'qualifying' into
     clusters_json using the CONTROLLER's own catalog — the only "ground
@@ -4825,6 +4871,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
 
         roster, excluded_cards = _board_roster(cfg_, user)
         hidden = set(store_.get_board_hidden(_owner_id(user)))
+        pinned_keys = {(p_["flight_number"], p_["scheduled_ts"]) for p_ in store_.get_spotting_pins("")}
         rows = [r for r in store_.get_board_rows(starts[-7], starts[4]) if r["flight_number"] in roster]
 
         iatas = {r["origin_iata"] for r in rows if r["origin_iata"]} |                 {e["hist"].get("origin_iata") for e in roster.values() if e.get("hist", {}).get("origin_iata")}
@@ -4910,6 +4957,8 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                             and _same_aircraft_type(e_["aircraft_type"], r["aircraft_type"]))]
             by_off[off]["rows"].append({
                 "past_triggers": past,
+                "pinned": (fn, r["scheduled_ts"]) in pinned_keys,
+                "can_pin": bool(reg) and (kind is None or (fn, r["scheduled_ts"]) in pinned_keys),
                 "flight_number": fn, "scheduled_ts": r["scheduled_ts"], "estimated_ts": r["estimated_ts"],
                 "eff_ts": eff, "registration": r["registration"], "aircraft_type": r["aircraft_type"],
                 "airline_name": al_name, "airline_icao": al_icao,
@@ -5100,6 +5149,124 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
     @app.get("/api/board/aircraft/{registration}")
     async def get_board_aircraft(registration: str, user=Depends(_auth_require_role("controller"))):
         return JSONResponse(await asyncio.to_thread(_board_aircraft_info, _cfg_for_user(user), registration))
+
+    # ── One-off "add to the Spotting timeline" from the Board ─────────────────────────────────────────────
+    def _pin_rebuild_days(cfg_, user, dates: list) -> None:
+        """Re-cluster the given airport-local dates in the Spotting timeline cache right now, so a pin / unpin
+        shows up without waiting for the monitor's next check (which rebuilds the same way, pins included)."""
+        import datetime as _dtm, json as _json, pytz
+        store_ = cfg_.store
+        tz = pytz.timezone(cfg_.airport_tz)
+
+        def _ci(key, attr, default):
+            v = store_.load_setting(key)
+            if v:
+                try:
+                    return int(v)
+                except (TypeError, ValueError):
+                    pass
+            return int(getattr(cfg_, attr, default) or default)
+        light_gate = store_.load_setting("SPOT_LIGHTING_GATE")
+        algo = dict(
+            max_gap_secs=_ci("SPOT_MAX_GAP_HOURS", "spot_rec_max_gap_hours", 3) * 3600,
+            notable_lull_secs=_ci("SPOT_LULL_MINS", "spot_rec_notable_lull_mins", 60) * 60,
+            max_spotted=_ci("SPOT_MAX_SPOTTED", "spot_rec_max_spotted_times", 0),
+            dep_threshold=_ci("DEPARTURE_PATTERN_THRESHOLD", "departure_pattern_threshold", 80),
+            light_buf_secs=_ci("SPOT_LIGHT_BUFFER_MINS", "spot_rec_light_buffer_mins", 30) * 60,
+            max_lulls=_ci("SPOT_MAX_LULLS", "spot_rec_max_lulls", 2),
+            lighting_gate=(light_gate.lower() == "true") if light_gate else getattr(cfg_, "spot_rec_lighting_gate", True),
+            bad_light_start=store_.load_setting("SPOT_BAD_LIGHT_START") or getattr(cfg_, "spot_rec_bad_light_start", "") or "",
+            bad_light_end=store_.load_setting("SPOT_BAD_LIGHT_END") or getattr(cfg_, "spot_rec_bad_light_end", "") or "",
+        )
+        with store_._connect() as conn:
+            excluded = {r[0] for r in conn.execute("SELECT registration FROM filter_exclusions").fetchall()}
+            wl = {"regos": {r[0] for r in conn.execute("SELECT registration FROM filter_regos WHERE owner_user_id = 'controller'").fetchall()},
+                  "types": {(r[0], r[1]) for r in conn.execute("SELECT airline, aircraft_type FROM filter_types WHERE owner_user_id = 'controller'").fetchall()},
+                  "airline_icaos": {r[0] for r in conn.execute("SELECT icao_code FROM filter_airlines WHERE owner_user_id = 'controller'").fetchall()}}
+        kws = [k.strip().lower() for k in (store_.load_setting("SPECIAL_LIVERY_EXCLUDE_KEYWORDS") or "").split(",") if k.strip()]
+        catalog = app.state.get_user_catalog(user)
+        since = (_dtm.date.fromisoformat(min(dates)) - _dtm.timedelta(days=2)).isoformat()
+        pin_events = spotting_pin_events(store_, cfg_.airport_iata, store_.get_spotting_pins(since), algo["dep_threshold"])
+        cache = store_.get_timeline_cache(dates)
+        for d in dates:
+            row = cache.get(d)
+            if not row:
+                continue                      # day not cached yet — the monitor's first build will include the pins
+            try:
+                events = _json.loads(row["events_json"] or "[]")
+                old_clusters = _json.loads(row["clusters_json"] or "[]")
+                weather = _json.loads(row["weather_json"] or "{}")
+            except Exception:
+                log.warning("Spotting pin rebuild: could not parse cached day %s", d, exc_info=True)
+                continue
+            events = [e for e in events if PIN_NOTIF_TYPE not in (e.get("notif_types") or [])]
+            have = {(e["registration"], e["flight_number"], e["side"]) for e in events}
+            for e in pin_events:
+                if _dtm.datetime.fromtimestamp(e["ts"], tz).date().isoformat() == d \
+                        and (e["registration"], e["flight_number"], e["side"]) not in have:
+                    events.append(e)
+            # "Already photographed" counts: from the Controller's catalog when this process has it, else carried over
+            # from what the cached clusters already decided (reason "spotted_N").
+            carried = {(f.get("registration", ""), (f.get("extra_info") or "").strip().lower()): int(f["reason"].split("_")[1] or 0)
+                       for c in old_clusters for f in c.get("flights", []) if (f.get("reason") or "").startswith("spotted_")}
+            for e in events:
+                liv = (e.get("extra_info") or "").strip().lower()
+                if catalog and algo["max_spotted"]:
+                    try:
+                        n = (catalog.get_livery_session_count_at_airport(e["registration"], cfg_.airport_iata, e["extra_info"])
+                             if liv else catalog.get_session_count_at_airport(e["registration"], cfg_.airport_iata)) or 0
+                    except Exception:
+                        n = 0
+                else:
+                    n = carried.get((e["registration"], liv), 0)
+                e["_spotted"] = n
+            clusters = cluster_day_for_cache(
+                events, weather.get("sunrise_ts", 0), weather.get("sunset_ts", 0), tz,
+                excluded_regs=excluded, exclude_kws=kws, watchlist_sets=wl, **algo)
+            store_.upsert_timeline_cache(
+                d, _json.dumps(clusters), weather_json=row["weather_json"],
+                events_json=_json.dumps([{k: v for k, v in e.items() if k != "_spotted"} for e in events]))
+
+    def _pin_days(cfg_, pin_row: dict) -> list:
+        import datetime as _dtm, pytz
+        tz = pytz.timezone(cfg_.airport_tz)
+        evs = spotting_pin_events(cfg_.store, cfg_.airport_iata, [pin_row])
+        return sorted({_dtm.datetime.fromtimestamp(e["ts"], tz).date().isoformat() for e in evs})
+
+    @app.post("/api/board/pin")
+    async def add_board_pin(request: Request, user=Depends(_auth_require_role("controller"))):
+        import datetime as _dtm, pytz
+        body = await request.json()
+        fn = str(body.get("flight_number") or "").strip()
+        try:
+            sched = int(body.get("scheduled_ts"))
+        except (TypeError, ValueError):
+            raise HTTPException(400, "scheduled_ts required")
+        cfg_ = _cfg_for_user(user)
+        store_ = cfg_.store
+        row = store_.get_board_row(fn, sched)
+        if not row or not row.get("registration"):
+            raise HTTPException(400, "That flight has no aircraft assigned (or has left the board)")
+        af = store_.get_airframe(row["registration"]) or {}
+        eff = row["estimated_ts"] or row["scheduled_ts"]
+        tz = pytz.timezone(cfg_.airport_tz)
+        pin = {"registration": row["registration"], "flight_number": fn, "scheduled_ts": sched, "arrival_ts": eff,
+               "arrival_date": _dtm.datetime.fromtimestamp(eff, tz).date().isoformat(),
+               "aircraft_type": row.get("aircraft_type"), "airline_name": row.get("airline_name"),
+               "airline_icao": row.get("airline_icao"), "origin_iata": row.get("origin_iata"),
+               "status_text": row.get("status_text"), "photo_url": af.get("photo_url"),
+               "manufacturer": af.get("manufacturer"), "added_ts": int(time.time())}
+        store_.add_spotting_pin(pin)
+        await asyncio.to_thread(_pin_rebuild_days, cfg_, user, _pin_days(cfg_, pin))
+        return JSONResponse({"ok": True})
+
+    @app.delete("/api/board/pin/{flight_number}/{scheduled_ts}")
+    async def remove_board_pin(flight_number: str, scheduled_ts: int, user=Depends(_auth_require_role("controller"))):
+        cfg_ = _cfg_for_user(user)
+        gone = cfg_.store.remove_spotting_pin(flight_number, scheduled_ts)
+        if gone:
+            await asyncio.to_thread(_pin_rebuild_days, cfg_, user, _pin_days(cfg_, gone))
+        return JSONResponse({"ok": True})
 
     @app.post("/api/board/hidden")
     async def add_board_hidden(request: Request, user=Depends(_auth_require_role("controller"))):

@@ -2525,11 +2525,17 @@ async def run_check(context: ContextTypes.DEFAULT_TYPE) -> None:
             }
             _old_cache = cfg.store.get_timeline_cache(_date_strs)
 
+            # Board "add to Spotting" pins -> extra timeline events (no Feed card involved).
+            from web import spotting_pin_events as _pin_events_fn
+            _since = (datetime.strptime(_date_strs[0], "%Y-%m-%d") - timedelta(days=2)).strftime("%Y-%m-%d")
+            _pin_events = _pin_events_fn(cfg.store, cfg.airport_iata, cfg.store.get_spotting_pins(_since),
+                                         _algo_settings["dep_thr"])
+
             return (_catalog, _spotted_map, _excluded, _exclude_kws, _algo_settings,
-                    _date_strs, _fe_rows, _controller_watchlist_sets, _old_cache)
+                    _date_strs, _fe_rows, _controller_watchlist_sets, _old_cache, _pin_events)
 
         (_catalog, _spotted_map, _excluded, _exclude_kws, _algo_settings,
-         _date_strs, _fe_rows, _controller_watchlist_sets, _old_cache) = \
+         _date_strs, _fe_rows, _controller_watchlist_sets, _old_cache, _pin_events) = \
             await asyncio.to_thread(_timeline_cache_reads)
 
         # ── CPU-bound work from here on (event building, clustering, JSON
@@ -2625,6 +2631,16 @@ async def run_check(context: ContextTypes.DEFAULT_TYPE) -> None:
                 _events_by_date.setdefault(_dep_date, []).append({
                     **_common, "ts": _dep_ts, "side": "departure",
                 })
+
+        # Pinned flights (Board -> "add to Spotting"): same event shape, skipped when the flight has since
+        # triggered a real Feed card (so it is never listed twice).
+        _have_ev = {(e["registration"], e["flight_number"], e["side"], d)
+                    for d, evs in _events_by_date.items() for e in evs}
+        for _pe in _pin_events:
+            _pd = datetime.fromtimestamp(_pe["ts"], _tz_c).strftime("%Y-%m-%d")
+            if (_pe["registration"], _pe["flight_number"], _pe["side"], _pd) in _have_ev:
+                continue
+            _events_by_date.setdefault(_pd, []).append({**_pe, "_spotted": _get_spotted(_pe["registration"], "")})
 
         for _cd in _cluster_dates:
             await asyncio.sleep(0)  # cooperative yield — see Step 2's comment above

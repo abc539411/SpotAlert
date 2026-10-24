@@ -177,6 +177,27 @@ class SqliteStore:
                 )
             """)
             conn.execute("CREATE TABLE IF NOT EXISTS board_meta (key TEXT PRIMARY KEY, value TEXT)")
+            # One-off "add to the Spotting timeline" pins from the Board: a flight with an aircraft assigned that
+            # never triggered a Feed card. A snapshot of the board row (so it survives the row leaving the board);
+            # the timeline rebuild turns each pin into an arrival (+ predicted departure) event for its day.
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS spotting_pins (
+                    registration  TEXT NOT NULL,
+                    flight_number TEXT NOT NULL,
+                    scheduled_ts  INTEGER NOT NULL,
+                    arrival_ts    INTEGER NOT NULL,
+                    arrival_date  TEXT NOT NULL,
+                    aircraft_type TEXT,
+                    airline_name  TEXT,
+                    airline_icao  TEXT,
+                    origin_iata   TEXT,
+                    status_text   TEXT,
+                    photo_url     TEXT,
+                    manufacturer  TEXT,
+                    added_ts      INTEGER NOT NULL,
+                    PRIMARY KEY (flight_number, scheduled_ts)
+                )
+            """)
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS livery_cooldowns (
                     registration TEXT PRIMARY KEY,
@@ -1142,6 +1163,57 @@ class SqliteStore:
                 (start_ts, end_ts),
             ).fetchall()]
 
+    def get_board_row(self, flight_number: str, scheduled_ts: int) -> Optional[dict]:
+        with self._connect() as conn:
+            r = conn.execute("SELECT * FROM board_flights WHERE flight_number = ? AND scheduled_ts = ?",
+                             (flight_number, int(scheduled_ts))).fetchone()
+        return dict(r) if r else None
+
+    def add_spotting_pin(self, pin: dict) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO spotting_pins (registration, flight_number, scheduled_ts, arrival_ts, arrival_date,
+                    aircraft_type, airline_name, airline_icao, origin_iata, status_text, photo_url, manufacturer, added_ts)
+                VALUES (:registration, :flight_number, :scheduled_ts, :arrival_ts, :arrival_date,
+                    :aircraft_type, :airline_name, :airline_icao, :origin_iata, :status_text, :photo_url, :manufacturer, :added_ts)
+                ON CONFLICT(flight_number, scheduled_ts) DO UPDATE SET
+                    registration = excluded.registration, arrival_ts = excluded.arrival_ts,
+                    arrival_date = excluded.arrival_date, aircraft_type = excluded.aircraft_type,
+                    status_text = excluded.status_text, photo_url = excluded.photo_url,
+                    manufacturer = excluded.manufacturer
+                """, pin)
+
+    def remove_spotting_pin(self, flight_number: str, scheduled_ts: int) -> Optional[dict]:
+        """Delete a pin; returns the deleted row (so the caller knows which days to rebuild)."""
+        with self._connect() as conn:
+            r = conn.execute("SELECT * FROM spotting_pins WHERE flight_number = ? AND scheduled_ts = ?",
+                             (flight_number, int(scheduled_ts))).fetchone()
+            conn.execute("DELETE FROM spotting_pins WHERE flight_number = ? AND scheduled_ts = ?",
+                         (flight_number, int(scheduled_ts)))
+        return dict(r) if r else None
+
+    def get_spotting_pins(self, since_date: str = "") -> list:
+        """Pins whose arrival_date >= since_date (YYYY-MM-DD; '' = all). First re-syncs each pin with its live
+        board row (delay -> new arrival time, aircraft swap -> new registration), as long as the row still exists."""
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE spotting_pins SET
+                  arrival_ts = COALESCE((SELECT COALESCE(b.estimated_ts, b.scheduled_ts) FROM board_flights b
+                                         WHERE b.flight_number = spotting_pins.flight_number
+                                           AND b.scheduled_ts = spotting_pins.scheduled_ts), arrival_ts),
+                  registration = COALESCE((SELECT b.registration FROM board_flights b
+                                           WHERE b.flight_number = spotting_pins.flight_number
+                                             AND b.scheduled_ts = spotting_pins.scheduled_ts
+                                             AND b.registration IS NOT NULL), registration),
+                  status_text = COALESCE((SELECT b.status_text FROM board_flights b
+                                          WHERE b.flight_number = spotting_pins.flight_number
+                                            AND b.scheduled_ts = spotting_pins.scheduled_ts), status_text)
+                """)
+            return [dict(r) for r in conn.execute(
+                "SELECT * FROM spotting_pins WHERE arrival_date >= ? ORDER BY arrival_ts", (since_date,)).fetchall()]
+
     def get_board_meta(self) -> dict:
         with self._connect() as conn:
             return {r["key"]: r["value"] for r in conn.execute("SELECT key, value FROM board_meta").fetchall()}
@@ -1731,6 +1803,7 @@ class SqliteStore:
                 "DELETE FROM timeline_cache WHERE date < ?",
                 (cache_cutoff_date,),
             )
+            conn.execute("DELETE FROM spotting_pins WHERE arrival_date < ?", (cache_cutoff_date,))
 
     # ------------------------------------------------------------------
     # Sighting history (every registration seen in arrivals feed)

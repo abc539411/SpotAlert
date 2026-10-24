@@ -355,7 +355,7 @@ const UI_ZH = {
   'Refresh Board': '刷新看板', 'Checking FR24…': '正在检查 FR24…', 'Board updated': '看板已更新',
   "Waiting for this airport's first check — tap Refresh to run one now.": '正在等待该机场的首次检查——点击刷新立即检查。',
   'Could not load the Board.': '无法加载看板。',
-  'Not assigned yet': '尚未分配机号', 'Not on board yet': '尚未上板', 'Possible aircraft': '可能的飞机', 'Already photographed': '已拍摄', 'today': '今天', 'Last triggered': '上次触发原因', 'Hidden from Feed by the Exclusion List': '已被排除名单隐藏', 'No regular flights to show.': '暂无需要关注的常规航班。', 'No Feed cards': '无 Feed 卡片', 'Aircraft not assigned yet': '尚未分配飞机', 'Could not load aircraft details.': '无法加载飞机信息。',
+  'Not assigned yet': '尚未分配机号', 'Not on board yet': '尚未上板', 'Possible aircraft': '可能的飞机', 'Add to the Spotting timeline (one-off)': '加入拍机时间线（仅此一次）', 'Remove from the Spotting timeline': '从拍机时间线移除', 'Click again to add it to Spotting': '再点一次确认加入拍机时间线', 'Click again to remove it from Spotting': '再点一次确认移除', 'added to Spotting': '已加入拍机时间线', 'removed from Spotting': '已从拍机时间线移除', 'Already photographed': '已拍摄', 'today': '今天', 'Last triggered': '上次触发原因', 'Hidden from Feed by the Exclusion List': '已被排除名单隐藏', 'No regular flights to show.': '暂无需要关注的常规航班。', 'No Feed cards': '无 Feed 卡片', 'Aircraft not assigned yet': '尚未分配飞机', 'Could not load aircraft details.': '无法加载飞机信息。',
   'No equipment history yet.': '暂无机型使用记录。', 'Registration': '注册号', 'Aircraft': '飞机', 'Manufacturer': '制造商', 'Operator': '运营商',
   'Owner': '所有者', 'Livery': '涂装', 'Country': '国家/地区', 'Mode S': 'Mode S', 'Serial No.': '序列号', 'Built': '出厂年份', 'Feed cards here': '本场 Feed 卡片数',
   'Feed card': '动态卡片', 'Excluded': '已排除', 'Has a card in Feed': '动态中已有卡片',
@@ -2225,7 +2225,7 @@ function _syncQuickFilterBtns() {
   });
 }
 
-function _detailQuickFilterBtns(registration) {
+function _detailQuickFilterBtns(registration, extra = '') {
   // Mute-notifications / Exclude / Add-to-watchlist quick actions — Controller/Pilot only (all
   // endpoints are server-side role-gated too; this is just UI, not the
   // enforcement boundary). Passengers never see filter management at all.
@@ -2242,6 +2242,7 @@ function _detailQuickFilterBtns(registration) {
     ${btn('mute', '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/><line x1="3" y1="3" x2="21" y2="21"/></svg>')}
     ${btn('exclude', '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><line x1="6.5" y1="6.5" x2="17.5" y2="17.5"/></svg>')}
     ${btn('watch', '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12z"/><circle cx="12" cy="12" r="2.6"/></svg>')}
+    ${extra}
   </div>`;
 }
 
@@ -3218,6 +3219,11 @@ function _bdDetailHtml(r) {
         statusPill = `<span style="font-size:11px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;padding:3px 9px;border-radius:20px;background:${bg};color:${fg}">${esc(tLabel(st))}</span>`;
       }
     }
+    // 4th button (Board only): one-off "add this flight to the Spotting timeline" for flights with no Feed card.
+    const pinBtn = r.can_pin
+      ? `<button class="detail-quick-btn detail-quick-pin${r.pinned ? ' detail-quick-on' : ''}" data-fn="${esc(r.flight_number)}" data-ts="${r.scheduled_ts}" data-on="${r.pinned ? 1 : 0}"
+           title="${esc(r.pinned ? tt('Remove from the Spotting timeline') : tt("Add to the Spotting timeline (one-off)"))}"
+           onclick="event.stopPropagation(); bdPinToggle(this)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="3" y="4" width="18" height="17" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="12" y1="12" x2="12" y2="18"/><line x1="9" y1="15" x2="15" y2="15"/></svg></button>` : '';
     const chips = r.kind ? (r.card_types || []).map(t => `<span class="chip ${chipClass(t)}">${chipLabel(t)}</span>`).join('') : '';
     const liveryTxt = (r.kind && (r.card_types || []).includes('Special Livery') && r.extra_info) ? r.extra_info : (ac.livery || '');
     const airline = r.airline_name || ac.operator || '';
@@ -3236,7 +3242,7 @@ function _bdDetailHtml(r) {
           ${airline ? `<div style="font-size:12px;color:var(--dim)" data-ext-name="${esc(airline)}">${esc(tExternalName(airline))}</div>` : ''}
           ${liveryTxt ? `<div style="margin-top:6px;font-size:12px;color:var(--dim);font-style:italic;line-height:1.4">${esc(tLiveryName(liveryTxt))}</div>` : ''}
         </div>
-        ${_detailQuickFilterBtns(r.registration)}
+        ${_detailQuickFilterBtns(r.registration, pinBtn)}
       </div>`;
     facts = [
       dc('Owner', ac.owner && !sameAsOperator ? esc(ac.owner) : ''),
@@ -3413,6 +3419,25 @@ async function bdToggle(btn) {
     toast(`${fn} ${tt('hidden')}`);
     await loadBoard();
   } catch (e) { toast('Error: ' + e.message); }
+}
+
+// Add / remove a one-off Spotting-timeline entry for this flight (click, then click again to confirm).
+async function bdPinToggle(btn) {
+  const fn = btn.dataset.fn, ts = btn.dataset.ts, removing = btn.dataset.on === '1';
+  _armOrConfirm(btn,
+    removing ? tt('Remove from the Spotting timeline') : tt('Add to the Spotting timeline (one-off)'),
+    removing ? tt('Click again to remove it from Spotting') : tt('Click again to add it to Spotting'),
+    async () => {
+      try {
+        if (removing) await api(`/board/pin/${encodeURIComponent(fn)}/${ts}`, { method: 'DELETE' });
+        else await api('/board/pin', { method: 'POST', body: JSON.stringify({ flight_number: fn, scheduled_ts: Number(ts) }) });
+        const row = _bdRowsByKey[`${fn}|${ts}`];
+        if (row) row.pinned = !removing;
+        toast(removing ? `${fn} ${tt('removed from Spotting')}` : `${fn} ${tt('added to Spotting')}`);
+        _recLoaded = false; _recData = null;          // Spotting reloads its timeline next time it is opened
+        renderBoard();
+      } catch (e) { toast('Error: ' + e.message); }
+    });
 }
 
 async function bdUnhide(fn) {
