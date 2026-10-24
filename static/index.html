@@ -821,8 +821,9 @@
                         repeating-linear-gradient(to bottom, rgb(var(--bd-rgb)) 0 6px, transparent 6px 10px);
       background-size: 100% 100%, 3px 100%; background-repeat: no-repeat; background-position: 0 0, 0 0;
     }
-    /* aircraft still missing from the viewer's Fleet cards: a faint gold wash + thin bar (Feed / excluded accents win over it) */
-    .bd-row.bd-row-fleet:not(.bd-row-feed):not(.bd-row-excl) { background: rgba(251,191,36,.07); box-shadow: inset 3px 0 0 rgba(251,191,36,.35); }
+    /* aircraft still missing from the viewer's Fleet cards: a small gold camera right after the rego (any row with a rego) */
+    .bd-fleet-miss { display: inline-flex; align-items: center; margin-left: 5px; color: #fbbf24; vertical-align: -2px; }
+    .bd-fleet-miss svg { width: 12px; height: 12px; }
     .bd-row { cursor: pointer; }
     /* Board card inside the bottom sheet: the sheet supplies the panel look */
     .detail-sheet-scroll .bd-detail { background: none; border: none; padding: 0; }

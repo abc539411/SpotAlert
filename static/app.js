@@ -4012,6 +4012,8 @@ function _bdDetailHtml(r) {
   </div>`;
 }
 
+// Small gold camera after the rego: this aircraft is in one of the viewer's Fleet cards and not yet photographed.
+const _BD_FLEET_MISS = () => `<span class="bd-fleet-miss" title="${esc(tt('Missing from your Fleet'))}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8.5A1.5 1.5 0 0 1 5.5 7h2l1-2h7l1 2h2A1.5 1.5 0 0 1 20 8.5v9a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 17.5z"/><circle cx="12" cy="12.5" r="3.3"/></svg></span>`;
 function _bdRow(r, isMobile) {
   const fn = esc(r.flight_number);
   const late = r.estimated_ts && Math.abs(r.estimated_ts - r.scheduled_ts) >= 600;
@@ -4024,18 +4026,19 @@ function _bdRow(r, isMobile) {
   const sub = [airline, livery].filter(Boolean).join(' · ');
   const ac = r.registration
     ? `${_flag(_regoCountryCode(r.registration), { h: 11 })}<a href="${_fr24AircraftUrl(r.registration)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${esc(r.registration)}</a>` +
+      `${r.fleet_missing ? _BD_FLEET_MISS() : ''}` +
       `${r.aircraft_type ? `<div class="ty"><span class="fc-actype">${esc(r.aircraft_type)}</span></div>` : ''}`
     : `<span class="bd-na">${esc(tt(r.pending ? 'No info yet' : 'Not assigned yet'))}</span>${r.aircraft_type ? `<div class="ty"><span class="fc-actype">${esc(r.aircraft_type)}</span></div>` : ''}`;
   const oneOff = r.pinned && !r.kind;      // added by hand from the Board: shaded teal like a Feed-card row
   const kindCls = r.kind === 'feed' ? ' bd-row-feed' : r.kind === 'excluded' ? ' bd-row-excl' : oneOff ? ' bd-row-feed' : '';
-  const kindTip = oneOff ? tt('Added by hand (one-off) — in Feed and Spotting') : r.kind === 'feed' ? tt('Has a card in Feed') : r.kind === 'excluded' ? tt('Would have a Feed card, but the aircraft is on the Exclusion List') : r.fleet_missing ? tt('Missing from your Fleet') : '';
+  const kindTip = oneOff ? tt('Added by hand (one-off) — in Feed and Spotting') : r.kind === 'feed' ? tt('Has a card in Feed') : r.kind === 'excluded' ? tt('Would have a Feed card, but the aircraft is on the Exclusion List') : '';
   const rgb = r.kind ? _bdAccentRgb(r.card_types) : oneOff ? '45,212,191' : '';
   const chips = (r.kind && (r.card_types || []).length)
     ? `<span class="bd-chips">${r.card_types.map(t => `<span class="chip ${chipClass(t)}">${esc(chipLabel(t))}</span>`).join('')}</span>`
     : '';
   const key = _bdKey(r);
   const open = key === _bdOpenKey && !_bdIsPhone();
-  return `<div class="bd-row${kindCls}${open ? ' open' : ''}${r.pending ? ' bd-row-pending' : ''}${r.fleet_missing ? ' bd-row-fleet' : ''}${_bdSel.has(r.flight_number) ? ' bd-row-sel' : ''}${r.hidden ? ' bd-row-hidden' : ''}" data-key="${esc(key)}" data-fn="${fn}" onclick="bdRowClick(this)"${kindTip ? ` title="${esc(kindTip)}"` : ''}${rgb ? ` style="--bd-rgb:${rgb}"` : ''}>
+  return `<div class="bd-row${kindCls}${open ? ' open' : ''}${r.pending ? ' bd-row-pending' : ''}${_bdSel.has(r.flight_number) ? ' bd-row-sel' : ''}${r.hidden ? ' bd-row-hidden' : ''}" data-key="${esc(key)}" data-fn="${fn}" onclick="bdRowClick(this)"${kindTip ? ` title="${esc(kindTip)}"` : ''}${rgb ? ` style="--bd-rgb:${rgb}"` : ''}>
       <div class="bd-time">${time}</div>
       <div class="bd-main">
         <div class="bd-fnrow"><a class="bd-fn" href="${_fr24FlightUrl(r.flight_number)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${_srchLogoWithFallback(r.airline_icao, r.airline_name, 16, '')}${fn}</a>${chips}</div>
