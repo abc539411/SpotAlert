@@ -4908,7 +4908,9 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                 if images:
                     imgs = images[0]["images"]
                     large = imgs.get("large") or imgs.get("medium") or []
-                    if large:
+                    # Keep the photo Feed / Spotting already show (airframes.photo_url); only fall back to
+                    # FR24's current first image when none is stored yet.
+                    if large and not out["photo_url"]:
                         out["photo_url"] = large[0]["src"].replace("/640cb/", "/640/")
                         out["photo_credit"] = large[0].get("copyright") or ""
                         out["photo_link"] = large[0].get("link") or ""

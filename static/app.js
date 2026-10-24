@@ -3180,8 +3180,8 @@ function _bdDetailHtml(r) {
     facts = `<span style="color:var(--dim)">${esc(tt('Could not load aircraft details.'))}</span>`;
   } else {
     if (ac.photo_url) {
-      const full = ac.photo_url.replace('/640/', '/full/');
-      photo = `<div class="bd-photo-wrap"><img class="bd-photo" src="${esc(full)}" loading="lazy" alt="${esc(r.registration)}" onerror="this.onerror=null;this.src='${esc(ac.photo_url)}'">` +
+      // Same URL Feed / Spotting use (the stored 640px one) — not the /full/ variant.
+      photo = `<div class="bd-photo-wrap"><img class="bd-photo" src="${esc(ac.photo_url)}" loading="lazy" alt="${esc(r.registration)}">` +
         `</div>`;
     }
     const model = ac.model || r.aircraft_type || '';
