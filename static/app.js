@@ -333,7 +333,7 @@ const UI_ZH = {
   '✈ Add to Home Screen in Safari to enable push notifications.': '✈ 在 Safari 中添加到主屏幕以启用推送通知。',
   '✈ Install SpotAlert for quick access and notifications.': '✈ 安装 SpotAlert 以便快速访问并接收通知。',
   'Install': '安装',
-  'Arrivals': '到达', 'Departures': '离开',
+  'Arrivals': '进港', 'Departures': '离港',
   'Sunrise': '日出', 'Sunset': '日落',
   'Before Sunrise': '日出前', 'After Sunset': '日落后', 'Harsh Light': '顶光',
   'Now': '当前时间',
