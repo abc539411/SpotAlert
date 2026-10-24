@@ -3187,7 +3187,7 @@ function logoTap() {
 // Phones: the Board has no tab in the bottom bar. The Controller gets there by pulling the Feed all the way down from
 // its top — a cue ("Pull down for Board") follows the finger and the Board opens on release past the threshold.
 (function initPullForBoard() {
-  const lockAt = () => Math.round(window.innerHeight * 0.6);   // pull distance (60% of the screen) at which the Board locks open by itself
+  const lockAt = () => Math.round(window.innerHeight / 2);   // pull distance (half the screen) past which letting go glides the Board open
   let startY = null, startX = 0, pull = 0, locked = false, busy = false, H = 0;
   const feed = () => document.getElementById('tab-history');
   const board = () => document.getElementById('tab-board');
@@ -3263,17 +3263,17 @@ function logoTap() {
     if (e.cancelable) e.preventDefault();                       // we own this gesture while the Feed sits at its top
     if (!H) prepare();
     pull = dy;
-    if (pull >= lockAt()) { lockOpen(); return; }
+    // past the line the finger stays in charge: the Board keeps following (same stiffness), and only letting go commits
     // stiffness: the Board travels only part of the finger's distance, and gets stiffer the further you pull
     const frac = Math.min(pull / lockAt(), 1);
-    const travel = pull * (0.62 - 0.22 * frac);
+    const travel = Math.min(pull * (0.62 - 0.22 * frac), H);
     setY(-H + travel, 0);
     placePill(travel);
   }, { passive: false });
   const end = () => {
     if (startY === null || locked || busy) { if (!locked && !busy) { startY = null; } return; }
     startY = null;
-    if (H) springBack();
+    if (H) { if (pull >= lockAt()) lockOpen(); else springBack(); }
   };
   document.addEventListener('touchend', end, { passive: true });
   document.addEventListener('touchcancel', end, { passive: true });
