@@ -1074,14 +1074,14 @@ class SqliteStore:
 
     def board_pending_grace_mins(self) -> int:
         """Settings > Board > Placeholder Grace (BOARD_PENDING_GRACE_MINS): how long past its usual time a
-        "Not on board yet" row waits for the flight to show up before it is assumed not operating. Default 120."""
+        "No info yet" row waits for the flight to show up before it is assumed not operating. Default 120."""
         try:
             return max(0, min(int(self.load_setting("BOARD_PENDING_GRACE_MINS") or 120), 1440))
         except (TypeError, ValueError):
             return 120
 
     def board_drop_after_days(self) -> int:
-        """Settings > Board > Drop After (BOARD_DROP_AFTER_DAYS): only the "Not on board yet" placeholder rows use it;
+        """Settings > Board > Drop After (BOARD_DROP_AFTER_DAYS): only the "No info yet" placeholder rows use it;
         0 = never drop; default 30."""
         try:
             return max(0, min(int(self.load_setting("BOARD_DROP_AFTER_DAYS") or 30), 365))
@@ -1184,7 +1184,7 @@ class SqliteStore:
 
     def get_board_scheduled_since(self, flight_numbers, since_ts: int) -> dict:
         """{flight_number: [scheduled_ts, ...newest first]} for stored Board rows scheduled at/after since_ts —
-        the timetable the flight actually ran on recently (used for the 'Not on board yet' usual time)."""
+        the timetable the flight actually ran on recently (used for the 'No info yet' usual time)."""
         out: dict = {}
         fns = list(flight_numbers)
         with self._connect() as conn:
