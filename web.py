@@ -1622,6 +1622,39 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
 
         return JSONResponse(result)
 
+    # Archive cards (the Feed's Older weeks) keep the photo saved when the card was created. A card that never got one
+    # (FR24 had none at the time) gets ONE lookup when its archive is opened; whatever comes back is saved on the card
+    # (and the airframe) so it never costs another call. Registrations FR24 still has no picture for are remembered for a
+    # week so re-opening an archive doesn't re-ask. At most _PHOTO_BACKFILL_MAX lookups per request.
+    _PHOTO_BACKFILL_MAX = 8
+    _photo_backfill_miss: dict = {}      # (airport, registration) -> time of the last fruitless lookup
+
+    def _backfill_missing_photos(cfg_, regs: list) -> dict:
+        store_ = cfg_.store
+        out: dict = {}
+        if not cfg_.fr_api:
+            return out
+        todo = [r for r in regs if time.time() - _photo_backfill_miss.get((cfg_.airport_iata, r), 0) > 7 * 86400]
+        for reg in todo[:_PHOTO_BACKFILL_MAX]:
+            url = ""
+            try:
+                rd = cfg_.fr_api.get_rego_details(reg.upper()) or {}
+                images = rd.get("aircraftImages") or []
+                if images:
+                    imgs = images[0]["images"]
+                    large = imgs.get("large") or imgs.get("medium") or []
+                    url = large[0]["src"].replace("/640cb/", "/640/") if large else ""
+            except Exception as exc:
+                log.debug("Photo backfill failed for %s: %s", reg, exc)
+            if url:
+                with store_._connect() as conn:       # backfill only: never touches a card that already has a photo
+                    conn.execute("UPDATE flight_arrivals SET photo_url = ? WHERE registration = ? AND (photo_url IS NULL OR photo_url = '')", (url, reg))
+                store_.upsert_airframe_from_fr24(reg.upper(), photo_url=url)
+                out[reg] = url
+            else:
+                _photo_backfill_miss[(cfg_.airport_iata, reg)] = time.time()
+        return out
+
     @app.get("/api/feed/weeks")
     async def get_feed_weeks(user=Depends(_auth_current_user)):
         """ISO weeks (Mon–Sun) that contain at least one Feed card, newest first, grouped client-side by year."""
@@ -1875,6 +1908,14 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
             else:        label = f"{d.strftime('%a')}, {d.day} {d.strftime('%b')}"
             days_result.append({"date": date_str, "label": label, "is_today": i == 0, "cards": cards_for_day})
 
+        if range_mode and cfg_ is not None:
+            missing = sorted({c["registration"] for d_ in days_result for c in d_["cards"] if not c.get("photo_url")})
+            if missing:
+                got = await asyncio.to_thread(_backfill_missing_photos, cfg_, missing)
+                for d_ in days_result:
+                    for c in d_["cards"]:
+                        if not c.get("photo_url") and c["registration"] in got:
+                            c["photo_url"] = got[c["registration"]]
         return JSONResponse({"days": days_result, "airport_iata": airport_iata_, "airport_name": airport_name_, "timezone": tz_name})
 
     @app.get("/api/recommendation")
