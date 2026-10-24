@@ -4760,10 +4760,10 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                 if fr["registration"] in excl_regs:
                     # Would have been a card, but Feed hides it. Still evidence that this flight number is one
                     # worth watching (and what lets the Board colour its row) — just not a visible Feed card.
-                    excluded_cards.setdefault(fr["flight_number"], []).append((fr["arrival_ts"], fr["registration"], nt))
+                    excluded_cards.setdefault(fr["flight_number"], []).append((fr["arrival_ts"], fr["registration"], nt, fr["extra_info"]))
                 else:
                     e["arrival_ts"].append(fr["arrival_ts"])
-                    e["cards"].append((fr["arrival_ts"], fr["registration"], nt))
+                    e["cards"].append((fr["arrival_ts"], fr["registration"], nt, fr["extra_info"]))
         _board_roster_cache[key] = (time.time(), roster, excluded_cards)
         return roster, excluded_cards
 
@@ -4829,15 +4829,15 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
             # Colour key: "feed" = this very flight already has a Feed card; "excluded" = it would have, but its
             # aircraft is on the Exclusion List (Feed hides it). Matched on flight number + registration + time.
             near = lambda cards: next((c for c in cards if c[1] == reg and abs(c[0] - r["scheduled_ts"]) <= 12 * 3600), None)
-            kind, card_types = None, []
+            kind, card_types, extra_info = None, [], ""
             if reg:
                 hit = near(roster[fn]["cards"])
                 if hit:
-                    kind, card_types = "feed", hit[2]
+                    kind, card_types, extra_info = "feed", hit[2], hit[3] or ""
                 else:
                     hit = near(excluded_cards.get(fn, []))
                     if hit:
-                        kind, card_types = "excluded", hit[2]
+                        kind, card_types, extra_info = "excluded", hit[2], hit[3] or ""
             by_off[off]["rows"].append({
                 "flight_number": fn, "scheduled_ts": r["scheduled_ts"], "estimated_ts": r["estimated_ts"],
                 "eff_ts": eff, "registration": r["registration"], "aircraft_type": r["aircraft_type"],
@@ -4846,6 +4846,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                 "origin_city": cities.get(r["origin_iata"], "") or "",
                 "origin_country_code": countries.get(r["origin_iata"], ""),
                 "status": r["status_text"], "hidden": is_hidden, "kind": kind, "card_types": card_types,
+                "extra_info": extra_info,
             })
         days = []
         for o in _OFFSETS:

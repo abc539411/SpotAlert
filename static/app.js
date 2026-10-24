@@ -3171,7 +3171,7 @@ function _bdDetailHtml(r) {
       `${(r.origin_city || oName) ? ` · <span${oName ? ` data-ext-name="${esc(oName)}" data-ext-city="1"` : ''}>${esc(r.origin_city || _routeAirportDisp(oName))}</span>` : ''}`
     : '';
 
-  let photo = '', facts = '', quick = '';
+  let photo = '', facts = '', head = '';
   if (!r.registration) {
     facts = `<div class="bd-na" style="padding:4px 0">${esc(tt('Aircraft not assigned yet'))}${r.aircraft_type ? ` · ${esc(r.aircraft_type)}` : ''}</div>`;
   } else if (!ac) {
@@ -3187,13 +3187,39 @@ function _bdDetailHtml(r) {
     const model = ac.model || r.aircraft_type || '';
     const typeCode = ac.type_code || r.aircraft_type || '';
     const sameAsOperator = ac.owner && ac.operator && ac.owner.toLowerCase() === ac.operator.toLowerCase();
+    // Header in the Feed card's style: rego + flag (+ status pill only when this flight has a Feed card),
+    // type chips / manufacturer / aircraft type, airline + livery on the left, quick-filter buttons on the right.
+    let statusPill = '';
+    if (r.kind === 'feed') {
+      const st = _barStatus({ current_status: r.status, arrival_ts: r.eff_ts }, Math.floor(Date.now() / 1000));
+      if (st && st !== 'N/A') {
+        const [bg, fg] = _STATUS_STYLE[st] || _STATUS_STYLE['N/A'];
+        statusPill = `<span style="font-size:11px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;padding:3px 9px;border-radius:20px;background:${bg};color:${fg}">${esc(tLabel(st))}</span>`;
+      }
+    }
+    const chips = r.kind ? (r.card_types || []).map(t => `<span class="chip ${chipClass(t)}">${chipLabel(t)}</span>`).join('') : '';
+    const liveryTxt = (r.kind && (r.card_types || []).includes('Special Livery') && r.extra_info) ? r.extra_info : (ac.livery || '');
+    const airline = r.airline_name || ac.operator || '';
+    head = `<div class="detail-header">
+        <div style="display:flex;align-items:center;gap:8px">
+          <a class="rego" style="font-size:20px;font-weight:700;color:var(--text);text-decoration:none;letter-spacing:.01em" href="${_fr24AircraftUrl(r.registration)}" target="_blank" rel="noopener">${esc(r.registration)}</a>
+          ${_flag(_regoCountryCode(r.registration), { h: 26, vab: -13 })}
+        </div>
+        <div style="display:flex;align-items:center;gap:8px">${statusPill}</div>
+      </div>
+      <div style="margin-top:9px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+        ${chips}${mfrBadge(ac.manufacturer)}${(r.aircraft_type || typeCode) ? `<span class="fc-actype">${esc(r.aircraft_type || typeCode)}</span>` : ''}
+      </div>
+      <div style="margin-top:4px;display:flex;justify-content:space-between;align-items:flex-end;gap:8px">
+        <div style="min-width:0;flex:1">
+          ${airline ? `<div style="font-size:12px;color:var(--dim)" data-ext-name="${esc(airline)}">${esc(tExternalName(airline))}</div>` : ''}
+          ${liveryTxt ? `<div style="margin-top:6px;font-size:12px;color:var(--dim);font-style:italic;line-height:1.4">${esc(tLiveryName(liveryTxt))}</div>` : ''}
+        </div>
+        ${_detailQuickFilterBtns(r.registration)}
+      </div>`;
     facts = [
-      dc('Registration', `${_flag(_regoCountryCode(r.registration), { h: 12 })}<a href="${_fr24AircraftUrl(r.registration)}" target="_blank" rel="noopener" style="color:var(--text);font-weight:700;text-decoration:none">${esc(r.registration)}</a>`),
-      dc('Aircraft', `${esc(model)}${typeCode && model !== typeCode ? ` <span style="color:var(--dim)">(${esc(typeCode)})</span>` : ''}`),
-      dc('Manufacturer', ac.manufacturer ? mfrBadge(ac.manufacturer) : ''),
-      dc('Operator', ac.operator ? `<span data-ext-name="${esc(ac.operator)}">${esc(tExternalName(ac.operator))}</span>` : ''),
+      dc('Aircraft', `${esc(model)}`),
       dc('Owner', ac.owner && !sameAsOperator ? esc(ac.owner) : ''),
-      dc('Livery', ac.livery ? esc(tLiveryName(ac.livery)) : ''),
       dc('Country', ac.country ? `${_flag(ac.country_code, { h: 12 })}${esc(ac.country)}` : ''),
       dc('Mode S', ac.hex ? esc(ac.hex) : ''),
       dc('Serial No.', ac.serial_number ? esc(ac.serial_number) : ''),
@@ -3201,7 +3227,6 @@ function _bdDetailHtml(r) {
       dc('Last Seen', ac.last_seen_ts ? esc(_fmtLastSeen(ac.last_seen_ts) || '') : ''),
       dc('Feed cards here', ac.cards_here ? esc(String(ac.cards_here)) : ''),
     ].join('');
-    quick = _detailQuickFilterBtns(r.registration);
   }
 
   // Equipment history for this flight number: share of each aircraft type it has flown (same bars as
@@ -3231,8 +3256,9 @@ function _bdDetailHtml(r) {
 
   return `<div class="bd-detail">
     ${photo}
-    ${from || quick ? `<div class="bd-from">${from}<span style="margin-left:auto">${quick}</span></div>` : ''}
-    <div class="bd-facts">${facts}</div>
+    ${head}
+    ${from ? `<div class="bd-from" style="margin-top:10px">${from}</div>` : ''}
+    <div class="bd-facts" style="margin-top:10px">${facts}</div>
     <div class="bd-sec-t">${esc(tt('Equipment History'))}</div>
     <div class="srch-fl-rows" style="margin-top:0">${hist}</div>
   </div>`;
