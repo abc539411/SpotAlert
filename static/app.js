@@ -3274,7 +3274,6 @@ function _bdDetailHtml(r) {
       </div>`;
     facts = [
       dc('Owner', ac.owner && !sameAsOperator ? esc(ac.owner) : ''),
-      dc('Built', ac.built_year ? esc(String(ac.built_year)) : ''),
     ].join('');
   }
 
