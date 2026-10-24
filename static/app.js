@@ -3175,10 +3175,12 @@ function _bdDetailHtml(r) {
   const oIata = r.origin_iata || '';
   const oName = r.origin_name || '';
   const from = oIata
-    ? `<span class="rb-lbl" style="margin-right:8px">${esc(tt('Arr. From'))}</span>` +
-      `${_flag(r.origin_country_code || _airportCountry(oIata), { h: 12 })}` +
+    ? `<span style="display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:400;white-space:nowrap">` +
+      `<span class="rb-lbl" style="margin-right:2px;font-size:9px">${esc(tt('Arr. From'))}</span>` +
+      `${_flag(r.origin_country_code || _airportCountry(oIata), { h: 10 })}` +
       `<a href="${_fr24AirportUrl(oIata)}" target="_blank" rel="noopener" style="font-weight:700;color:var(--text);text-decoration:none">${esc(oIata)}</a>` +
-      `${(r.origin_city || oName) ? ` · <span${oName ? ` data-ext-name="${esc(oName)}" data-ext-city="1"` : ''}>${esc(r.origin_city || _routeAirportDisp(oName))}</span>` : ''}`
+      `${(r.origin_city || oName) ? ` · <span${oName ? ` data-ext-name="${esc(oName)}" data-ext-city="1"` : ''}>${esc(r.origin_city || _routeAirportDisp(oName))}</span>` : ''}` +
+      `</span>`
     : '';
 
   let photo = '', facts = '', head = '', lastSeen = '', spotted = '';
@@ -3223,7 +3225,7 @@ function _bdDetailHtml(r) {
           <a class="rego" style="font-size:20px;font-weight:700;color:var(--text);text-decoration:none;letter-spacing:.01em" href="${_fr24AircraftUrl(r.registration)}" target="_blank" rel="noopener">${esc(r.registration)}</a>
           ${_flag(_regoCountryCode(r.registration), { h: 26, vab: -13 })}
         </div>
-        <div style="display:flex;align-items:center;gap:12px">${from}${statusPill}</div>
+        <div style="display:flex;align-items:center;gap:10px">${from}${statusPill}</div>
       </div>
       <div style="margin-top:9px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">
         ${chips}${mfrBadge(ac.manufacturer)}${(r.aircraft_type || typeCode) ? `<span class="fc-actype">${esc(r.aircraft_type || typeCode)}</span>` : ''}
