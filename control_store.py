@@ -344,12 +344,22 @@ class ControlStore:
             row = conn.execute("SELECT tour_seen FROM web_users WHERE user_id = ?", (user_id,)).fetchone()
             return bool(row and row["tour_seen"])
 
+    @staticmethod
+    def tour_key(version) -> str:
+        """The tour is re-offered only for MAJOR releases — x.y0 (2.10, 2.20...). Point releases (2.11, 2.12...) are bug
+        fixes and share their major's key: 2.12 -> "2.10"."""
+        try:
+            major, minor = str(version).split(".")[:2]
+            return f"{int(major)}.{int(minor) // 10 * 10:02d}"
+        except (ValueError, TypeError):
+            return str(version or "")
+
     def tour_due(self, user_id: str, version: str) -> bool:
-        """The tour is offered on every sign-in (login clears tour_seen) and whenever the app version changed since the
-        user last finished or skipped it."""
+        """The tour is offered on every sign-in (login clears tour_seen) and whenever a MAJOR version (tour_key) is newer
+        than the one the user last finished or skipped it on."""
         with self._connect() as conn:
             row = conn.execute("SELECT tour_seen, tour_version FROM web_users WHERE user_id = ?", (user_id,)).fetchone()
-            return bool(row) and (not row["tour_seen"] or row["tour_version"] != version)
+            return bool(row) and (not row["tour_seen"] or self.tour_key(row["tour_version"]) != self.tour_key(version))
 
     def mark_tour_done(self, user_id: str, version: str) -> None:
         with self._connect() as conn:

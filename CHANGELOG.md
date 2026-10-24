@@ -1,5 +1,25 @@
 # Changelog
 
+Versioning: a **major** release is x.y0 (2.10, 2.20...) and re-offers the in-app tour once; point releases (2.11, 2.12...) are fixes and polish and do not.
+
+## 2.12 — since 2.10
+
+### Added
+- **Board: today + 3 days ahead** always show, and "No info yet" rows cover all four days; each fills with real flights as the normal checks reach it.
+- **Fleet marker** — an aircraft that is in one of your Fleet cards but not yet photographed gets a small gold camera before its flag on the Board (any row with a rego). Those flights, and aircraft on your Exclusion List, still show when their flight number is hidden (Passengers see them too, without the icon).
+- **Rare Plane cards** show the flight's previous equipment type in grey where a livery name would go ("Previous Equipment - B38M" / "此前机型 - B38M").
+- Feed: no **Older** button for an airport with no history beyond the 7 days shown (a newly added airport).
+
+### Changed
+- Hiding flights on the Board updates immediately instead of waiting for a full reload.
+- Board day cards swipe like Spotting's (carousel behaviour, no swipe blocking, no rebuild under a finger).
+- "Possible aircraft" is now **Possible Equipment**.
+- Photos: a new card checks that its saved photo link still loads (falling back to FR24's aircraft page, then JetPhotos), and the main Feed now repairs missing and broken photos the way the older-weeks view does — with no extra requests when FR24 supplies a photo.
+- The tour's "What's new" step is shown for major releases only.
+
+### Fixed
+- Creating a brand-new airport database no longer fails on a one-off migration.
+
 ## 2.10 — since 2.01
 
 ### Added

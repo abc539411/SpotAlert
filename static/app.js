@@ -389,7 +389,7 @@ const UI_ZH = {
   'Refresh Board': '刷新大屏', 'Checking FR24…': '正在检查 FR24…', 'Board updated': '大屏已更新',
   "Waiting for this airport's first check — tap Refresh to run one now.": '正在等待该机场的首次检查——点击刷新立即检查。',
   'Could not load the Board.': '无法加载大屏。',
-  'Not assigned yet': '尚未分配飞机', 'No info yet': '暂无信息', 'Possible Equipment': '可能的机型', 'Previously': '此前机型', 'Swipe down to access Feed': '下拉进入动态', 'Swipe down to access Board': '下拉进入大屏', 'Spotting Day': '拍机日', 'No cards this week.': '本周没有卡片。', 'Look through older days': '查看更早的记录', 'Back': '返回', 'Month': '月份', 'Older': '更早', 'Older than 7 days': '7 天前的记录', 'No older days.': '没有更早的记录。', 'No activity in the last 7 days.': '最近 7 天没有活动。', 'Since': '始于', 'Tap to select, then Unhide': '点选后再点“取消隐藏”', 'Edit': '编辑', 'Done': '完成', 'Hide': '隐藏', 'selected': '已选', 'Hidden flights': '已隐藏航班', 'Select flights to hide or unhide': '选择要隐藏或取消隐藏的航班', 'No check yet': '尚未检查', 'Confirm Refresh?': '确认刷新？', 'Added by hand (one-off) — in Feed and Spotting': '手动添加（仅此一次）— 已在 Feed 和拍机时间线', 'Add to Feed + Spotting (one-off)': '加入 Feed 和拍机时间线（仅此一次）', 'Remove this one-off flight from Feed + Spotting': '从 Feed 和拍机时间线移除此航班', 'Click again to add it to Feed + Spotting': '再点一次确认加入', 'Click again to remove it': '再点一次确认移除', 'added to Feed + Spotting': '已加入 Feed 和拍机时间线', 'removed': '已移除', 'Already photographed': '已拍摄', 'today': '今天', 'Last triggered': '上次触发原因', 'Hidden from Feed by the Exclusion List': '已被排除名单隐藏', 'No regular flights to show.': '暂无需要关注的常规航班。', 'No Feed cards': '无动态卡片', 'Aircraft not assigned yet': '尚未分配飞机', 'Could not load aircraft details.': '无法加载飞机信息。',
+  'Not assigned yet': '尚未分配飞机', 'No info yet': '暂无信息', 'Possible Equipment': '可能的机型', 'Previous Equipment': '此前机型', 'Swipe down to access Feed': '下拉进入动态', 'Swipe down to access Board': '下拉进入大屏', 'Spotting Day': '拍机日', 'No cards this week.': '本周没有卡片。', 'Look through older days': '查看更早的记录', 'Back': '返回', 'Month': '月份', 'Older': '更早', 'Older than 7 days': '7 天前的记录', 'No older days.': '没有更早的记录。', 'No activity in the last 7 days.': '最近 7 天没有活动。', 'Since': '始于', 'Tap to select, then Unhide': '点选后再点“取消隐藏”', 'Edit': '编辑', 'Done': '完成', 'Hide': '隐藏', 'selected': '已选', 'Hidden flights': '已隐藏航班', 'Select flights to hide or unhide': '选择要隐藏或取消隐藏的航班', 'No check yet': '尚未检查', 'Confirm Refresh?': '确认刷新？', 'Added by hand (one-off) — in Feed and Spotting': '手动添加（仅此一次）— 已在 Feed 和拍机时间线', 'Add to Feed + Spotting (one-off)': '加入 Feed 和拍机时间线（仅此一次）', 'Remove this one-off flight from Feed + Spotting': '从 Feed 和拍机时间线移除此航班', 'Click again to add it to Feed + Spotting': '再点一次确认加入', 'Click again to remove it': '再点一次确认移除', 'added to Feed + Spotting': '已加入 Feed 和拍机时间线', 'removed': '已移除', 'Already photographed': '已拍摄', 'today': '今天', 'Last triggered': '上次触发原因', 'Hidden from Feed by the Exclusion List': '已被排除名单隐藏', 'No regular flights to show.': '暂无需要关注的常规航班。', 'No Feed cards': '无动态卡片', 'Aircraft not assigned yet': '尚未分配飞机', 'Could not load aircraft details.': '无法加载飞机信息。',
   'No equipment history yet.': '暂无机型使用记录。', 'Registration': '注册号', 'Aircraft': '飞机', 'Manufacturer': '制造商', 'Operator': '运营商',
   'Owner': '所有者', 'Livery': '涂装', 'Country': '国家/地区', 'Mode S': 'Mode S', 'Serial No.': '序列号', 'Built': '出厂年份', 'Feed cards here': '本场 Feed 卡片数',
   'Feed card': '动态卡片', 'Missing from your Fleet': '您的机队中尚未拍到',  'Excluded': '已排除', 'Has a card in Feed': '动态中已有卡片',
@@ -2619,7 +2619,7 @@ function _detailInner(r, closeCmd, showPhoto = true) {
         <div style="min-width:0;flex:1">
           ${airline ? `<div style="font-size:12px;color:var(--dim)" data-ext-name="${esc(airline)}">${esc(tExternalName(airline))}</div>` : ''}
           ${r.extra_info && !isMilitary && (r.notif_types || []).includes('Special Livery') ? `<div style="margin-top:6px;font-size:12px;color:var(--dim);font-style:italic;line-height:1.4">${esc(tLiveryName(r.extra_info))}</div>`
-            : r.prev_equipment && !isMilitary && (r.notif_types || []).includes('Rare Plane/Airline') ? `<div style="margin-top:6px;font-size:12px;color:var(--dim);font-style:italic;line-height:1.4">${esc(tt('Previously'))} ${esc(r.prev_equipment)}</div>` : ''}
+            : r.prev_equipment && !isMilitary && (r.notif_types || []).includes('Rare Plane/Airline') ? `<div style="margin-top:6px;font-size:12px;color:var(--dim);font-style:italic;line-height:1.4">${esc(tt('Previous Equipment'))} - ${esc(r.prev_equipment)}</div>` : ''}
         </div>
         ${_detailQuickFilterBtns(r.registration, _manualRemoveBtn(r))}
       </div>
@@ -3261,6 +3261,8 @@ function logoTap() {
 // Offered to every account on each sign-in and whenever the app version changes (the server decides: tour_due), and any time from
 // Settings > Tour. Each step switches to a tab, rings its button in the bar and explains it. English / Chinese inline.
 let _appVersion = '';
+// The tour's "What's new" belongs to a MAJOR release (x.y0); point releases (2.12) keep showing their major's list. Mirrors control_store.tour_key.
+function _tourKey(v) { const m = String(v || '').match(/^(\d+)\.(\d+)/); return m ? `${+m[1]}.${String(Math.floor(+m[2] / 10) * 10).padStart(2, '0')}` : String(v || ''); }
 let _tourStep = 0, _tourSteps = [], _tourAirport = null, _tourPrevTz = '', _tourReload = false;
 function _tourBuildSteps() {
   const phone = window.innerWidth < 768, passenger = _appRole === 'passenger';
@@ -3279,7 +3281,7 @@ function _tourBuildSteps() {
               `SpotAlert 会盯着一座机场，告诉您哪些飞机值得去拍、什么时候来。本导览会介绍每个标签页和主要操作，约两分钟，随时可以跳过。我们从机场页面开始：每张卡片是一座可以关注的机场，并显示当地时间，导览结束后即可选择您的机场。`) +
             (_tourReload ? z(` The examples use ${_tourAirport.iata} data (${_tourAirport.name}).`, ` 示例数据来自 ${_tourAirport.iata}（${tExternalName(_tourAirport.name)}）。`) : '') },
     { picker: true, sel: '.airport-pick-card', pos: 'bottom',
-      title: z(`What's new in ${_appVersion || '2.10'}`, `${_appVersion || '2.10'} 版本新增内容`),
+      title: z(`What's new in ${_tourKey(_appVersion) || '2.10'}`, `${_tourKey(_appVersion) || '2.10'} 版本新增内容`),
       body: z(`Added since version 2.01:`, `相比 2.01 版本新增：`),
       items: [
         z(`Board: an arrivals board for regular flight numbers, with the aircraft assigned before it lands.`,
