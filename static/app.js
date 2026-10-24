@@ -3284,7 +3284,10 @@ function _bdRow(r, isMobile) {
   const time = `${esc(fmtTs(r.eff_ts))}${late ? `<small>${esc(fmtTs(r.scheduled_ts))}</small>` : ''}`;
   const airline = r.airline_name
     ? `<span data-ext-name="${esc(r.airline_name)}">${esc(tExternalName(r.airline_name))}</span>` : '';
-  const sub = airline;     // departure airport lives in the expanded card
+  // Special-livery flights: livery name after the airline. (Departure airport lives in the expanded card.)
+  const livery = (r.kind && (r.card_types || []).includes('Special Livery') && r.extra_info)
+    ? `<span class="bd-livery">${esc(tLiveryName(r.extra_info))}</span>` : '';
+  const sub = [airline, livery].filter(Boolean).join(' · ');
   const ac = r.registration
     ? `${_flag(_regoCountryCode(r.registration), { h: 11 })}<a href="${_fr24AircraftUrl(r.registration)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${esc(r.registration)}</a>` +
       `${r.aircraft_type ? `<div class="ty"><span class="fc-actype">${esc(r.aircraft_type)}</span></div>` : ''}`
