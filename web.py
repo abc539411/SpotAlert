@@ -4546,6 +4546,14 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
             result["current_time"] = _dt.datetime.now(_tz).strftime("%H:%M:%S")
         except Exception:
             result["current_time"] = ""
+        try:
+            # When this airport's monitor last completed a check, and how far ahead FR24's board reached — shown
+            # in the desktop nav bar on the Feed and Board tabs.
+            _bm = store_.get_board_meta()
+            result["updated_ts"] = int(_bm["updated_ts"]) if _bm.get("updated_ts") else None
+            result["data_through_ts"] = int(_bm["data_through_ts"]) if _bm.get("data_through_ts") else None
+        except Exception:
+            result["updated_ts"] = result["data_through_ts"] = None
         if cfg is None:
             # Standalone mode only (no AppConfig/monitor loop) — this used to run
             # unconditionally via a try/else, which meant it silently clobbered the

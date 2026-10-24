@@ -489,6 +489,14 @@
     .header-whoami-airport .hdr-clock-time { font-weight: 500; color: var(--dim); font-variant-numeric: tabular-nums; }
     .header-whoami-airport .hdr-clock-abbr { font-weight: 500; color: var(--dim); font-size: 11px; }
     .header-clock { display: none; }
+    /* Desktop nav bar: "Updated N min ago · Data through ..." on the Feed and Board tabs (moved out of the Board page). */
+    .header-updated { display: none; flex: 0 3 auto; font-size: 11px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; margin-left: 18px; align-self: center; }
+    @media (min-width: 768px) {
+      .header-updated.show { display: block; }
+      #tab-board .bd-meta { display: none; }
+      #tab-board .bd-top:not(:has(.bd-hidden-btn:not(.hidden))) { display: none; }   /* nothing left in the bar */
+      #tab-board .bd-top { padding-top: 8px; }
+    }
     @media (max-width: 767px) {
       .header-whoami { display: none; }
       /* Two stacked lines (flag + IATA over the time) — only ~50px wide, so it fits left of the
@@ -2035,6 +2043,7 @@
     <button class="nav-tab" data-tab="settings"><span class="tab-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="2.8"/><path d="M12 3.5v2.4M12 18.1v2.4M20.5 12h-2.4M5.9 12H3.5M17.8 6.2l-1.7 1.7M7.9 16.1l-1.7 1.7M17.8 17.8l-1.7-1.7M7.9 7.9 6.2 6.2"/></svg></span><span data-i18n="nav.settings">Settings</span></button>
   </nav>
   <div id="header-clock" class="header-clock"></div>
+  <div id="header-updated" class="header-updated" title="Last FR24 check / how far ahead the board reaches"></div>
   <div style="margin-left:auto;display:flex;align-items:center;gap:8px;min-width:0">
     <div id="header-whoami" class="header-whoami"></div>
     <div id="rapid-badge" style="flex-shrink:0">RAPID</div>

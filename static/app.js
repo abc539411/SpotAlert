@@ -1421,6 +1421,7 @@ function _pickerSubtab(name) {
 async function selectAirport(iata) {
   try {
     await api('/airport/select', { method: 'POST', body: JSON.stringify({ airport_iata: iata }) });
+    _hdrMeta = null; _hdrMetaTs = 0; if (typeof _syncHeaderMeta === 'function') _syncHeaderMeta(true);   // another airport's last-check time
     location.reload();
   } catch (e) {
     toast('Could not select that airport');
@@ -3014,6 +3015,7 @@ let activeTab = 'history';
 function switchTab(name) {
   if (!TABS.includes(name)) return;
   activeTab = name;
+  _syncHeaderMeta();
   TABS.forEach(t => {
     $('tab-' + t).classList.toggle('hidden', t !== name);
   });
@@ -3108,6 +3110,34 @@ let _bdPositioned = false;   // true once the wrap has been scrolled to today's 
 
 const _BD_EYE     = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12z"/><circle cx="12" cy="12" r="2.6"/></svg>';
 const _BD_EYE_OFF = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3l18 18"/><path d="M10.6 6.1A10 10 0 0 1 12 6c6.4 0 10 6 10 6a17 17 0 0 1-3.2 3.9M6.3 7.7C3.9 9.3 2 12 2 12s3.6 6 10 6c1.6 0 3-.3 4.2-.9"/><path d="M9.9 10a3 3 0 0 0 4.1 4.1"/></svg>';
+
+// Desktop nav bar: "Updated N min ago · Data through Sun 9:35am" for the Feed and Board tabs. The numbers are the
+// monitor's last completed check for this airport (board_meta) — /api/status carries them for every role.
+let _hdrMeta = null, _hdrMetaTs = 0;
+function _renderHeaderMeta() {
+  const el = $('header-updated');
+  if (!el) return;
+  const show = (activeTab === 'board' || activeTab === 'history') && window.innerWidth >= 768 && _hdrMeta && _hdrMeta.updated_ts;
+  el.classList.toggle('show', !!show);
+  if (!show) { el.textContent = ''; return; }
+  const bits = [`${tt('Updated')} ${_bdAgo(_hdrMeta.updated_ts)}`];
+  if (_hdrMeta.data_through_ts) bits.push(`${tt('Data through')} ${fmtTs(_hdrMeta.data_through_ts, { weekday: 'short' })}`);
+  el.textContent = bits.join(' · ');
+  el.title = el.textContent;     // full text when the nav bar is tight and it gets clipped
+}
+async function _syncHeaderMeta(force) {
+  _renderHeaderMeta();
+  if (!(activeTab === 'board' || activeTab === 'history')) return;
+  if (!force && _hdrMeta && Date.now() - _hdrMetaTs < 30000) return;
+  _hdrMetaTs = Date.now();
+  try {
+    const st = await api('/status');
+    _hdrMeta = { updated_ts: st.updated_ts, data_through_ts: st.data_through_ts };
+    _renderHeaderMeta();
+  } catch (e) { /* header text is a nicety; ignore */ }
+}
+setInterval(() => _syncHeaderMeta(), 30000);
+window.addEventListener('resize', _renderHeaderMeta);
 
 function _bdAgo(ts) {
   const mins = Math.max(0, Math.round((Date.now() / 1000 - ts) / 60));
@@ -3386,6 +3416,7 @@ function renderBoard() {
   if (d.updated_ts) bits.push(`${tt('Updated')} ${_bdAgo(d.updated_ts)}`);
   if (d.data_through_ts) bits.push(`${tt('Data through')} ${fmtTs(d.data_through_ts, { weekday: 'short' })}`);
   $('bd-meta').textContent = bits.join(' · ');
+  _hdrMeta = { updated_ts: d.updated_ts, data_through_ts: d.data_through_ts }; _hdrMetaTs = Date.now(); _renderHeaderMeta();
   renderBoardHidden();
 
   wrap.innerHTML = (d.days || []).map(day => {
@@ -3965,7 +3996,7 @@ async function forceCheck() {
   try {
     toast('Binoculars out…');
     await api('/force-check', { method: 'POST' });
-    setTimeout(() => { loadFeed(); _recLoaded = false; toast('Nothing missed. Probably.'); }, 8000);
+    setTimeout(() => { loadFeed(); _recLoaded = false; _syncHeaderMeta(true); toast('Nothing missed. Probably.'); }, 8000);
   } catch (e) {
     toast('Check failed: ' + e.message);
   } finally {
