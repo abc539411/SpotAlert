@@ -3329,7 +3329,7 @@ function _bdDetailHtml(r) {
     ${facts.trim() ? `<div class="bd-facts" style="margin-top:10px">${facts}</div>` : ''}
     <div class="bd-sec-t" style="border-top:1px solid var(--border);padding-top:12px">${esc(tt('Equipment History'))}</div>
     <div class="srch-fl-rows" style="margin-top:0">${hist}</div>
-    ${lastSeen || spotted ? `<div class="detail-cards">${lastSeen ? `<div class="dc"><span class="lbl">${esc(tt('Last Seen'))}</span><span class="val">${esc(lastSeen)}</span></div>` : ''}${spotted}</div>` : ''}
+    ${spotted ? `<div class="detail-cards">${spotted}</div>` : ''}
     ${triggers}
   </div>`;
 }
