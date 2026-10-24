@@ -2,6 +2,12 @@
 
 Versioning: a **major** release is x.y0 (2.10, 2.20...) and re-offers the in-app tour once; point releases (2.11, 2.12...) are fixes and polish and do not.
 
+## 2.13 — since 2.12
+
+### Added
+- **Sunrise / sunset lines on the Board** — a glowing dot and the word "Sunrise" / "Sunset", centred inside each day's flight list at the right time of day, in Spotting's colours. The same glowing dot now sits on Spotting's sunrise/sunset markers. Days the weather cache doesn't cover are worked out from the airport's position.
+- **Previous equipment on Rare Plane flights** — the Board card shows "Previous Equipment - B78X" (此前机型) and the Spotting card shows "Was B38M" (原为).
+
 ## 2.12 — since 2.10
 
 ### Added
