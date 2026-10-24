@@ -355,7 +355,7 @@ const UI_ZH = {
   'Refresh Board': '刷新看板', 'Checking FR24…': '正在检查 FR24…', 'Board updated': '看板已更新',
   "Waiting for this airport's first check — tap Refresh to run one now.": '正在等待该机场的首次检查——点击刷新立即检查。',
   'Could not load the Board.': '无法加载看板。',
-  'Not assigned yet': '尚未分配机号', 'Not on board yet': '尚未上板', 'Possible aircraft': '可能的飞机', 'Month': '月份', 'Older': '更早', 'Older than 7 days': '7 天前的记录', 'No older days.': '没有更早的记录。', 'No activity in the last 7 days.': '最近 7 天没有活动。', 'Since': '始于', 'Tap to select, then Unhide': '点选后再点“取消隐藏”', 'Edit': '编辑', 'Done': '完成', 'Hide': '隐藏', 'selected': '已选', 'Hidden flights': '已隐藏航班', 'Select flights to hide or unhide': '选择要隐藏或取消隐藏的航班', 'No check yet': '尚未检查', 'Confirm Refresh?': '确认刷新？', 'Added by hand (one-off) — in Feed and Spotting': '手动添加（仅此一次）— 已在 Feed 和拍机时间线', 'Add to Feed + Spotting (one-off)': '加入 Feed 和拍机时间线（仅此一次）', 'Remove this one-off flight from Feed + Spotting': '从 Feed 和拍机时间线移除此航班', 'Click again to add it to Feed + Spotting': '再点一次确认加入', 'Click again to remove it': '再点一次确认移除', 'added to Feed + Spotting': '已加入 Feed 和拍机时间线', 'removed': '已移除', 'Already photographed': '已拍摄', 'today': '今天', 'Last triggered': '上次触发原因', 'Hidden from Feed by the Exclusion List': '已被排除名单隐藏', 'No regular flights to show.': '暂无需要关注的常规航班。', 'No Feed cards': '无 Feed 卡片', 'Aircraft not assigned yet': '尚未分配飞机', 'Could not load aircraft details.': '无法加载飞机信息。',
+  'Not assigned yet': '尚未分配机号', 'Not on board yet': '尚未上板', 'Possible aircraft': '可能的飞机', 'Back': '返回', 'Month': '月份', 'Older': '更早', 'Older than 7 days': '7 天前的记录', 'No older days.': '没有更早的记录。', 'No activity in the last 7 days.': '最近 7 天没有活动。', 'Since': '始于', 'Tap to select, then Unhide': '点选后再点“取消隐藏”', 'Edit': '编辑', 'Done': '完成', 'Hide': '隐藏', 'selected': '已选', 'Hidden flights': '已隐藏航班', 'Select flights to hide or unhide': '选择要隐藏或取消隐藏的航班', 'No check yet': '尚未检查', 'Confirm Refresh?': '确认刷新？', 'Added by hand (one-off) — in Feed and Spotting': '手动添加（仅此一次）— 已在 Feed 和拍机时间线', 'Add to Feed + Spotting (one-off)': '加入 Feed 和拍机时间线（仅此一次）', 'Remove this one-off flight from Feed + Spotting': '从 Feed 和拍机时间线移除此航班', 'Click again to add it to Feed + Spotting': '再点一次确认加入', 'Click again to remove it': '再点一次确认移除', 'added to Feed + Spotting': '已加入 Feed 和拍机时间线', 'removed': '已移除', 'Already photographed': '已拍摄', 'today': '今天', 'Last triggered': '上次触发原因', 'Hidden from Feed by the Exclusion List': '已被排除名单隐藏', 'No regular flights to show.': '暂无需要关注的常规航班。', 'No Feed cards': '无 Feed 卡片', 'Aircraft not assigned yet': '尚未分配飞机', 'Could not load aircraft details.': '无法加载飞机信息。',
   'No equipment history yet.': '暂无机型使用记录。', 'Registration': '注册号', 'Aircraft': '飞机', 'Manufacturer': '制造商', 'Operator': '运营商',
   'Owner': '所有者', 'Livery': '涂装', 'Country': '国家/地区', 'Mode S': 'Mode S', 'Serial No.': '序列号', 'Built': '出厂年份', 'Feed cards here': '本场 Feed 卡片数',
   'Feed card': '动态卡片', 'Excluded': '已排除', 'Has a card in Feed': '动态中已有卡片',
@@ -3158,6 +3158,10 @@ function _olderSelectHtml(available, selected, handler) {
     `<select class="older-sel" onchange="${handler}(this.value)">${months.map(m =>
       `<option value="${m}"${m === selected ? ' selected' : ''}>${esc(_olderMonthLabel(m))}</option>`).join('')}</select></div>`;
 }
+function _olderLeftHtml(available, selected, backFn, pickFn) {
+  return `<button type="button" class="older-btn older-back" onclick="${backFn}()">‹ ${esc(tt('Back'))}</button>` +
+         _olderSelectHtml(available, selected, pickFn);
+}
 function _olderCutoffDate() {          // first date NOT in the default view (7 days back)
   return new Date(Date.parse(_todayStrInAppTz() + 'T00:00:00Z') - 7 * 86400000).toISOString().slice(0, 10);
 }
@@ -3173,7 +3177,8 @@ let _bdPositioned = false;
 let _bdBack = 7;
 let _bdExtra = [];           // days brought in by Older / the month picker (shown after the default days)
 let _bdExtraMonth = null;    // month currently loaded into _bdExtra (null = Older not used yet)
-let _bdFocusExtra = false;   // true once the wrap has been scrolled to today's card
+let _bdFocusExtra = false;
+let _bdOlderView = false;    // true while the Board shows only the older days (default cards hidden)
 
 const _BD_EYE     = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12z"/><circle cx="12" cy="12" r="2.6"/></svg>';
 const _BD_EYE_OFF = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3l18 18"/><path d="M10.6 6.1A10 10 0 0 1 12 6c6.4 0 10 6 10 6a17 17 0 0 1-3.2 3.9M6.3 7.7C3.9 9.3 2 12 2 12s3.6 6 10 6c1.6 0 3-.3 4.2-.9"/><path d="M9.9 10a3 3 0 0 0 4.1 4.1"/></svg>';
@@ -3557,10 +3562,12 @@ function renderBoard() {
   const isMobile = window.innerWidth < 768;
 
   wrap.classList.toggle('bd-editing', _bdEdit);
+  wrap.classList.toggle('bd-older-view', _bdOlderView);
   const haveDates = new Set((d.days || []).map(x => x.date));
-  const allDays = (d.days || []).concat(_bdExtra.filter(x => !haveDates.has(x.date)));
+  const extraDays = _bdExtra.filter(x => !haveDates.has(x.date));
+  const shownDays = _bdOlderView ? extraDays : (d.days || []);        // older view hides the default (+3/-7) cards
   _bdRowsByKey = {};
-  allDays.forEach(day => day.rows.forEach(r => { _bdRowsByKey[_bdKey(r)] = r; }));
+  (d.days || []).concat(extraDays).forEach(day => day.rows.forEach(r => { _bdRowsByKey[_bdKey(r)] = r; }));
   if (_bdOpenKey && !_bdRowsByKey[_bdOpenKey]) _bdOpenKey = null;   // its row left the board
 
   const bits = [];
@@ -3569,8 +3576,7 @@ function renderBoard() {
   $('bd-meta').textContent = bits.join(' · ');
   _bdSyncEditBar();
 
-  const firstExtraDate = _bdExtra.length ? _bdExtra.filter(x => !haveDates.has(x.date))[0]?.date : null;
-  wrap.innerHTML = allDays.map(day => {
+  wrap.innerHTML = (_bdOlderView ? `<div class="bd-older left">${_olderLeftHtml(d.available_months, _bdExtraMonth, 'bdOlderBack', 'bdPickMonth')}</div>` : '') + shownDays.map(day => {
     const empty = day.rows.length ? '' :
       `<div class="bd-empty">${esc(d.updated_ts ? tt('No regular flights to show.') : tt("Waiting for this airport's first check — tap Refresh to run one now."))}</div>`;
     // Header mirrors the Spotting day card: label + sub-line on the left, count + weather on the right.
@@ -3584,14 +3590,14 @@ function renderBoard() {
     const sub = nFeed
       ? `<span class="rdc-window">${_lang === 'zh' ? `Feed 卡片 ${nFeed}` : `${nFeed} in Feed`}</span>`
       : `<span class="rdc-window" style="color:var(--dim);font-weight:400">${tt('No Feed cards')}</span>`;
-    return `<div class="bd-card${day.is_today ? ' bd-today' : ''}${day.date === firstExtraDate ? ' bd-extra-first' : ''}">
+    return `<div class="bd-card${day.is_today ? ' bd-today' : ''}">
       <div class="rec-day-hdr">
         <div><div class="rec-d-label">${esc(tRecDayLabel(day.date, day.label))}</div>${sub}</div>
         <div style="text-align:right">${wx}</div>
       </div>
       <div class="bd-rows">${day.rows.map(r => _bdRow(r, isMobile)).join('')}${empty}</div>
     </div>${day.is_today ? _bdHiddenCard() : ''}`;
-  }).join('') + `<div class="bd-older">${_bdExtraMonth ? _olderSelectHtml(d.available_months, _bdExtraMonth, 'bdPickMonth') : `<button type="button" class="older-btn" onclick="bdLoadOlder(this)">${esc(tt('Older'))} ›</button>`}</div>`;
+  }).join('') + (_bdOlderView ? '' : `<div class="bd-older"><button type="button" class="older-btn" onclick="bdLoadOlder(this)">${esc(tt('Older'))} ›</button></div>`);
   if (!_bdPositioned && wrap.firstElementChild) {
     // First render: land on today's card (future days sit to its left, past days to its right).
     const today = wrap.querySelector('.bd-today');
@@ -3600,11 +3606,7 @@ function renderBoard() {
   } else wrap.scrollLeft = keepX;
   _bdInitThumbs();
   _bdRefreshSheet();
-  if (_bdFocusExtra) {
-    _bdFocusExtra = false;
-    const f = wrap.querySelector('.bd-extra-first');
-    if (f) wrap.scrollTo({ left: wrap.scrollLeft + f.getBoundingClientRect().left - wrap.getBoundingClientRect().left - (isMobile ? 6 : 14), behavior: 'smooth' });
-  }
+  if (_bdFocusExtra) { _bdFocusExtra = false; wrap.scrollLeft = 0; }
   wrap.querySelectorAll('.bd-rows').forEach((el, i) => { el.scrollTop = keepY[i] || 0; });
   if (_lang === 'zh') {
     const open = _bdRowsByKey[_bdOpenKey];
@@ -3670,6 +3672,7 @@ async function _bdLoadMonth(ym) {
   // the current month only needs what the default view doesn't already show
   _bdExtra = (data.days || []).filter(day => ym !== cur || day.date < cut);
   _bdExtraMonth = ym;
+  _bdOlderView = true;
   _bdFocusExtra = true;
   renderBoard();
   if (!_bdExtra.length) toast(`${_olderMonthLabel(ym)}: ${tt('No older days.')}`);
@@ -3677,6 +3680,11 @@ async function _bdLoadMonth(ym) {
 async function bdLoadOlder(btn) {            // "Older ›": the current month's earlier days
   if (btn) btn.disabled = true;
   try { await _bdLoadMonth(_todayStrInAppTz().slice(0, 7)); } catch (e) { if (btn) btn.disabled = false; toast('Error: ' + e.message); }
+}
+function bdOlderBack() {                      // leave the older view: default cards return, centred on Today
+  _bdOlderView = false; _bdExtra = []; _bdExtraMonth = null; _bdPositioned = false; _bdOpenKey = null;
+  if ($('detail-modal') && !$('detail-modal').classList.contains('hidden')) closeDetail();
+  renderBoard();
 }
 async function bdPickMonth(ym) {
   if (!ym) return;
@@ -5703,6 +5711,7 @@ async function loadRecommendation(force) {
         const needed = Math.max(0, halfView - halfCard - origLeft);
         if (needed > 0) {
           const spacer = document.createElement('div');
+          spacer.className = 'rec-spacer';
           spacer.style.cssText = `flex:0 0 ${needed}px;pointer-events:none`;
           scroll.insertBefore(spacer, scroll.firstChild);
         }
@@ -5727,6 +5736,13 @@ async function loadRecommendation(force) {
 
 // Spotting: same Older / month picker. Cards are slotted in before the slot (nothing else re-renders, so the view
 // doesn't jump); a new month replaces the previously loaded one.
+function _recCenterToday(strip) {
+  const today = strip.querySelector('.rec-today');
+  if (!today) return;
+  const mobile = window.matchMedia('(max-width: 767px)').matches;
+  const delta = today.getBoundingClientRect().left - strip.getBoundingClientRect().left;
+  strip.scrollLeft += delta - (mobile ? 6 : (strip.clientWidth - today.offsetWidth) / 2);
+}
 async function _recLoadMonth(ym, slot) {
   const data = await api('/recommendation?month=' + encodeURIComponent(ym));
   const cut = _olderCutoffDate();
@@ -5735,21 +5751,24 @@ async function _recLoadMonth(ym, slot) {
   const extra = (data.days || []).filter(d => !have.has(d.date) && (ym !== cur || d.date < cut));
   const strip = slot.parentNode;
   strip.querySelectorAll('.rec-extra').forEach(c => c.remove());
+  // older view: only the older cards show; the control column (Back + month picker) is the first thing on the left
+  strip.classList.add('rec-older-view');
+  strip.insertBefore(slot, strip.firstChild);
+  slot.classList.add('left');
+  slot.innerHTML = _olderLeftHtml(_recData.available_months, ym, 'recOlderBack', 'recPickMonth');
   const tmp = document.createElement('div');
   tmp.innerHTML = extra.map(d => _renderDayCard(d, data.timezone || '')).join('');
-  let first = null;
+  const ref = slot.nextSibling;
   [...tmp.children].forEach(card => {
     card.classList.add('rec-extra');
-    strip.insertBefore(card, slot);
+    strip.insertBefore(card, ref);
     _initDragScrollY(card);
     card.style.overflowY = card.scrollHeight > card.clientHeight ? 'auto' : 'hidden';
-    if (!first) first = card;
   });
-  slot.innerHTML = _olderSelectHtml(_recData.available_months, ym, 'recPickMonth');
-  if (first) strip.scrollTo({ left: strip.scrollLeft + first.getBoundingClientRect().left - strip.getBoundingClientRect().left - 14, behavior: 'smooth' });
-  else toast(`${_olderMonthLabel(ym)}: ${tt('No older days.')}`);
+  strip.scrollLeft = 0;
+  if (!extra.length) toast(`${_olderMonthLabel(ym)}: ${tt('No older days.')}`);
 }
-async function recLoadOlder(btn) {           // "Older ›": the current month's earlier days
+async function recLoadOlder(btn) {           // "Older ›": the current month's earlier days, in a view of their own
   btn.disabled = true;
   try { await _recLoadMonth(_todayStrInAppTz().slice(0, 7), btn.closest('.rec-older')); }
   catch (e) { btn.disabled = false; toast('Error: ' + e.message); }
@@ -5757,6 +5776,18 @@ async function recLoadOlder(btn) {           // "Older ›": the current month's
 async function recPickMonth(ym) {
   if (!ym) return;
   try { await _recLoadMonth(ym, document.querySelector('.rec-scroll .rec-older')); } catch (e) { toast('Error: ' + e.message); }
+}
+function recOlderBack() {                    // back to the default (+3/-7) view, centred on Today
+  const strip = document.querySelector('.rec-scroll');
+  const slot = strip && strip.querySelector('.rec-older');
+  if (!strip || !slot) return;
+  strip.querySelectorAll('.rec-extra').forEach(c => c.remove());
+  strip.classList.remove('rec-older-view');
+  slot.classList.remove('left');
+  slot.innerHTML = `<button type="button" class="older-btn" onclick="recLoadOlder(this)">${esc(tt('Older'))} ›</button>`;
+  strip.appendChild(slot);
+  strip.querySelectorAll('.rec-day').forEach(c => { c.style.overflowY = c.scrollHeight > c.clientHeight ? 'auto' : 'hidden'; });
+  requestAnimationFrame(() => _recCenterToday(strip));
 }
 
 function _renderRecommendation(data) {

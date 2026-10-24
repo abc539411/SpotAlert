@@ -677,10 +677,16 @@
     .bd-card.bd-today { border-color: var(--accent); }
     /* "Older" slot at the far right end of the Board / Spotting strips */
     .bd-older, .rec-older { flex: 0 0 auto; align-self: center; display: flex; align-items: center; padding: 0 6px; }
-    .older-btn { writing-mode: vertical-rl; background: var(--surface); border: 1px solid var(--border); color: var(--dim); font-size: 12px; font-weight: 600; letter-spacing: .06em; padding: 18px 9px; border-radius: 999px; cursor: pointer; }
+    .older-btn { background: var(--surface); border: 1px solid var(--border); color: var(--dim); font-size: 13px; font-weight: 600; padding: 9px 18px; border-radius: 999px; cursor: pointer; white-space: nowrap; }
     .older-btn:hover { color: var(--text); border-color: var(--accent); }
     .older-btn:disabled { opacity: .5; cursor: default; }
     /* after "Older": a month picker takes the button's place at the right end of the strip */
+    /* Older view: the strip shows ONLY older days; the control column sits at the LEFT (Back, then the month picker) */
+    .bd-older.left, .rec-older.left { align-self: flex-start; flex-direction: column; align-items: stretch; gap: 12px; width: 170px; padding: 8px 6px 0 0; }
+    .rec-older-view > .rec-day:not(.rec-extra), .rec-older-view > .rec-spacer { display: none; }
+    /* the older view starts at the left edge (no centring padding) */
+    .rec-scroll.rec-older-view { padding-inline: 14px; }
+    .bd-wrap.bd-older-view { padding-left: 14px; padding-right: 14px; }
     .older-sel-wrap { display: flex; flex-direction: column; gap: 6px; align-items: stretch; width: 150px; }
     .older-sel-lbl { font-size: 10px; color: var(--dim); text-transform: uppercase; letter-spacing: .06em; }
     .older-sel { background: var(--surface); border: 1px solid var(--border); color: var(--text); font-size: 13px; padding: 9px 10px; border-radius: var(--r); cursor: pointer; width: 100%; }
