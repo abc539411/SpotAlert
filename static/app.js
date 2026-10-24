@@ -3312,7 +3312,6 @@ function switchTab(name) {
   if (!TABS.includes(name)) return;
   activeTab = name;
   _hideRefreshPill();
-  $('detail-modal').classList.toggle('sheet-tall', name === 'recommendation' || name === 'board');   // phone: taller sheet for these two
   if (name !== 'board' && _bdEdit) { _bdEdit = false; _bdSel.clear(); renderBoard(); }
   const eb = $('btn-edit-board');
   if (eb) { eb.classList.toggle('hidden', name !== 'board' || !_bdCanEdit()); if (name === 'board') _bdSyncEditBar(); }

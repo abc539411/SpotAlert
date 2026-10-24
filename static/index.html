@@ -339,8 +339,8 @@
     @media (max-width: 767px) {
       .detail-modal { max-height: 100%; }
       .detail-sheet-scroll { padding-bottom: calc(12px + env(safe-area-inset-bottom)); }
-      /* Spotting + Board (set by switchTab): the sheet rises to 90% of the visible screen (Feed keeps 60%). */
-      .detail-modal.sheet-tall .detail-sheet-scroll { max-height: calc(var(--app-vvh, 100vh) * 0.9); }
+      /* Feed, Spotting and Board cards: the sheet can rise to 90% of the visible screen. */
+      .detail-sheet-scroll { max-height: calc(var(--app-vvh, 100vh) * 0.9); }
     }
     @media (min-width: 768px) {
       .detail-sheet {
