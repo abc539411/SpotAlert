@@ -3135,8 +3135,7 @@ function _bdRow(r, isMobile) {
   const sub = [airline, origin].filter(Boolean).join(' · ');
   const ac = r.registration
     ? `${_flag(_regoCountryCode(r.registration), { h: 11 })}<a href="${_fr24AircraftUrl(r.registration)}" target="_blank" rel="noopener">${esc(r.registration)}</a>` +
-      `${r.aircraft_type ? `<div class="ty">${esc(r.aircraft_type)}</div>` : ''}` +
-      `${r.kind === 'excluded' ? `<div class="bd-excl-tag">${esc(tt('Excluded'))}</div>` : ''}`
+      `${r.aircraft_type ? `<div class="ty">${esc(r.aircraft_type)}</div>` : ''}`
     : `<span class="bd-na">${esc(tt('Not assigned yet'))}</span>${r.aircraft_type ? `<div class="ty">${esc(r.aircraft_type)}</div>` : ''}`;
   const kindCls = r.kind === 'feed' ? ' bd-row-feed' : r.kind === 'excluded' ? ' bd-row-excl' : '';
   const kindTip = r.kind === 'feed' ? tt('Has a card in Feed') : r.kind === 'excluded' ? tt('Would have a Feed card, but the aircraft is on the Exclusion List') : '';
