@@ -177,6 +177,13 @@ class SqliteStore:
                 )
             """)
             conn.execute("CREATE TABLE IF NOT EXISTS board_meta (key TEXT PRIMARY KEY, value TEXT)")
+            # The Board's one-off flights were briefly tagged "Added" before being renamed "Manual" — carry any
+            # such rows (and their cached timeline events) over so they keep working (and can be removed).
+            conn.execute("UPDATE flight_arrivals SET notif_types = REPLACE(notif_types, '\"Added\"', '\"Manual\"') "
+                         "WHERE notif_types LIKE '%\"Added\"%'")
+            conn.execute("UPDATE timeline_cache SET clusters_json = REPLACE(clusters_json, '\"Added\"', '\"Manual\"'), "
+                         "events_json = REPLACE(events_json, '\"Added\"', '\"Manual\"') "
+                         "WHERE clusters_json LIKE '%\"Added\"%' OR events_json LIKE '%\"Added\"%'")
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS livery_cooldowns (
                     registration TEXT PRIMARY KEY,

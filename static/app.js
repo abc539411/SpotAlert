@@ -2292,6 +2292,32 @@ function _fr24FlightUrl(fn)     { return `https://www.flightradar24.com/data/fli
 function _fr24AirportUrl(iata)  { return `https://www.flightradar24.com/airport/${(iata || '').toLowerCase()}`; }
 function _fr24AirlineUrl(iata, icao) { return `https://www.flightradar24.com/data/airlines/${(iata || '').toLowerCase()}-${(icao || '').toLowerCase()}`; }
 
+// Feed: a flight added by hand from the Board ("Manual" tag) can be removed again from its Feed card — same
+// green button as the Board, shown solid because it is "on". Click, then click again to confirm.
+function _manualRemoveBtn(r) {
+  if (_appRole !== 'controller' || !(r.notif_types || []).includes('Manual')) return '';
+  const flights = (r.flights || []).map(f => [f.flight_number, f.arrival_ts]);
+  return `<button class="detail-quick-btn detail-quick-pin detail-quick-on" data-flights="${esc(JSON.stringify(flights))}"
+      title="${esc(tt('Remove this one-off flight from Feed + Spotting'))}"
+      onclick="event.stopPropagation(); feedManualRemove(this)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="3" y="4" width="18" height="17" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="12" y1="12" x2="12" y2="18"/><line x1="9" y1="15" x2="15" y2="15"/></svg></button>`;
+}
+
+async function feedManualRemove(btn) {
+  const flights = JSON.parse(btn.dataset.flights || '[]');
+  _armOrConfirm(btn, tt('Remove this one-off flight from Feed + Spotting'), tt('Click again to remove it'), async () => {
+    try {
+      // only the flights actually tagged Manual are touched server-side; others in the card are left alone
+      for (const [fn, ts] of flights) await api(`/board/pin/${encodeURIComponent(fn)}/${ts}`, { method: 'DELETE' });
+      toast(tt('removed'));
+      if (typeof closeDetail === 'function') closeDetail();
+      if (typeof collapseGridDetail === 'function') collapseGridDetail();
+      _recLoaded = false; _recData = null;
+      if (_bdData) loadBoard();
+      loadFeed();
+    } catch (e) { toast('Error: ' + e.message); }
+  });
+}
+
 function _detailInner(r, closeCmd, showPhoto = true) {
   const fr24 = _fr24AircraftUrl(r.registration);
   const lazyId = r.flights
@@ -2417,7 +2443,7 @@ function _detailInner(r, closeCmd, showPhoto = true) {
           ${airline ? `<div style="font-size:12px;color:var(--dim)" data-ext-name="${esc(airline)}">${esc(tExternalName(airline))}</div>` : ''}
           ${r.extra_info && !isMilitary && (r.notif_types || []).includes('Special Livery') ? `<div style="margin-top:6px;font-size:12px;color:var(--dim);font-style:italic;line-height:1.4">${esc(tLiveryName(r.extra_info))}</div>` : ''}
         </div>
-        ${_detailQuickFilterBtns(r.registration)}
+        ${_detailQuickFilterBtns(r.registration, _manualRemoveBtn(r))}
       </div>
       ${isMilitary ? `<div style="margin-top:10px;border-top:1px solid var(--border)"></div>${mapSections}` : `<div${r.flights.length > 2 ? ' class="flight-bars-scroll" style="max-height:290px"' : ''}>${flightBars}</div>`}
       <div class="detail-cards">
