@@ -3187,7 +3187,7 @@ function logoTap() {
 // Phones: the Board has no tab in the bottom bar. The Controller gets there by pulling the Feed all the way down from
 // its top — a cue ("Pull down for Board") follows the finger and the Board opens on release past the threshold.
 (function initPullForBoard() {
-  const lockAt = () => Math.round(window.innerHeight / 2);   // pull distance (half the screen) at which the Board locks open by itself
+  const lockAt = () => Math.round(window.innerHeight * 0.6);   // pull distance (60% of the screen) at which the Board locks open by itself
   let startY = null, startX = 0, pull = 0, locked = false, busy = false, H = 0;
   const feed = () => document.getElementById('tab-history');
   const board = () => document.getElementById('tab-board');
@@ -3240,8 +3240,8 @@ function logoTap() {
   const lockOpen = () => {                  // far enough: finish the slide ourselves and land on the Board
     locked = busy = true;
     hidePill();
-    setY(0, 560);                            // the lock-in glide is deliberately slow and soft
-    setTimeout(() => { cleanup(); switchTab('board'); busy = false; startY = null; pull = 0; locked = false; }, 580);
+    setY(0, 700);                            // the lock-in glide is deliberately slow and soft
+    setTimeout(() => { cleanup(); switchTab('board'); busy = false; startY = null; pull = 0; locked = false; }, 720);
   };
   const springBack = () => {                // let go too early: the Board rides back up and disappears
     busy = true;
