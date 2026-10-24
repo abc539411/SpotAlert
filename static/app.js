@@ -35,6 +35,10 @@ const I18N = {
     'settings.tab.spotting': '拍机',
     'settings.tab.feed': '动态',
     'settings.tab.board': '大屏',
+    'settings.tour.heading': '导览',
+    'settings.tour.key': '开始导览',
+    'settings.tour.desc': '快速了解每个标签页的用途以及各项功能的位置。',
+    'settings.tour.btn': '开始',
     'config.board.view.heading': '视图',
     'settings.board.default.key': '以大屏为首页',
     'settings.board.default.desc': '用大屏代替动态作为首页。在手机上，大屏会取代底部栏中的动态，而动态则变成从大屏顶部下拉进入的页面。仅影响您自己的账号。',
@@ -794,9 +798,10 @@ function toast(msg, ms = 2000, wrap = false) {
   el._t = setTimeout(() => el.classList.remove('show'), ms);
 }
 
+let _tourOn = false;          // during the tour every read comes from the Controller's first airport (see auth.current_user)
 async function api(path, opts = {}) {
   const r = await fetch('/api' + path, {
-    headers: { 'Content-Type': 'application/json', ...opts.headers },
+    headers: { 'Content-Type': 'application/json', ...(_tourOn ? { 'X-Tour-Airport': '1' } : {}), ...opts.headers },
     ...opts,
   });
   if (!r.ok) throw new Error(await r.text());
@@ -1033,6 +1038,7 @@ async function _authBoot() {
   _applyRoleUI(me.user.role);
   _boardDefault = !!me.user.board_default;
   _applyBoardDefault();
+  if (me.user.tour_seen === false) setTimeout(startTour, 1500);       // first sign-in (existing accounts: next sign-in)
   if (_boardDefault) switchTab('board');                  // home page (deep links below still win)
   // The cards' mute/exclude/watch buttons light up from the filter lists, which otherwise
   // only load when the Settings tab is opened — so fetch them at boot (Controller/Pilot only,
@@ -3240,6 +3246,107 @@ function logoTap() {
 
 // Phones: the Board has no tab in the bottom bar. The Controller gets there by pulling the Feed all the way down from
 // its top — a cue ("Pull down for Board") follows the finger and the Board opens on release past the threshold.
+// ── Take a tour ─────────────────────────────────────────────────────────────────────────────────────────────────────
+// Offered once to every account (existing ones on their next sign-in, new ones on their first), and any time from
+// Settings > Tour. Each step switches to a tab, rings its button in the bar and explains it. English / Chinese inline.
+let _tourStep = 0, _tourSteps = [], _tourAirport = null, _tourPrevTz = '', _tourReload = false;
+function _tourBuildSteps() {
+  const phone = window.innerWidth < 768, role = _appRole;
+  const z = (en, zh) => (_lang === 'zh' ? zh : en);
+  const steps = [
+    { tab: 'history', target: null,
+      title: z('Welcome to SpotAlert', '欢迎使用 SpotAlert'),
+      body: z('A quick tour of where everything is. It takes about a minute, and you can skip it any time.',
+              '快速了解各项功能的位置，大约一分钟，随时可以跳过。') +
+            (_tourReload ? z(` The examples use ${_tourAirport.iata} data (${_tourAirport.name}).`, ` 示例数据来自 ${_tourAirport.iata}（${tExternalName(_tourAirport.name)}）。`) : '') },
+    { tab: 'recommendation', target: 'recommendation',
+      title: z('Spotting', '拍机'),
+      body: z('The best windows to be at the airport each day, built from what is flying and the light. Swipe sideways between days.',
+              '每天最佳的到场时段，根据航班情况与光线生成。左右滑动切换日期。') },
+    { tab: 'history', target: _boardDefault && phone ? null : 'history',
+      title: z('Feed', '动态'),
+      body: z('Every flight that matched your filters, as photo cards. Tap a card for its details; Older reaches back through past weeks.',
+              '所有符合筛选条件的航班，以图片卡片展示。点按卡片查看详情，“更早”可回看过去几周。') },
+    { tab: 'board', target: phone && !_boardDefault ? null : 'board',
+      title: z('Board', '大屏'),
+      body: phone && !_boardDefault
+        ? z('The arrivals board for the regular flight numbers, with the aircraft assigned before it lands. Pull the Feed all the way down from the top to open it.',
+            '常规航班号的到达大屏，可在飞机落地前看到已分配的机型和注册号。在动态页面顶部一直向下拉即可打开。')
+        : z('The arrivals board for the regular flight numbers, with the aircraft assigned before it lands. Today is centred at the current time.',
+            '常规航班号的到达大屏，可在飞机落地前看到已分配的机型和注册号。今天一栏会定位到当前时间。') },
+  ];
+  if (role === 'controller' || role === 'pilot') {
+    steps.push({ tab: 'collection', target: 'collection',
+      title: z('Collection', '收藏'),
+      body: z('Your Lightroom catalog: what you have photographed, what is missing, and your Fleet cards.',
+              '您的 Lightroom 图库：已拍摄的、缺少的，以及机队卡片。') });
+  }
+  steps.push({ tab: 'search', target: 'search',
+    title: z('Search', '搜索'),
+    body: z('Look up an aircraft, a route or a flight number: when it was last here, and which types fly it.',
+            '查询飞机、航线或航班号：上次来访时间，以及执飞的机型。') });
+  steps.push({ tab: 'settings', target: 'settings',
+    title: z('Settings', '设置'),
+    body: z('Language, notifications and filters live here. Under Board you can open on the Board instead of the Feed.',
+            '语言、通知和筛选都在这里。在“大屏”中可以选择以大屏而非动态作为首页。') });
+  steps.push({ tab: 'history', target: null,
+    title: z('You are all set', '一切就绪'),
+    body: z('Retake this tour any time from Settings, General, Take a tour.', '您可以随时在“设置 > 通用 > 开始导览”中重新观看。') });
+  return steps;
+}
+async function startTour() {
+  try { _tourAirport = await api('/tour/airport'); } catch (e) { _tourAirport = null; }
+  _tourReload = !!(_tourAirport && _tourAirport.iata && !_tourAirport.same);
+  if (_tourReload) {                                        // show the example airport: its times, and fresh data on every tab
+    _tourOn = true;
+    _tourPrevTz = _appTz;
+    if (_tourAirport.tz) _appTz = _tourAirport.tz;
+    _recLoaded = false; _recData = null; _bdData = null; _bdPositioned = false; _bdExtra = []; _bdExtraMonth = null; _bdOlderView = false;
+    _srchFlData = null;
+  }
+  _tourSteps = _tourBuildSteps();
+  _tourStep = 0;
+  $('tour-layer').classList.add('show');
+  _tourRender();
+}
+function _tourEnd(markSeen = true) {
+  if (markSeen) api('/me/tour-seen', { method: 'PUT', body: JSON.stringify({ seen: true }) }).catch(() => {});
+  $('tour-layer').classList.remove('show');
+  $('tour-layer').innerHTML = '';
+  if (_tourReload) {                                        // back to the user's own airport: same clean slate as switching airports
+    _tourOn = false;
+    _appTz = _tourPrevTz;
+    setTimeout(() => location.reload(), 150);                // lets the "seen" write leave first
+    return;
+  }
+  switchTab(_boardDefault ? 'board' : 'history');
+}
+function _tourGo(delta) {
+  _tourStep += delta;
+  if (_tourStep >= _tourSteps.length) { _tourEnd(); return; }
+  _tourRender();
+}
+function _tourRender() {
+  const st = _tourSteps[_tourStep], z = (en, zh) => (_lang === 'zh' ? zh : en);
+  if (st.tab) switchTab(st.tab);
+  const btn = st.target ? document.querySelector(`.nav-tab[data-tab="${st.target}"]`) : null;
+  const r = btn && btn.offsetParent ? btn.getBoundingClientRect() : null;
+  const last = _tourStep === _tourSteps.length - 1;
+  $('tour-layer').innerHTML =
+    `<div class="tour-scrim${r ? ' off' : ''}"></div>` +
+    `<div class="tour-spot${r ? '' : ' none'}" style="${r ? `left:${r.left - 4}px;top:${r.top - 4}px;width:${r.width + 8}px;height:${r.height + 8}px` : 'display:none'}"></div>` +
+    `<div class="tour-card" id="tour-card"><h3>${esc(st.title)}</h3><p>${esc(st.body)}</p>` +
+    `<div class="tour-dots">${_tourSteps.map((_, i) => `<i class="${i === _tourStep ? 'on' : ''}"></i>`).join('')}</div>` +
+    `<div class="tour-btns">${last ? '' : `<button class="tour-skip" onclick="_tourEnd()">${esc(z('Skip', '跳过'))}</button>`}` +
+    `${_tourStep > 0 ? `<button class="tour-b" onclick="_tourGo(-1)">${esc(z('Back', '上一步'))}</button>` : ''}` +
+    `<button class="tour-b primary" onclick="_tourGo(1)">${esc(last ? z('Done', '完成') : (_tourStep === 0 ? z('Start tour', '开始导览') : z('Next', '下一步')))}</button></div></div>`;
+  const card = $('tour-card');
+  if (r && r.top > innerHeight / 2) card.style.bottom = (innerHeight - r.top + 14) + 'px';        // target in the bottom bar: card above it
+  else if (r) card.style.top = (r.bottom + 14) + 'px';                                             // target in the top bar: card below it
+  else card.style.top = Math.max(24, (innerHeight - card.offsetHeight) / 2) + 'px';
+}
+window.addEventListener('resize', () => { if ($('tour-layer').classList.contains('show')) { _tourSteps = _tourBuildSteps().slice(0, _tourSteps.length); _tourRender(); } });
+
 // Settings > Board > "Open on the Board" (per account): the Board is the home page; on phones it takes the Feed's slot
 // in the bottom bar and the Feed is reached by pulling down from the top of the Board.
 let _boardDefault = false;

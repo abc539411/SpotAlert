@@ -8,6 +8,7 @@ import logging
 import os
 import secrets
 import time
+import dataclasses
 from dataclasses import dataclass
 from typing import Optional
 
@@ -156,6 +157,12 @@ def current_user(request: Request) -> UserCtx:
     user = get_current_user_optional(request)
     if user is None:
         raise HTTPException(401, "Not authenticated")
+    # "Take a tour": the page sends X-Tour-Airport on its READ requests so every user sees the same example data — the
+    # Controller's first airport — instead of their own airport. GET only; nothing is ever written under the override.
+    if request.method == "GET" and request.headers.get("x-tour-airport") == "1":
+        first = request.app.state.control_store.get_active_watched_airports()
+        if first:
+            user = dataclasses.replace(user, airport_iata=first[0]["airport_iata"])
     return user
 
 

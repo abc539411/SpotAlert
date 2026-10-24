@@ -934,7 +934,8 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         return {
             "authenticated": True,
             "user": {"id": user.user_id, "username": user.username, "role": user.role, "language": user.language,
-                     "board_default": cstore.get_board_default(user.user_id)},
+                     "board_default": cstore.get_board_default(user.user_id),
+                     "tour_seen": cstore.get_tour_seen(user.user_id)},
             "airport": user.airport_iata,
             "airports": [{
                 "iata": a["airport_iata"], "name": a["airport_name"],
@@ -951,6 +952,21 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         if language not in ("en", "zh"):
             raise HTTPException(400, "Unsupported language")
         app.state.control_store.set_language(user.user_id, language)
+        return {"ok": True}
+
+    @app.get("/api/tour/airport")
+    async def tour_airport(user=Depends(_auth_current_user)):
+        """The example airport for the tour (the Controller's first watched airport) and whether it is already this user's own."""
+        first = app.state.control_store.get_active_watched_airports()
+        if not first:
+            return {"iata": None}
+        a = first[0]
+        return {"iata": a["airport_iata"], "name": a["airport_name"], "tz": a["airport_tz"], "same": a["airport_iata"] == user.airport_iata}
+
+    @app.put("/api/me/tour-seen")
+    async def set_my_tour_seen(request: Request, user=Depends(_auth_current_user)):
+        body = await request.json()
+        app.state.control_store.set_tour_seen(user.user_id, bool(body.get("seen", True)))
         return {"ok": True}
 
     @app.put("/api/me/board-default")

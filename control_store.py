@@ -50,6 +50,9 @@ class ControlStore:
             _wu_cols = {row[1] for row in conn.execute("PRAGMA table_info(web_users)").fetchall()}
             if "language" not in _wu_cols:
                 conn.execute("ALTER TABLE web_users ADD COLUMN language TEXT DEFAULT NULL")
+            if "tour_seen" not in _wu_cols:
+                # Every existing account starts at 0, so each user is offered the tour once on their next sign-in.
+                conn.execute("ALTER TABLE web_users ADD COLUMN tour_seen INTEGER NOT NULL DEFAULT 0")
             if "board_default" not in _wu_cols:
                 conn.execute("ALTER TABLE web_users ADD COLUMN board_default INTEGER NOT NULL DEFAULT 0")
             if "last_seen_ts" not in _wu_cols:
@@ -329,6 +332,15 @@ class ControlStore:
                 "UPDATE web_users SET language = ? WHERE user_id = ?",
                 (language, user_id),
             )
+
+    def set_tour_seen(self, user_id: str, seen: bool) -> None:
+        with self._connect() as conn:
+            conn.execute("UPDATE web_users SET tour_seen = ? WHERE user_id = ?", (1 if seen else 0, user_id))
+
+    def get_tour_seen(self, user_id: str) -> bool:
+        with self._connect() as conn:
+            row = conn.execute("SELECT tour_seen FROM web_users WHERE user_id = ?", (user_id,)).fetchone()
+            return bool(row and row["tour_seen"])
 
     def set_board_default(self, user_id: str, on: bool) -> None:
         """Per-user: open on the Board instead of the Feed (phones: Feed becomes the pull-down page)."""
