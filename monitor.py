@@ -1383,7 +1383,7 @@ def _board_rows_from_entries(entries: list, candidates: set, tz, now_dt) -> tupl
 
     Returns (rows, seen_window | None, data_through_ts | None)."""
     today = now_dt.astimezone(tz).date()
-    last_day = today + timedelta(days=1)
+    last_day = today + timedelta(days=3)
     rows: dict = {}
     sched_seen: list = []
     for flight in entries:
@@ -1835,7 +1835,7 @@ async def run_check(context: ContextTypes.DEFAULT_TYPE) -> None:
             cfg.store.replace_board_rows(
                 _rows,
                 _window if _pages_failed == 0 else None,   # a failed page must never wipe real rows
-                prune_before_ts=int(_midnight.timestamp()),
+                prune_before_ts=int((_midnight - timedelta(days=7)).timestamp()),   # keep the 7 past days Board shows
                 now_ts=int(datetime.now().timestamp()),
                 data_through_ts=_through,
             )

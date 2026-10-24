@@ -355,7 +355,7 @@ const UI_ZH = {
   'Refresh Board': '刷新看板', 'Checking FR24…': '正在检查 FR24…', 'Board updated': '看板已更新',
   "Waiting for this airport's first check — tap Refresh to run one now.": '正在等待该机场的首次检查——点击刷新立即检查。',
   'Could not load the Board.': '无法加载看板。',
-  'Not assigned yet': '尚未分配机号', 'No regular flights to show.': '暂无需要关注的常规航班。',
+  'Not assigned yet': '尚未分配机号', 'No regular flights to show.': '暂无需要关注的常规航班。', 'No Feed cards': '无 Feed 卡片',
   'Feed card': '动态卡片', 'Excluded': '已排除', 'Has a card in Feed': '动态中已有卡片',
   'Would have a Feed card, but the aircraft is on the Exclusion List': '本应有动态卡片，但该飞机在排除列表中',
   'Updated': '更新于', 'Data through': '数据截至', 'just now': '刚刚',
@@ -3068,6 +3068,7 @@ async function loadHistory() {
 // server-side by the monitor every check (see docs/13-board.md); this just polls while the tab is open.
 let _bdData = null;
 let _bdTimer = null;
+let _bdPositioned = false;   // true once the wrap has been scrolled to today's card
 
 const _BD_EYE     = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12z"/><circle cx="12" cy="12" r="2.6"/></svg>';
 const _BD_EYE_OFF = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3l18 18"/><path d="M10.6 6.1A10 10 0 0 1 12 6c6.4 0 10 6 10 6a17 17 0 0 1-3.2 3.9M6.3 7.7C3.9 9.3 2 12 2 12s3.6 6 10 6c1.6 0 3-.3 4.2-.9"/><path d="M9.9 10a3 3 0 0 0 4.1 4.1"/></svg>';
@@ -3169,15 +3170,33 @@ function renderBoard() {
   renderBoardHidden();
 
   wrap.innerHTML = (d.days || []).map(day => {
-    const dateLbl = new Date(`${day.date}T12:00:00`).toLocaleDateString(_locale(), { weekday: 'short', day: 'numeric', month: 'short' });
     const empty = day.rows.length ? '' :
       `<div class="bd-empty">${esc(d.updated_ts ? tt('No regular flights to show.') : tt("Waiting for this airport's first check — tap Refresh to run one now."))}</div>`;
-    return `<div class="bd-card">
-      <div class="bd-card-hd"><span class="t">${esc(tFeedDayLabel(day.date, day.label))}</span><span class="d">${esc(dateLbl)}</span><span class="n">${day.rows.length}</span></div>
+    // Header mirrors the Spotting day card: label + sub-line on the left, count + weather on the right.
+    const wc = day.weather_code || 0;
+    const wxDesc = tWx(_WX_CODES[wc]) || '';
+    const wxStyle = day.weather_severe ? 'color:var(--danger);font-weight:600' : 'color:var(--dim)';
+    const temp = day.temp_min != null && day.temp_max != null
+      ? `<span class="rdc-weather rdc-temp" style="color:var(--dim)">${day.temp_min}° – ${day.temp_max}°</span>` : '';
+    const wx = wxDesc ? `<span class="rdc-weather" style="${wxStyle}">${_WX_ICONS[wc] || '🌡'} ${esc(wxDesc)}</span>${temp}` : '';
+    const nFeed = day.rows.filter(r => r.kind === 'feed').length;
+    const sub = nFeed
+      ? `<span class="rdc-window">${_lang === 'zh' ? `Feed 卡片 ${nFeed}` : `${nFeed} in Feed`}</span>`
+      : `<span class="rdc-window" style="color:var(--dim);font-weight:400">${tt('No Feed cards')}</span>`;
+    return `<div class="bd-card${day.is_today ? ' bd-today' : ''}">
+      <div class="rec-day-hdr">
+        <div><div class="rec-d-label">${esc(tRecDayLabel(day.date, day.label))}</div>${sub}</div>
+        <div style="text-align:right"><div class="rec-d-count">${_lang === 'zh' ? `${day.rows.length} 个航班` : `${day.rows.length} flight${day.rows.length === 1 ? '' : 's'}`}</div>${wx}</div>
+      </div>
       <div class="bd-rows">${day.rows.map(r => _bdRow(r, isMobile)).join('')}${empty}</div>
     </div>`;
   }).join('');
-  wrap.scrollLeft = keepX;
+  if (!_bdPositioned && wrap.firstElementChild) {
+    // First render: land on today's card (future days sit to its left, past days to its right).
+    const today = wrap.querySelector('.bd-today');
+    if (today) wrap.scrollLeft += today.getBoundingClientRect().left - wrap.getBoundingClientRect().left - (isMobile ? 6 : 14);
+    _bdPositioned = true;
+  } else wrap.scrollLeft = keepX;
   wrap.querySelectorAll('.bd-rows').forEach((el, i) => { el.scrollTop = keepY[i] || 0; });
   if (_lang === 'zh') {
     _translateNamesForZh((d.days || []).flatMap(day => day.rows.map(r => r.airline_name)).filter(Boolean));
@@ -3218,19 +3237,6 @@ async function bdUnhide(fn) {
   } catch (e) { toast('Error: ' + e.message); }
 }
 
-// Mobile: Today / Tomorrow switch drives (and follows) the horizontal swipe between the two cards.
-function _bdPitch() {
-  const cards = $('bd-wrap').querySelectorAll('.bd-card');
-  return cards.length > 1 ? cards[1].offsetLeft - cards[0].offsetLeft : 0;   // card width + gap
-}
-function bdGo(i) {
-  $('bd-wrap').scrollTo({ left: i * _bdPitch(), behavior: 'smooth' });
-}
-$('bd-wrap').addEventListener('scroll', () => {
-  const p = _bdPitch();
-  const i = p ? Math.round($('bd-wrap').scrollLeft / p) : 0;
-  document.querySelectorAll('#bd-switch button').forEach((b, k) => b.classList.toggle('active', k === i));
-}, { passive: true });
 
 // ── Filters ───────────────────────────────────────────────────────────────────
 

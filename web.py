@@ -4768,25 +4768,29 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         return roster, excluded_cards
 
     def _build_board_payload(cfg_, user) -> dict:
-        """Two day cards (airport-local today / tomorrow) of the schedule rows of every roster flight number
-        (regular + has triggered a card before, minus the ones the Controller hid). Rows stay on the card all day
-        (landed / cancelled / unlisted ones too) — they are only pruned once their day is over. A hidden flight
+        """Day cards (same window as Spotting: up to 3 days ahead, today, 7 days back; airport-local; empty ones
+        skipped except today) of the schedule rows of every roster flight number
+        (regular + has triggered a card before, minus the ones the Controller hid). Rows stay on their card
+        (landed / cancelled / unlisted ones too) — they are only pruned 7 days after their day. A hidden flight
         number reappears on a day it has a real Feed card. Flight numbers with no schedule row that day are
         simply not listed."""
-        import datetime as _dtm, pytz
+        import datetime as _dtm, json as _json, pytz
         store_ = cfg_.store
         tz_name = getattr(cfg_, "airport_tz", None) or "UTC"
         tz = pytz.timezone(tz_name)
         now_ts = int(time.time())
         d0 = _dtm.datetime.fromtimestamp(now_ts, tz).date()
-        starts = [int(tz.localize(_dtm.datetime.combine(d0 + _dtm.timedelta(days=i), _dtm.time.min)).timestamp())
-                  for i in range(3)]
+        # Same window as Spotting's /api/recommendation: up to 3 days ahead, today, 7 days back. Offsets are
+        # "days from today" (positive = future); newest first, so the cards read like the Spotting table.
+        _OFFSETS = list(range(3, -8, -1))
+        starts = {o: int(tz.localize(_dtm.datetime.combine(d0 + _dtm.timedelta(days=o), _dtm.time.min)).timestamp())
+                  for o in range(-7, 5)}
         meta = store_.get_board_meta()
         through = int(meta["data_through_ts"]) if meta.get("data_through_ts") else None
 
         roster, excluded_cards = _board_roster(cfg_, user)
         hidden = set(store_.get_board_hidden(_owner_id(user)))
-        rows = [r for r in store_.get_board_rows(starts[0], starts[2]) if r["flight_number"] in roster]
+        rows = [r for r in store_.get_board_rows(starts[-7], starts[4]) if r["flight_number"] in roster]
 
         iatas = {r["origin_iata"] for r in rows if r["origin_iata"]}
         cities: dict = {}
@@ -4798,15 +4802,29 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                         tuple(iatas)).fetchall():
                     cities[c["iata"]], countries[c["iata"]] = c["city"], (c["country_code"] or "")
 
-        days = [{"date": (d0 + _dtm.timedelta(days=i)).isoformat(), "label": "Today" if i == 0 else "Tomorrow",
-                 "rows": []} for i in range(2)]
+        by_off = {}
+        for o in _OFFSETS:
+            d = d0 + _dtm.timedelta(days=o)
+            date_label = f"{d.strftime('%a')}, {d.day} {d.strftime('%b')}"
+            label = f"{date_label} – Tomorrow" if o == 1 else f"{date_label} – Today" if o == 0 \
+                else f"{date_label} – Yesterday" if o == -1 else date_label
+            by_off[o] = {"date": d.isoformat(), "label": label, "is_today": o == 0, "is_tomorrow": o == 1,
+                         "rows": []}
+        wx = {}
+        for dstr, trow in store_.get_timeline_cache([v["date"] for v in by_off.values()]).items():
+            try:
+                wx[dstr] = _json.loads(trow["weather_json"] or "{}")
+            except Exception:
+                pass
         for r in rows:
             fn = r["flight_number"]
             eff = r["estimated_ts"] or r["scheduled_ts"]
             is_hidden = fn in hidden
             if is_hidden and not any(abs(t - r["scheduled_ts"]) <= 12 * 3600 for t in roster[fn]["arrival_ts"]):
                 continue                                    # hidden, and no Feed card for this flight → stays hidden
-            idx = 0 if eff < starts[1] else 1
+            off = (_dtm.datetime.fromtimestamp(eff, tz).date() - d0).days
+            if off not in by_off:
+                continue
             reg = r["registration"]
             # Colour key: "feed" = this very flight already has a Feed card; "excluded" = it would have, but its
             # aircraft is on the Exclusion List (Feed hides it). Matched on flight number + registration + time.
@@ -4820,7 +4838,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                     hit = near(excluded_cards.get(fn, []))
                     if hit:
                         kind, card_types = "excluded", hit[2]
-            days[idx]["rows"].append({
+            by_off[off]["rows"].append({
                 "flight_number": fn, "scheduled_ts": r["scheduled_ts"], "estimated_ts": r["estimated_ts"],
                 "eff_ts": eff, "registration": r["registration"], "aircraft_type": r["aircraft_type"],
                 "airline_name": r["airline_name"], "airline_icao": r["airline_icao"],
@@ -4829,6 +4847,15 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                 "origin_country_code": countries.get(r["origin_iata"], ""),
                 "status": r["status_text"], "hidden": is_hidden, "kind": kind, "card_types": card_types,
             })
+        days = []
+        for o in _OFFSETS:
+            day = by_off[o]
+            if o != 0 and not day["rows"]:
+                continue                                    # like Spotting: empty future / past days are skipped
+            w = wx.get(day["date"], {})
+            day.update({"weather_code": w.get("weather_code", 0), "weather_severe": w.get("weather_severe", False),
+                        "temp_max": w.get("temp_max"), "temp_min": w.get("temp_min")})
+            days.append(day)
         return {
             "airport_iata": cfg_.airport_iata, "timezone": tz_name, "now_ts": now_ts,
             "updated_ts": int(meta["updated_ts"]) if meta.get("updated_ts") else None,
