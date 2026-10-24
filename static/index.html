@@ -676,13 +676,16 @@
        .rec-day-hdr / .rec-d-label / .rdc-* styles (label, count, weather). */
     .bd-card { flex: 0 0 560px; min-width: 0; display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); overflow: hidden; scroll-snap-align: start; }
     .bd-card.bd-today { border-color: var(--accent); }
-    /* Days you photographed at this airport (needs your Lightroom catalog): a faint green wash over the card */
-    .rec-day.day-spotted, .bd-card.day-spotted {
-      background-image: linear-gradient(rgba(34,197,94,0.09), rgba(34,197,94,0.09));
-      border-color: rgba(34,197,94,0.28);
+    /* Days you photographed at this airport (needs your Lightroom catalog): only the card HEADER carries the accent —
+       a faint green wash with a green underline — plus a "Spotting day" pill. The card body is untouched. */
+    .rec-day.day-spotted .rec-day-hdr, .bd-card.day-spotted .rec-day-hdr {
+      background-image: linear-gradient(rgba(34,197,94,0.13), rgba(34,197,94,0.13));
+      border-bottom-color: rgba(34,197,94,0.45);
     }
-    .rec-day.day-spotted .rec-day-hdr, .bd-card.day-spotted .rec-day-hdr { background-image: linear-gradient(rgba(34,197,94,0.09), rgba(34,197,94,0.09)); }
-    .rec-day.rec-today.day-spotted, .bd-card.bd-today.day-spotted { border-color: var(--accent); }
+    .spot-day-pill { display: inline-flex; align-items: center; gap: 4px; margin-left: 8px; padding: 1px 7px 1px 6px; border-radius: 999px;
+                     background: rgba(34,197,94,0.18); border: 1px solid rgba(34,197,94,0.4); color: #86efac;
+                     font-size: 10px; font-weight: 600; letter-spacing: .02em; vertical-align: 1px; white-space: nowrap; }
+    .spot-day-pill svg { width: 11px; height: 11px; flex-shrink: 0; }
     /* "Older" slot at the far right end of the Board / Spotting strips */
     .bd-older, .rec-older { flex: 0 0 auto; align-self: center; display: flex; align-items: center; padding: 0 6px; }
     .older-btn { background: var(--surface); border: 1px solid var(--border); color: var(--dim); font-size: 13px; font-weight: 600; padding: 9px 18px; border-radius: 999px; cursor: pointer; white-space: nowrap; }
