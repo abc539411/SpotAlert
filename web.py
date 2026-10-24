@@ -4861,7 +4861,16 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
             hh = roster[fn].get("hist") or {}
             if not reg and hh.get("airline_icao"):
                 al_name, al_icao = hh.get("airline_name") or al_name, hh["airline_icao"]
+            # No aircraft yet → say why this flight number earned its place: its 5 most recent past triggers
+            # (visible Feed cards + ones hidden by the Exclusion List, flagged).
+            past = []
+            if not reg:
+                allc = [(c, False) for c in roster[fn]["cards"]] + [(c, True) for c in excluded_cards.get(fn, [])]
+                allc.sort(key=lambda x: x[0][0], reverse=True)
+                past = [{"ts": c[0], "registration": c[1], "card_types": c[2], "extra_info": c[3] or "", "excluded": ex}
+                        for c, ex in allc[:5]]
             by_off[off]["rows"].append({
+                "past_triggers": past,
                 "flight_number": fn, "scheduled_ts": r["scheduled_ts"], "estimated_ts": r["estimated_ts"],
                 "eff_ts": eff, "registration": r["registration"], "aircraft_type": r["aircraft_type"],
                 "airline_name": al_name, "airline_icao": al_icao,

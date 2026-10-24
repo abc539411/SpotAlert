@@ -355,7 +355,7 @@ const UI_ZH = {
   'Refresh Board': '刷新看板', 'Checking FR24…': '正在检查 FR24…', 'Board updated': '看板已更新',
   "Waiting for this airport's first check — tap Refresh to run one now.": '正在等待该机场的首次检查——点击刷新立即检查。',
   'Could not load the Board.': '无法加载看板。',
-  'Not assigned yet': '尚未分配机号', 'Not on board yet': '尚未上板', 'No regular flights to show.': '暂无需要关注的常规航班。', 'No Feed cards': '无 Feed 卡片', 'Aircraft not assigned yet': '尚未分配飞机', 'Could not load aircraft details.': '无法加载飞机信息。',
+  'Not assigned yet': '尚未分配机号', 'Not on board yet': '尚未上板', 'Last triggered': '上次触发原因', 'Hidden from Feed by the Exclusion List': '已被排除名单隐藏', 'No regular flights to show.': '暂无需要关注的常规航班。', 'No Feed cards': '无 Feed 卡片', 'Aircraft not assigned yet': '尚未分配飞机', 'Could not load aircraft details.': '无法加载飞机信息。',
   'No equipment history yet.': '暂无机型使用记录。', 'Registration': '注册号', 'Aircraft': '飞机', 'Manufacturer': '制造商', 'Operator': '运营商',
   'Owner': '所有者', 'Livery': '涂装', 'Country': '国家/地区', 'Mode S': 'Mode S', 'Serial No.': '序列号', 'Built': '出厂年份', 'Feed cards here': '本场 Feed 卡片数',
   'Feed card': '动态卡片', 'Excluded': '已排除', 'Has a card in Feed': '动态中已有卡片',
@@ -3185,6 +3185,7 @@ function _bdDetailHtml(r) {
 
   let photo = '', facts = '', head = '', lastSeen = '', spotted = '';
   if (!r.registration) {
+    head = from ? `<div class="bd-from">${from}</div>` : '';     // no aircraft header yet — keep the origin visible
     facts = `<div class="bd-na" style="padding:4px 0">${esc(tt(r.pending ? 'Not on the schedule yet — expected at its usual time' : 'Aircraft not assigned yet'))}${r.aircraft_type ? ` · ${esc(r.aircraft_type)}` : ''}</div>`;
   } else if (!ac) {
     facts = loading;
@@ -3268,12 +3269,27 @@ function _bdDetailHtml(r) {
     }).join('');
   }
 
+  // Not-assigned flights only: why this flight number earned its place — its last (up to 5) triggers.
+  let triggers = '';
+  if (!r.registration && (r.past_triggers || []).length) {
+    triggers = `<div class="bd-sec-t" style="border-top:1px solid var(--border);padding-top:12px">${esc(tt('Last triggered'))}</div>` +
+      `<div class="bd-trig">${r.past_triggers.map(t => {
+        const chips = (t.card_types || []).map(c => `<span class="chip ${chipClass(c)}">${esc(chipLabel(c))}</span>`).join('');
+        const lv = (t.card_types || []).includes('Special Livery') && t.extra_info ? `<span class="bd-trig-lv">${esc(tLiveryName(t.extra_info))}</span>` : '';
+        return `<div class="bd-trig-row${t.excluded ? ' is-excl' : ''}" title="${t.excluded ? esc(tt('Hidden from Feed by the Exclusion List')) : ''}">` +
+          `<span class="bd-trig-d">${esc(_srchShortDate(t.ts))}</span>` +
+          `<a href="${_fr24AircraftUrl(t.registration)}" target="_blank" rel="noopener" class="bd-trig-reg">${_flag(_regoCountryCode(t.registration), { h: 10 })}${esc(t.registration)}</a>` +
+          `<span class="bd-trig-chips">${chips}${lv}</span></div>`;
+      }).join('')}</div>`;
+  }
+
   return `<div class="bd-detail">
     ${photo}
     ${head}
     ${facts.trim() ? `<div class="bd-facts" style="margin-top:10px">${facts}</div>` : ''}
     <div class="bd-sec-t" style="border-top:1px solid var(--border);padding-top:12px">${esc(tt('Equipment History'))}</div>
     <div class="srch-fl-rows" style="margin-top:0">${hist}</div>
+    ${triggers}
     ${lastSeen || spotted ? `<div class="detail-cards">${lastSeen ? `<div class="dc"><span class="lbl">${esc(tt('Last Seen'))}</span><span class="val">${esc(lastSeen)}</span></div>` : ''}${spotted}</div>` : ''}
   </div>`;
 }
