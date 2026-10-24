@@ -35,6 +35,9 @@ const I18N = {
     'settings.tab.spotting': '拍机',
     'settings.tab.feed': '动态',
     'settings.tab.board': '看板',
+    'config.board.view.heading': '视图',
+    'settings.board.default.key': '以看板为首页',
+    'settings.board.default.desc': '用看板代替动态作为首页。在手机上，看板会取代底部栏中的动态，而动态则变成从看板顶部下拉进入的页面。仅影响您自己的账号。',
     'config.board.heading': '看板',
     'settings.tab.filters': '筛选',
     'settings.tab.collection': '收藏',
@@ -382,7 +385,7 @@ const UI_ZH = {
   'Refresh Board': '刷新看板', 'Checking FR24…': '正在检查 FR24…', 'Board updated': '看板已更新',
   "Waiting for this airport's first check — tap Refresh to run one now.": '正在等待该机场的首次检查——点击刷新立即检查。',
   'Could not load the Board.': '无法加载看板。',
-  'Not assigned yet': '尚未分配机号', 'Not on board yet': '尚未上板', 'Possible aircraft': '可能的飞机', 'Swipe down to access Board': '下拉进入看板', 'Spotting Day': '拍机日', 'No cards this week.': '本周没有卡片。', 'Look through older days': '查看更早的记录', 'Back': '返回', 'Month': '月份', 'Older': '更早', 'Older than 7 days': '7 天前的记录', 'No older days.': '没有更早的记录。', 'No activity in the last 7 days.': '最近 7 天没有活动。', 'Since': '始于', 'Tap to select, then Unhide': '点选后再点“取消隐藏”', 'Edit': '编辑', 'Done': '完成', 'Hide': '隐藏', 'selected': '已选', 'Hidden flights': '已隐藏航班', 'Select flights to hide or unhide': '选择要隐藏或取消隐藏的航班', 'No check yet': '尚未检查', 'Confirm Refresh?': '确认刷新？', 'Added by hand (one-off) — in Feed and Spotting': '手动添加（仅此一次）— 已在 Feed 和拍机时间线', 'Add to Feed + Spotting (one-off)': '加入 Feed 和拍机时间线（仅此一次）', 'Remove this one-off flight from Feed + Spotting': '从 Feed 和拍机时间线移除此航班', 'Click again to add it to Feed + Spotting': '再点一次确认加入', 'Click again to remove it': '再点一次确认移除', 'added to Feed + Spotting': '已加入 Feed 和拍机时间线', 'removed': '已移除', 'Already photographed': '已拍摄', 'today': '今天', 'Last triggered': '上次触发原因', 'Hidden from Feed by the Exclusion List': '已被排除名单隐藏', 'No regular flights to show.': '暂无需要关注的常规航班。', 'No Feed cards': '无 Feed 卡片', 'Aircraft not assigned yet': '尚未分配飞机', 'Could not load aircraft details.': '无法加载飞机信息。',
+  'Not assigned yet': '尚未分配机号', 'Not on board yet': '尚未上板', 'Possible aircraft': '可能的飞机', 'Swipe down to access Feed': '下拉进入动态', 'Swipe down to access Board': '下拉进入看板', 'Spotting Day': '拍机日', 'No cards this week.': '本周没有卡片。', 'Look through older days': '查看更早的记录', 'Back': '返回', 'Month': '月份', 'Older': '更早', 'Older than 7 days': '7 天前的记录', 'No older days.': '没有更早的记录。', 'No activity in the last 7 days.': '最近 7 天没有活动。', 'Since': '始于', 'Tap to select, then Unhide': '点选后再点“取消隐藏”', 'Edit': '编辑', 'Done': '完成', 'Hide': '隐藏', 'selected': '已选', 'Hidden flights': '已隐藏航班', 'Select flights to hide or unhide': '选择要隐藏或取消隐藏的航班', 'No check yet': '尚未检查', 'Confirm Refresh?': '确认刷新？', 'Added by hand (one-off) — in Feed and Spotting': '手动添加（仅此一次）— 已在 Feed 和拍机时间线', 'Add to Feed + Spotting (one-off)': '加入 Feed 和拍机时间线（仅此一次）', 'Remove this one-off flight from Feed + Spotting': '从 Feed 和拍机时间线移除此航班', 'Click again to add it to Feed + Spotting': '再点一次确认加入', 'Click again to remove it': '再点一次确认移除', 'added to Feed + Spotting': '已加入 Feed 和拍机时间线', 'removed': '已移除', 'Already photographed': '已拍摄', 'today': '今天', 'Last triggered': '上次触发原因', 'Hidden from Feed by the Exclusion List': '已被排除名单隐藏', 'No regular flights to show.': '暂无需要关注的常规航班。', 'No Feed cards': '无 Feed 卡片', 'Aircraft not assigned yet': '尚未分配飞机', 'Could not load aircraft details.': '无法加载飞机信息。',
   'No equipment history yet.': '暂无机型使用记录。', 'Registration': '注册号', 'Aircraft': '飞机', 'Manufacturer': '制造商', 'Operator': '运营商',
   'Owner': '所有者', 'Livery': '涂装', 'Country': '国家/地区', 'Mode S': 'Mode S', 'Serial No.': '序列号', 'Built': '出厂年份', 'Feed cards here': '本场 Feed 卡片数',
   'Feed card': '动态卡片', 'Excluded': '已排除', 'Has a card in Feed': '动态中已有卡片',
@@ -1028,6 +1031,9 @@ async function _authBoot() {
     : '';
   _startHeaderClock(_clockTz);
   _applyRoleUI(me.user.role);
+  _boardDefault = !!me.user.board_default;
+  _applyBoardDefault();
+  if (_boardDefault) switchTab('board');                  // home page (deep links below still win)
   // The cards' mute/exclude/watch buttons light up from the filter lists, which otherwise
   // only load when the Settings tab is opened — so fetch them at boot (Controller/Pilot only,
   // the only roles that get those buttons).
@@ -3215,12 +3221,39 @@ function logoTap() {
 
 // Phones: the Board has no tab in the bottom bar. The Controller gets there by pulling the Feed all the way down from
 // its top — a cue ("Pull down for Board") follows the finger and the Board opens on release past the threshold.
+// Settings > Board > "Open on the Board" (per account): the Board is the home page; on phones it takes the Feed's slot
+// in the bottom bar and the Feed is reached by pulling down from the top of the Board.
+let _boardDefault = false;
+function _applyBoardDefault() {
+  document.body.classList.toggle('board-default', _boardDefault);
+  const tg = $('board-default-toggle');
+  if (tg) tg.checked = _boardDefault;
+  document.querySelectorAll('.nav-tab').forEach(b => {
+    b.classList.toggle('active', b.dataset.tab === activeTab || (window.innerWidth < 768 && (
+      (activeTab === 'board' && !_boardDefault && b.dataset.tab === 'history') ||
+      (activeTab === 'history' && _boardDefault && b.dataset.tab === 'board'))));
+  });
+}
+async function _saveBoardDefault(on) {
+  const prev = _boardDefault;
+  _boardDefault = !!on;
+  _applyBoardDefault();
+  try { await api('/me/board-default', { method: 'PUT', body: JSON.stringify({ on: _boardDefault }) }); }
+  catch (e) { _boardDefault = prev; _applyBoardDefault(); toast('Error: ' + e.message); }
+}
+
 (function initPullForBoard() {
   const lockAt = () => Math.round(window.innerHeight / 3);   // pull distance (a third of the screen) past which letting go glides the Board open
   let startY = null, startX = 0, pull = 0, locked = false, busy = false, H = 0;
-  const feed = () => document.getElementById('tab-history');
-  const board = () => document.getElementById('tab-board');
-  const ready = () => !busy && window.innerWidth < 768 && typeof _appRole !== 'undefined' && !!_appRole && activeTab === 'history';
+  // Normally the Feed is the page you pull down from and the Board is what slides in; with "Open on the Board" on, it is
+  // the other way round.
+  const srcName = () => _boardDefault ? 'board' : 'history';
+  const dstName = () => _boardDefault ? 'history' : 'board';
+  const feed = () => document.getElementById('tab-' + srcName());          // the page being pulled
+  const board = () => document.getElementById('tab-' + dstName());         // the page that slides in
+  let startEl = null;                        // Board source: the day card's own scroller the touch began in
+  const atTop = p => p && p.scrollTop <= 0 && (!startEl || startEl.scrollTop <= 0);
+  const ready = () => !busy && window.innerWidth < 768 && typeof _appRole !== 'undefined' && !!_appRole && activeTab === srcName();
 
   // The Board slides in over the Feed: a fixed layer between the header and the bottom bar, parked just above the
   // header (translateY(-H)) and dragged down with the finger.
@@ -3235,8 +3268,10 @@ function logoTap() {
     bd.style.top = top + 'px'; bd.style.height = H + 'px';
     bd.style.transition = 'none';
     bd.style.transform = `translateY(${-H}px)`;
-    _bdPositioned = false;                  // centre Today when it renders
-    if (_bdData) renderBoard(); else loadBoard();
+    if (dstName() === 'board') {
+      _bdPositioned = false;                // centre Today when it renders
+      if (_bdData) renderBoard(); else loadBoard();
+    } else loadTab('history');
   };
   // round cue under the Board's bottom edge: icon + "Swipe down to access Board"
   let pill = null, headBottom = 0;
@@ -3250,7 +3285,7 @@ function logoTap() {
   };
   const placePill = travel => {                // just under the Board's bottom edge (headBottom + travel), over the Feed
     const p = ensurePill();
-    p.querySelector('span').textContent = tt('Swipe down to access Board');
+    p.querySelector('span').textContent = tt(dstName() === 'board' ? 'Swipe down to access Board' : 'Swipe down to access Feed');
     p.style.top = (headBottom + travel + 12) + 'px';
     p.classList.add('show');
   };
@@ -3270,7 +3305,7 @@ function logoTap() {
     locked = busy = true;
     hidePill();
     setY(0, 700);                            // the lock-in glide is deliberately slow and soft
-    setTimeout(() => { cleanup(); switchTab('board'); busy = false; startY = null; pull = 0; locked = false; }, 720);
+    setTimeout(() => { cleanup(); switchTab(dstName()); busy = false; startY = null; pull = 0; locked = false; }, 720);
   };
   const springBack = () => {                // let go too early: the Board rides back up and disappears
     busy = true;
@@ -3281,14 +3316,15 @@ function logoTap() {
 
   document.addEventListener('touchstart', e => {
     const p = feed();
-    if (!ready() || !p || !p.contains(e.target) || p.scrollTop > 0 || e.touches.length !== 1) { startY = null; return; }
+    startEl = e.target.closest ? e.target.closest('.bd-rows') : null;
+    if (!ready() || !p || !p.contains(e.target) || !atTop(p) || _bdEdit && srcName() === 'board' || e.touches.length !== 1) { startY = null; return; }
     startY = e.touches[0].clientY; startX = e.touches[0].clientX; pull = 0; locked = false; H = 0;
   }, { passive: true });
   document.addEventListener('touchmove', e => {
     if (startY === null || locked || busy) return;
     const p = feed();
     const dy = e.touches[0].clientY - startY, dx = Math.abs(e.touches[0].clientX - startX);
-    if (!p || p.scrollTop > 0 || dy <= 0 || dx > dy) { if (dy <= 0 && H) { springBack(); startY = null; } return; }
+    if (!p || !atTop(p) || dy <= 0 || dx > dy) { if (dy <= 0 && H) { springBack(); startY = null; } return; }
     if (e.cancelable) e.preventDefault();                       // we own this gesture while the Feed sits at its top
     if (!H) prepare();
     pull = dy;
@@ -3319,7 +3355,7 @@ function switchTab(name) {
     $('tab-' + t).classList.toggle('hidden', t !== name);
   });
   document.querySelectorAll('.nav-tab').forEach(b => {
-    b.classList.toggle('active', b.dataset.tab === name || (name === 'board' && window.innerWidth < 768 && b.dataset.tab === 'history'));
+    b.classList.toggle('active', b.dataset.tab === name || (window.innerWidth < 768 && ((name === 'board' && !_boardDefault && b.dataset.tab === 'history') || (name === 'history' && _boardDefault && b.dataset.tab === 'board'))));
   });
   // Swap header button between Manual Check, Refresh Collection, and Restart Server
   const btn = $('btn-refresh'), lbl = $('btn-refresh-label');

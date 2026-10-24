@@ -105,6 +105,10 @@
       /* Phones: no Board button in the bottom bar — the Controller reaches the Board by pulling the Feed all the way down */
       .nav-tab[data-tab="board"] { display: none !important; }
       #tab-history { overscroll-behavior-y: contain; }
+      /* Settings > Board > "Open on the Board": Board takes the Feed's slot in the bar; the Feed becomes the page you
+         pull down to (the same gesture, the other way round). */
+      body.board-default .nav-tab[data-tab="board"]   { display: flex !important; }
+      body.board-default .nav-tab[data-tab="history"] { display: none !important; }
     }
     /* Phones: while the Feed is pulled down, the Board page itself slides in from above (see initPullForBoard).
        The header sits above it (z-index) so the Board appears to come out from under the header. */
@@ -116,7 +120,7 @@
                        box-shadow: 0 6px 18px rgba(0,0,0,.45); }
     .pull-board-pill.show { display: flex; }
     .pull-board-pill svg { width: 15px; height: 15px; color: var(--accent); flex-shrink: 0; }
-    #tab-board.pulling { position: fixed !important; left: 0; right: 0; z-index: 120; background: var(--bg); display: flex;
+    #tab-board.pulling, #tab-history.pulling { position: fixed !important; left: 0; right: 0; z-index: 120; background: var(--bg); display: flex;
                          box-shadow: 0 10px 28px rgba(0,0,0,.55); will-change: transform; }
     @media (min-width: 768px) {
       /* Desktop order: Spotting, Board, Feed, Collection, Search, Settings.
@@ -2698,6 +2702,15 @@
     <div class="set-subtab-page hidden" id="subtab-board">
       <div class="page-cols">
         <div class="page-col">
+          <div class="page-col-block">
+            <div class="section-heading" data-i18n="config.board.view.heading">View</div>
+            <div class="settings-group">
+              <div class="setting-row">
+                <span class="setting-label"><span class="setting-key" data-i18n="settings.board.default.key">Open on the Board</span><span class="setting-desc" data-i18n="settings.board.default.desc">Use the Board as your home page instead of the Feed. On a phone the Board takes the Feed's place in the bottom bar, and the Feed becomes the page you pull down to from the top of the Board. Only affects your own account.</span></span>
+                <label class="tog-switch"><input type="checkbox" class="tog-input" id="board-default-toggle" onchange="_saveBoardDefault(this.checked)"><span class="tog-track"><span class="tog-thumb"></span></span></label>
+              </div>
+            </div>
+          </div>
           <div class="page-col-block">
             <div class="section-heading" data-i18n="config.board.heading">Board</div>
             <div class="settings-group" id="settings-board"></div>

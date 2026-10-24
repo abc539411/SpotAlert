@@ -50,6 +50,8 @@ class ControlStore:
             _wu_cols = {row[1] for row in conn.execute("PRAGMA table_info(web_users)").fetchall()}
             if "language" not in _wu_cols:
                 conn.execute("ALTER TABLE web_users ADD COLUMN language TEXT DEFAULT NULL")
+            if "board_default" not in _wu_cols:
+                conn.execute("ALTER TABLE web_users ADD COLUMN board_default INTEGER NOT NULL DEFAULT 0")
             if "last_seen_ts" not in _wu_cols:
                 conn.execute("ALTER TABLE web_users ADD COLUMN last_seen_ts INTEGER DEFAULT NULL")
 
@@ -327,6 +329,16 @@ class ControlStore:
                 "UPDATE web_users SET language = ? WHERE user_id = ?",
                 (language, user_id),
             )
+
+    def set_board_default(self, user_id: str, on: bool) -> None:
+        """Per-user: open on the Board instead of the Feed (phones: Feed becomes the pull-down page)."""
+        with self._connect() as conn:
+            conn.execute("UPDATE web_users SET board_default = ? WHERE user_id = ?", (1 if on else 0, user_id))
+
+    def get_board_default(self, user_id: str) -> bool:
+        with self._connect() as conn:
+            row = conn.execute("SELECT board_default FROM web_users WHERE user_id = ?", (user_id,)).fetchone()
+            return bool(row and row["board_default"])
 
     def get_language(self, user_id: str) -> Optional[str]:
         with self._connect() as conn:

@@ -933,7 +933,8 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                         if a["airport_iata"] in allowed]
         return {
             "authenticated": True,
-            "user": {"id": user.user_id, "username": user.username, "role": user.role, "language": user.language},
+            "user": {"id": user.user_id, "username": user.username, "role": user.role, "language": user.language,
+                     "board_default": cstore.get_board_default(user.user_id)},
             "airport": user.airport_iata,
             "airports": [{
                 "iata": a["airport_iata"], "name": a["airport_name"],
@@ -950,6 +951,12 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         if language not in ("en", "zh"):
             raise HTTPException(400, "Unsupported language")
         app.state.control_store.set_language(user.user_id, language)
+        return {"ok": True}
+
+    @app.put("/api/me/board-default")
+    async def set_my_board_default(request: Request, user=Depends(_auth_current_user)):
+        body = await request.json()
+        app.state.control_store.set_board_default(user.user_id, bool(body.get("on")))
         return {"ok": True}
 
     @app.get("/api/airports/mine")
