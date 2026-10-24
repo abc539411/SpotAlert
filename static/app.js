@@ -4068,6 +4068,22 @@ function _bdInitThumbs() {
   });
 }
 
+// iPhone: the day card's list rubber-bands past its first / last flight, which shows as a big empty area under the last
+// flight. `overscroll-behavior: none` covers iOS 16+; this guard covers older iOS by refusing a vertical drag that
+// would go past either end (horizontal swipes between days are left alone).
+(function initBoardNoOverscroll() {
+  let sx = 0, sy = 0;
+  document.addEventListener('touchstart', e => { sx = e.touches[0].clientX; sy = e.touches[0].clientY; }, { passive: true });
+  document.addEventListener('touchmove', e => {
+    const r = e.target.closest && e.target.closest('.bd-rows');
+    if (!r || !e.cancelable) return;
+    const dx = e.touches[0].clientX - sx, dy = e.touches[0].clientY - sy;
+    if (Math.abs(dy) <= Math.abs(dx)) return;
+    const atTop = r.scrollTop <= 0, atBottom = r.scrollTop >= r.scrollHeight - r.clientHeight - 1;
+    if ((dy > 0 && atTop) || (dy < 0 && atBottom)) e.preventDefault();
+  }, { passive: false });
+})();
+
 function renderBoard() {
   const d = _bdData;
   if (!d) return;
