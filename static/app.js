@@ -355,7 +355,7 @@ const UI_ZH = {
   'Refresh Board': '刷新看板', 'Checking FR24…': '正在检查 FR24…', 'Board updated': '看板已更新',
   "Waiting for this airport's first check — tap Refresh to run one now.": '正在等待该机场的首次检查——点击刷新立即检查。',
   'Could not load the Board.': '无法加载看板。',
-  'Not assigned yet': '尚未分配机号', 'Not on board yet': '尚未上板', 'Possible aircraft': '可能的飞机', 'Pull down for Board': '下拉进入看板', 'Release for Board': '松开进入看板', 'Spotting Day': '拍机日', 'No cards this week.': '本周没有卡片。', 'Look through older days': '查看更早的记录', 'Back': '返回', 'Month': '月份', 'Older': '更早', 'Older than 7 days': '7 天前的记录', 'No older days.': '没有更早的记录。', 'No activity in the last 7 days.': '最近 7 天没有活动。', 'Since': '始于', 'Tap to select, then Unhide': '点选后再点“取消隐藏”', 'Edit': '编辑', 'Done': '完成', 'Hide': '隐藏', 'selected': '已选', 'Hidden flights': '已隐藏航班', 'Select flights to hide or unhide': '选择要隐藏或取消隐藏的航班', 'No check yet': '尚未检查', 'Confirm Refresh?': '确认刷新？', 'Added by hand (one-off) — in Feed and Spotting': '手动添加（仅此一次）— 已在 Feed 和拍机时间线', 'Add to Feed + Spotting (one-off)': '加入 Feed 和拍机时间线（仅此一次）', 'Remove this one-off flight from Feed + Spotting': '从 Feed 和拍机时间线移除此航班', 'Click again to add it to Feed + Spotting': '再点一次确认加入', 'Click again to remove it': '再点一次确认移除', 'added to Feed + Spotting': '已加入 Feed 和拍机时间线', 'removed': '已移除', 'Already photographed': '已拍摄', 'today': '今天', 'Last triggered': '上次触发原因', 'Hidden from Feed by the Exclusion List': '已被排除名单隐藏', 'No regular flights to show.': '暂无需要关注的常规航班。', 'No Feed cards': '无 Feed 卡片', 'Aircraft not assigned yet': '尚未分配飞机', 'Could not load aircraft details.': '无法加载飞机信息。',
+  'Not assigned yet': '尚未分配机号', 'Not on board yet': '尚未上板', 'Possible aircraft': '可能的飞机', 'Spotting Day': '拍机日', 'No cards this week.': '本周没有卡片。', 'Look through older days': '查看更早的记录', 'Back': '返回', 'Month': '月份', 'Older': '更早', 'Older than 7 days': '7 天前的记录', 'No older days.': '没有更早的记录。', 'No activity in the last 7 days.': '最近 7 天没有活动。', 'Since': '始于', 'Tap to select, then Unhide': '点选后再点“取消隐藏”', 'Edit': '编辑', 'Done': '完成', 'Hide': '隐藏', 'selected': '已选', 'Hidden flights': '已隐藏航班', 'Select flights to hide or unhide': '选择要隐藏或取消隐藏的航班', 'No check yet': '尚未检查', 'Confirm Refresh?': '确认刷新？', 'Added by hand (one-off) — in Feed and Spotting': '手动添加（仅此一次）— 已在 Feed 和拍机时间线', 'Add to Feed + Spotting (one-off)': '加入 Feed 和拍机时间线（仅此一次）', 'Remove this one-off flight from Feed + Spotting': '从 Feed 和拍机时间线移除此航班', 'Click again to add it to Feed + Spotting': '再点一次确认加入', 'Click again to remove it': '再点一次确认移除', 'added to Feed + Spotting': '已加入 Feed 和拍机时间线', 'removed': '已移除', 'Already photographed': '已拍摄', 'today': '今天', 'Last triggered': '上次触发原因', 'Hidden from Feed by the Exclusion List': '已被排除名单隐藏', 'No regular flights to show.': '暂无需要关注的常规航班。', 'No Feed cards': '无 Feed 卡片', 'Aircraft not assigned yet': '尚未分配飞机', 'Could not load aircraft details.': '无法加载飞机信息。',
   'No equipment history yet.': '暂无机型使用记录。', 'Registration': '注册号', 'Aircraft': '飞机', 'Manufacturer': '制造商', 'Operator': '运营商',
   'Owner': '所有者', 'Livery': '涂装', 'Country': '国家/地区', 'Mode S': 'Mode S', 'Serial No.': '序列号', 'Built': '出厂年份', 'Feed cards here': '本场 Feed 卡片数',
   'Feed card': '动态卡片', 'Excluded': '已排除', 'Has a card in Feed': '动态中已有卡片',
@@ -3187,44 +3187,73 @@ function logoTap() {
 // Phones: the Board has no tab in the bottom bar. The Controller gets there by pulling the Feed all the way down from
 // its top — a cue ("Pull down for Board") follows the finger and the Board opens on release past the threshold.
 (function initPullForBoard() {
-  const THRESH = 150;                       // px of pull needed ("fully pulled down")
-  let startY = null, startX = 0, pull = 0, hint = null;
-  const page = () => document.getElementById('tab-history');
-  const ready = () => window.innerWidth < 768 && typeof _appRole !== 'undefined' && _appRole === 'controller' && activeTab === 'history';
-  const ensureHint = () => {
-    if (hint) return hint;
-    hint = document.createElement('div');
-    hint.className = 'pull-board-hint';
-    document.body.appendChild(hint);
-    return hint;
+  const LOCK = 130;                         // px of pull at which the Board "locks" fully open by itself
+  let startY = null, startX = 0, pull = 0, locked = false, busy = false, H = 0;
+  const feed = () => document.getElementById('tab-history');
+  const board = () => document.getElementById('tab-board');
+  const ready = () => !busy && window.innerWidth < 768 && typeof _appRole !== 'undefined' && _appRole === 'controller' && activeTab === 'history';
+
+  // The Board slides in over the Feed: a fixed layer between the header and the bottom bar, parked just above the
+  // header (translateY(-H)) and dragged down with the finger.
+  const prepare = () => {
+    const bd = board();
+    const top = document.querySelector('header').getBoundingClientRect().bottom;
+    const navTop = document.getElementById('nav-tabs').getBoundingClientRect().top;
+    H = Math.max(200, navTop - top);
+    document.body.classList.add('pulling-board');
+    bd.classList.remove('hidden');
+    bd.classList.add('pulling');
+    bd.style.top = top + 'px'; bd.style.height = H + 'px';
+    bd.style.transition = 'none';
+    bd.style.transform = `translateY(${-H}px)`;
+    _bdPositioned = false;                  // centre Today when it renders
+    if (_bdData) renderBoard(); else loadBoard();
   };
-  const hide = () => { if (hint) hint.classList.remove('show', 'ready'); startY = null; pull = 0; };
+  const setY = (y, ms) => {
+    const bd = board();
+    bd.style.transition = ms ? `transform ${ms}ms cubic-bezier(.2,.8,.2,1)` : 'none';
+    bd.style.transform = `translateY(${y}px)`;
+  };
+  const cleanup = () => {
+    const bd = board();
+    bd.classList.remove('pulling');
+    bd.style.top = bd.style.height = bd.style.transition = bd.style.transform = '';
+    document.body.classList.remove('pulling-board');
+  };
+  const lockOpen = () => {                  // far enough: finish the slide ourselves and land on the Board
+    locked = busy = true;
+    setY(0, 240);
+    setTimeout(() => { cleanup(); switchTab('board'); busy = false; startY = null; pull = 0; locked = false; }, 260);
+  };
+  const springBack = () => {                // let go too early: the Board rides back up and disappears
+    busy = true;
+    setY(-H, 200);
+    setTimeout(() => { cleanup(); board().classList.add('hidden'); busy = false; }, 220);
+  };
+
   document.addEventListener('touchstart', e => {
-    const p = page();
+    const p = feed();
     if (!ready() || !p || !p.contains(e.target) || p.scrollTop > 0 || e.touches.length !== 1) { startY = null; return; }
-    startY = e.touches[0].clientY; startX = e.touches[0].clientX; pull = 0;
+    startY = e.touches[0].clientY; startX = e.touches[0].clientX; pull = 0; locked = false; H = 0;
   }, { passive: true });
   document.addEventListener('touchmove', e => {
-    if (startY === null) return;
-    const p = page();
+    if (startY === null || locked || busy) return;
+    const p = feed();
     const dy = e.touches[0].clientY - startY, dx = Math.abs(e.touches[0].clientX - startX);
-    if (!p || p.scrollTop > 0 || dy <= 0 || dx > dy) { if (dy <= 0) hide(); return; }
-    pull = dy;
+    if (!p || p.scrollTop > 0 || dy <= 0 || dx > dy) { if (dy <= 0 && H) { springBack(); startY = null; } return; }
     if (e.cancelable) e.preventDefault();                       // we own this gesture while the Feed sits at its top
-    const h = ensureHint();
-    const isReady = pull >= THRESH;
-    h.textContent = isReady ? tt('Release for Board') : tt('Pull down for Board');
-    h.classList.toggle('ready', isReady);
-    h.style.top = `calc(${44 + Math.min(pull, THRESH * 1.4) * 0.45}px + env(safe-area-inset-top))`;
-    h.classList.add('show');
+    if (!H) prepare();
+    pull = dy;
+    if (pull >= LOCK) { lockOpen(); return; }
+    setY(-H + pull, 0);
   }, { passive: false });
   const end = () => {
-    const go = startY !== null && pull >= THRESH;
-    hide();
-    if (go) switchTab('board');
+    if (startY === null || locked || busy) { if (!locked && !busy) { startY = null; } return; }
+    startY = null;
+    if (H) springBack();
   };
   document.addEventListener('touchend', end, { passive: true });
-  document.addEventListener('touchcancel', hide, { passive: true });
+  document.addEventListener('touchcancel', end, { passive: true });
 })();
 
 function switchTab(name) {
