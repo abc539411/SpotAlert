@@ -3232,9 +3232,10 @@ function _bdDetailHtml(r) {
     const sp = _bdSp[r.registration];
     if (sp) {
       const sess = sp.sessions || [];
-      spotted = `<div class="dc"><span class="lbl">${esc(tt('Spotted'))}</span>` + (sess.length
-        ? `<div class="col-ex-pills" style="padding:0;margin-top:4px">${_spotPillsHtml(sess, r.registration, { notif_types: r.card_types || [], extra_info: r.extra_info || '' })}</div>`
-        : `<div style="margin-top:4px;color:var(--dim);font-size:12px">${esc(tt('Never'))}</div>`) + `</div>`;
+      // Same section style as Possible aircraft: divider + small caps title, then the Lightroom session pills.
+      spotted = `<div class="bd-sec-t" style="border-top:1px solid var(--border);padding-top:12px">${esc(tt('Spotted'))}</div>` + (sess.length
+        ? `<div class="col-ex-pills" style="padding:0">${_spotPillsHtml(sess, r.registration, { notif_types: r.card_types || [], extra_info: r.extra_info || '' })}</div>`
+        : `<div style="color:var(--dim);font-size:12px">${esc(tt('Never'))}</div>`);
     }
     const sameAsOperator = ac.owner && ac.operator && ac.owner.toLowerCase() === ac.operator.toLowerCase();
     // Header in the Feed card's style: rego + flag + status pill (as of the last check),
@@ -3328,7 +3329,7 @@ function _bdDetailHtml(r) {
     ${facts.trim() ? `<div class="bd-facts" style="margin-top:10px">${facts}</div>` : ''}
     <div class="bd-sec-t" style="border-top:1px solid var(--border);padding-top:12px">${esc(tt('Equipment History'))}</div>
     <div class="srch-fl-rows" style="margin-top:0">${hist}</div>
-    ${spotted ? `<div class="detail-cards">${spotted}</div>` : ''}
+    ${spotted}
     ${triggers}
   </div>`;
 }
