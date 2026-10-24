@@ -101,6 +101,17 @@
     .nav-tab.active { color: var(--text); border-bottom-color: var(--accent); }
     .nav-tab.hidden { display: none; }
     .tab-icon { display: none; }
+    @media (max-width: 767px) {
+      /* Phones: no Board button in the bottom bar — the Controller reaches the Board by pulling the Feed all the way down */
+      .nav-tab[data-tab="board"] { display: none !important; }
+      #tab-history { overscroll-behavior-y: contain; }
+    }
+    /* the little "pull for Board" cue that follows the finger (position:fixed popover => hidden by default) */
+    .pull-board-hint { display: none; position: fixed; left: 50%; z-index: 150; transform: translateX(-50%); padding: 7px 16px; border-radius: 999px;
+                       background: var(--surface2); border: 1px solid var(--border); color: var(--dim); font-size: 12px; font-weight: 600;
+                       white-space: nowrap; pointer-events: none; box-shadow: 0 4px 14px rgba(0,0,0,.4); }
+    .pull-board-hint.show { display: block; }
+    .pull-board-hint.ready { color: #fff; background: var(--accent); border-color: var(--accent); }
     @media (min-width: 768px) {
       /* Desktop order: Spotting, Board, Feed, Collection, Search, Settings.
          DOM order is Spotting, Collection, Feed, Search, Settings (mobile's order) — reorder visually here only. */
