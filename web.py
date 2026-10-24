@@ -5154,12 +5154,26 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                 pass
         if user.role != "controller":
             _spot_flag.clear()                  # those flags come from the Controller's Lightroom catalog — not theirs
+        # Registrations still missing from this viewer's Fleet cards (no photo of them in their own catalog yet), and their
+        # Exclusion List. A flight carrying either one is shown even when its flight number is hidden — same as a flight that
+        # has a Feed card — and the missing ones get a faint accent. Only for users who have a catalog and fleet cards.
+        fleet_missing: set = set()
+        if user.role in ("controller", "pilot") and app.state.get_user_catalog(user):
+            for fc_ in app.state.control_store.get_fleet_cards(_owner_id(user)):
+                for a_ in fc_.get("aircraft") or []:
+                    if a_.get("registration") and not (a_.get("photos") or 0):
+                        fleet_missing.add(a_["registration"].upper())
+        with store_._connect() as conn:
+            excl_row_regs = {(x[0] or "").upper() for x in conn.execute(
+                "SELECT registration FROM filter_exclusions WHERE owner_user_id = ?", (_owner_id(user),)).fetchall()}
         for r in rows:
             fn = r["flight_number"]
             eff = r["estimated_ts"] or r["scheduled_ts"]
             is_hidden = fn in hidden
-            if is_hidden and not any(abs(t - r["scheduled_ts"]) <= 12 * 3600 for t in roster[fn]["arrival_ts"]):
-                continue                                    # hidden, and no Feed card for this flight → stays hidden
+            rg_ = (r["registration"] or "").upper()
+            if (is_hidden and not any(abs(t - r["scheduled_ts"]) <= 12 * 3600 for t in roster[fn]["arrival_ts"])
+                    and rg_ not in fleet_missing and rg_ not in excl_row_regs):
+                continue                                    # hidden, with no Feed card / missing Fleet rego / excluded rego → stays hidden
             off = (_dtm.datetime.fromtimestamp(eff, tz).date() - d0).days
             if off not in by_off:
                 continue
@@ -5211,7 +5225,8 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                 "origin_iata": r["origin_iata"], "origin_name": r["origin_name"],
                 "origin_city": cities.get(r["origin_iata"], "") or "",
                 "origin_country_code": countries.get(r["origin_iata"], ""),
-                "status": r["status_text"], "hidden": is_hidden, "kind": kind, "card_types": card_types,
+                "status": r["status_text"], "hidden": is_hidden, "fleet_missing": bool(rg_) and rg_ in fleet_missing,
+                "kind": kind, "card_types": card_types,
                 "extra_info": extra_info,
             })
         # Possible-aircraft lines show "days since this aircraft was last seen at the airport" (any flight, from

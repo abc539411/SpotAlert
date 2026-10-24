@@ -392,7 +392,7 @@ const UI_ZH = {
   'Not assigned yet': '尚未分配飞机', 'No info yet': '暂无信息', 'Possible aircraft': '可能的飞机', 'Swipe down to access Feed': '下拉进入动态', 'Swipe down to access Board': '下拉进入大屏', 'Spotting Day': '拍机日', 'No cards this week.': '本周没有卡片。', 'Look through older days': '查看更早的记录', 'Back': '返回', 'Month': '月份', 'Older': '更早', 'Older than 7 days': '7 天前的记录', 'No older days.': '没有更早的记录。', 'No activity in the last 7 days.': '最近 7 天没有活动。', 'Since': '始于', 'Tap to select, then Unhide': '点选后再点“取消隐藏”', 'Edit': '编辑', 'Done': '完成', 'Hide': '隐藏', 'selected': '已选', 'Hidden flights': '已隐藏航班', 'Select flights to hide or unhide': '选择要隐藏或取消隐藏的航班', 'No check yet': '尚未检查', 'Confirm Refresh?': '确认刷新？', 'Added by hand (one-off) — in Feed and Spotting': '手动添加（仅此一次）— 已在 Feed 和拍机时间线', 'Add to Feed + Spotting (one-off)': '加入 Feed 和拍机时间线（仅此一次）', 'Remove this one-off flight from Feed + Spotting': '从 Feed 和拍机时间线移除此航班', 'Click again to add it to Feed + Spotting': '再点一次确认加入', 'Click again to remove it': '再点一次确认移除', 'added to Feed + Spotting': '已加入 Feed 和拍机时间线', 'removed': '已移除', 'Already photographed': '已拍摄', 'today': '今天', 'Last triggered': '上次触发原因', 'Hidden from Feed by the Exclusion List': '已被排除名单隐藏', 'No regular flights to show.': '暂无需要关注的常规航班。', 'No Feed cards': '无动态卡片', 'Aircraft not assigned yet': '尚未分配飞机', 'Could not load aircraft details.': '无法加载飞机信息。',
   'No equipment history yet.': '暂无机型使用记录。', 'Registration': '注册号', 'Aircraft': '飞机', 'Manufacturer': '制造商', 'Operator': '运营商',
   'Owner': '所有者', 'Livery': '涂装', 'Country': '国家/地区', 'Mode S': 'Mode S', 'Serial No.': '序列号', 'Built': '出厂年份', 'Feed cards here': '本场 Feed 卡片数',
-  'Feed card': '动态卡片', 'Excluded': '已排除', 'Has a card in Feed': '动态中已有卡片',
+  'Feed card': '动态卡片', 'Missing from your Fleet': '您的机队中尚未拍到',  'Excluded': '已排除', 'Has a card in Feed': '动态中已有卡片',
   'Would have a Feed card, but the aircraft is on the Exclusion List': '本应有动态卡片，但该飞机在排除列表中',
   'Updated': '更新于', 'Refreshed': '刷新于', 'Not refreshed yet': '尚未刷新', 'Latest photo': '最新照片', 'No catalog uploaded': '尚未上传图库', 'Data through': '数据截至', 'just now': '刚刚',
   'Hidden': '已隐藏', 'Unhide': '取消隐藏', 'Hide': '隐藏', 'hidden': '已隐藏', 'unhidden': '已取消隐藏',
@@ -4025,14 +4025,14 @@ function _bdRow(r, isMobile) {
     : `<span class="bd-na">${esc(tt(r.pending ? 'No info yet' : 'Not assigned yet'))}</span>${r.aircraft_type ? `<div class="ty"><span class="fc-actype">${esc(r.aircraft_type)}</span></div>` : ''}`;
   const oneOff = r.pinned && !r.kind;      // added by hand from the Board: shaded teal like a Feed-card row
   const kindCls = r.kind === 'feed' ? ' bd-row-feed' : r.kind === 'excluded' ? ' bd-row-excl' : oneOff ? ' bd-row-feed' : '';
-  const kindTip = oneOff ? tt('Added by hand (one-off) — in Feed and Spotting') : r.kind === 'feed' ? tt('Has a card in Feed') : r.kind === 'excluded' ? tt('Would have a Feed card, but the aircraft is on the Exclusion List') : '';
+  const kindTip = oneOff ? tt('Added by hand (one-off) — in Feed and Spotting') : r.kind === 'feed' ? tt('Has a card in Feed') : r.kind === 'excluded' ? tt('Would have a Feed card, but the aircraft is on the Exclusion List') : r.fleet_missing ? tt('Missing from your Fleet') : '';
   const rgb = r.kind ? _bdAccentRgb(r.card_types) : oneOff ? '45,212,191' : '';
   const chips = (r.kind && (r.card_types || []).length)
     ? `<span class="bd-chips">${r.card_types.map(t => `<span class="chip ${chipClass(t)}">${esc(chipLabel(t))}</span>`).join('')}</span>`
     : '';
   const key = _bdKey(r);
   const open = key === _bdOpenKey && !_bdIsPhone();
-  return `<div class="bd-row${kindCls}${open ? ' open' : ''}${r.pending ? ' bd-row-pending' : ''}${_bdSel.has(r.flight_number) ? ' bd-row-sel' : ''}${r.hidden ? ' bd-row-hidden' : ''}" data-key="${esc(key)}" data-fn="${fn}" onclick="bdRowClick(this)"${kindTip ? ` title="${esc(kindTip)}"` : ''}${rgb ? ` style="--bd-rgb:${rgb}"` : ''}>
+  return `<div class="bd-row${kindCls}${open ? ' open' : ''}${r.pending ? ' bd-row-pending' : ''}${r.fleet_missing ? ' bd-row-fleet' : ''}${_bdSel.has(r.flight_number) ? ' bd-row-sel' : ''}${r.hidden ? ' bd-row-hidden' : ''}" data-key="${esc(key)}" data-fn="${fn}" onclick="bdRowClick(this)"${kindTip ? ` title="${esc(kindTip)}"` : ''}${rgb ? ` style="--bd-rgb:${rgb}"` : ''}>
       <div class="bd-time">${time}</div>
       <div class="bd-main">
         <div class="bd-fnrow"><a class="bd-fn" href="${_fr24FlightUrl(r.flight_number)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${_srchLogoWithFallback(r.airline_icao, r.airline_name, 16, '')}${fn}</a>${chips}</div>
