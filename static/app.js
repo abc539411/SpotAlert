@@ -233,7 +233,7 @@ function tLabel(s) {
 // string is backend-defined, but this display abbreviation is our own.
 const _CHIP_ZH = {
   'Livery': '涂装', 'Rare': '稀有', 'Rego': '注册号', 'Type': '机型',
-  'Airline': '航司', 'Operator': '运营商', 'Military': '军机',
+  'Airline': '航司', 'Operator': '运营商', 'Military': '军机', 'Manual': '手动',
 };
 function tChip(s) {
   if (_lang !== 'zh' || !s) return s;
@@ -1915,6 +1915,7 @@ function chipClass(type) {
     airline_watchlist: 'chip-airline',
     operator_watchlist:'chip-airline',
     military:          'chip-military',
+    manual:            'chip-manual',     // one-off flight added by hand from the Board
   };
   return map[_normType(type)] || 'chip-unknown';
 }
@@ -1928,6 +1929,7 @@ function chipLabel(type) {
     airline_watchlist: 'Airline',
     operator_watchlist:'Operator',
     military:          'Military',
+    manual:            'Manual',
   };
   return tChip(map[_normType(type)]) || type || '?';
 }
@@ -3122,7 +3124,7 @@ async function refreshBoard() {
 
 // Row accent = the card's type colour (same palette as the Feed's .chip-* chips). First match in the same
 // priority order the filters run in; r,g,b for use as `rgba(var(--bd-rgb), a)`.
-const _BD_TYPE_RGB = { 'chip-military': '248,113,113', 'chip-livery': '59,130,246', 'chip-rego': '34,197,94',
+const _BD_TYPE_RGB = { 'chip-manual': '45,212,191', 'chip-military': '248,113,113', 'chip-livery': '59,130,246', 'chip-rego': '34,197,94',
                        'chip-type': '168,85,247', 'chip-airline': '239,68,68', 'chip-rare': '245,158,11' };
 const _BD_TYPE_ORDER = ['Military', 'Special Livery', 'Watchlist Registration', 'Watchlist Aircraft Type',
                         'Watchlist Airline', 'Watchlist Operator', 'Rare Plane/Airline'];

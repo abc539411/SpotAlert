@@ -1148,15 +1148,15 @@ class SqliteStore:
                              (flight_number, int(scheduled_ts))).fetchone()
         return dict(r) if r else None
 
-    # --- Board one-off "Added" cards -------------------------------------------------------------------
-    # A flight added from the Board is a normal flight_arrivals row whose only tag is "Added" (plus a predicted
+    # --- Board one-off "Manual" cards -------------------------------------------------------------------
+    # A flight added from the Board is a normal flight_arrivals row whose only tag is "Manual" (plus a predicted
     # flight_departures row), so Feed, Spotting, status updates and departure pairing all treat it like any
     # other flight. It is NOT a filter: only that single flight is added, never future ones.
     def add_pin_card(self, registration, flight_number, arrival_ts, arrival_date, detail, origin_iata,
                      origin_name, airline_icao, photo_url, aircraft_type, now_ts):
         """Insert (or tag) the one-off card; returns its flight_arrivals id."""
         arrival_id, _ = self.record_filter_match_ex(
-            registration, flight_number, ["Added"], arrival_ts, now_ts, detail=detail, extra_info="",
+            registration, flight_number, ["Manual"], arrival_ts, now_ts, detail=detail, extra_info="",
             origin_iata=origin_iata, origin_name=origin_name, arrival_date=arrival_date,
             airline_icao=airline_icao, photo_url=photo_url, aircraft_type=aircraft_type)
         return arrival_id
@@ -1165,7 +1165,7 @@ class SqliteStore:
         with self._connect() as conn:
             return [dict(r) for r in conn.execute(
                 "SELECT id, registration, flight_number, arrival_ts, arrival_date, notif_types FROM flight_arrivals "
-                "WHERE notif_types LIKE '%\"Added\"%' AND COALESCE(arrival_date, '') >= ?", (since_date,)).fetchall()]
+                "WHERE notif_types LIKE '%\"Manual\"%' AND COALESCE(arrival_date, '') >= ?", (since_date,)).fetchall()]
 
     def remove_pin_card(self, arrival_id: int) -> Optional[dict]:
         """Take the 'Added' tag off; delete the row (and its departure) when that was its only tag.
@@ -1180,7 +1180,7 @@ class SqliteStore:
                 types = json.loads(r["notif_types"] or "[]")
             except Exception:
                 types = []
-            rest = [t for t in types if t != "Added"]
+            rest = [t for t in types if t != "Manual"]
             if rest:
                 conn.execute("UPDATE flight_arrivals SET notif_types = ? WHERE id = ?", (json.dumps(rest), arrival_id))
             else:

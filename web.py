@@ -158,7 +158,7 @@ def _push_owner_id(user) -> str:
 # list stays empty (never falls back to the Controller's again).
 
 
-PIN_NOTIF_TYPE = "Added"     # chip shown on a Spotting card that was added by hand from the Board
+PIN_NOTIF_TYPE = "Manual"     # chip shown on a Spotting card that was added by hand from the Board
 
 
 def predict_pin_departure(store, airport_iata: str, flight_number: str, arrival_ts: int, dep_threshold: int = 0):
@@ -196,7 +196,7 @@ def pin_events_from_rows(rows: list) -> list:
         if dep_ts and not (arr_ts <= dep_ts <= arr_ts + 36 * 3600):
             dep_ts = None
         common = {
-            "registration": fr["registration"], "flight_number": fr["flight_number"], "notif_types": ["Added"],
+            "registration": fr["registration"], "flight_number": fr["flight_number"], "notif_types": ["Manual"],
             "detail": fr["detail"] or "", "extra_info": fr["extra_info"] or "", "airline_icao": fr["airline_icao"] or "",
             "aircraft_type": fr["aircraft_type"] or "", "photo_url": fr["fe_photo_url"] or fr["af_photo_url"] or "",
             "manufacturer": fr["manufacturer"] or "", "origin_iata": fr["origin_iata"],
@@ -4817,7 +4817,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                 nt = _resolve_rare_plane_tag(nt, fr["rare_absence_days"], _rare_min_days)
                 nt = _strip_unowned_watchlist_tags(nt, fr["registration"], fr["aircraft_type"],
                                                    fr["airline_icao"], _watchlist_sets)
-                nt = [t for t in nt if t != PIN_NOTIF_TYPE]      # a one-off "Added" card is not a trigger
+                nt = [t for t in nt if t != PIN_NOTIF_TYPE]      # a one-off "Manual" card is not a trigger
                 if not nt or not fr["arrival_ts"]:
                     continue
                 e = roster.setdefault(fr["flight_number"], {"arrival_ts": [], "cards": []})
@@ -5160,7 +5160,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         return JSONResponse(await asyncio.to_thread(_board_aircraft_info, _cfg_for_user(user), registration))
 
     # ── One-off "add to Feed + Spotting" from the Board ───────────────────────────────────────────────────
-    # The flight becomes a normal flight_arrivals row tagged "Added" (+ a predicted departure), so every part
+    # The flight becomes a normal flight_arrivals row tagged "Manual" (+ a predicted departure), so every part
     # of the app shows it like any other flight. Only that one flight — it is not a filter.
     def _pin_rebuild_days(cfg_, user, dates: list) -> None:
         """Re-cluster these airport-local dates of the Spotting timeline cache right now, so adding / removing a
@@ -5203,7 +5203,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                     FROM flight_arrivals fe
                     LEFT JOIN flight_departures fd ON fd.arrival_id = fe.id
                     LEFT JOIN airframes a ON a.registration = fe.registration
-                    WHERE fe.arrival_date IN ({','.join('?' * len(near))}) AND fe.notif_types = '["Added"]'""", near).fetchall()
+                    WHERE fe.arrival_date IN ({','.join('?' * len(near))}) AND fe.notif_types = '["Manual"]'""", near).fetchall()
         kws = [k.strip().lower() for k in (store_.load_setting("SPECIAL_LIVERY_EXCLUDE_KEYWORDS") or "").split(",") if k.strip()]
         catalog = app.state.get_user_catalog(user)
         pin_events = pin_events_from_rows(pin_rows)
