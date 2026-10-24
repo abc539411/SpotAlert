@@ -367,7 +367,7 @@ const UI_ZH = {
   'Search failed.': '搜索失败。',
   'Equipment History': '机型使用记录',
   'Logged in as:': '登录身份：',
-  'All airports': '所有机场', 'No airports assigned': '未分配机场',
+  'All': '全部', 'All airports': '所有机场', 'No airports assigned': '未分配机场',
   'Invalid username or password': '用户名或密码错误',
   'No airports assigned to your account yet.': '您的账户尚未分配任何机场。',
   'Passwords do not match': '两次输入的密码不一致',
@@ -1595,18 +1595,37 @@ function _setRolePillOptions(prefix, enabledRoles, selectedRole) {
 }
 
 function _renderAirportPillSelect(containerId, selectedIatas) {
-  $(containerId).innerHTML = _pickerAirports.map(a => {
+  const allOn = _pickerAirports.length > 0 && _pickerAirports.every(a => selectedIatas.includes(a.iata));
+  // First pill: toggle every airport at once (no data-iata, so it never counts as an airport itself)
+  const allPill = `<button type="button" class="airport-pick-pill airport-pick-all${allOn ? ' selected' : ''}" onclick="_toggleAllAirportPills(this)">${esc(tt('All'))}</button>`;
+  $(containerId).innerHTML = allPill + _pickerAirports.map(a => {
     const sel = selectedIatas.includes(a.iata);
     return `<button type="button" class="airport-pick-pill${sel ? ' selected' : ''}" data-iata="${esc(a.iata)}" onclick="_toggleAirportPill(this)">${esc(a.iata)}</button>`;
   }).join('');
 }
 
+function _syncAllAirportPill(container) {
+  const all = container.querySelector('.airport-pick-all');
+  if (!all) return;
+  const pills = [...container.querySelectorAll('.airport-pick-pill[data-iata]')];
+  all.classList.toggle('selected', pills.length > 0 && pills.every(b => b.classList.contains('selected')));
+}
+
 function _toggleAirportPill(btn) {
   btn.classList.toggle('selected');
+  _syncAllAirportPill(btn.parentElement);
+}
+
+function _toggleAllAirportPills(btn) {                  // everything on, or — when everything is already on — everything off
+  const box = btn.parentElement;
+  const pills = [...box.querySelectorAll('.airport-pick-pill[data-iata]')];
+  const turnOn = !pills.every(b => b.classList.contains('selected'));
+  pills.forEach(b => b.classList.toggle('selected', turnOn));
+  _syncAllAirportPill(box);
 }
 
 function _getSelectedAirportPills(containerId) {
-  return Array.from(document.querySelectorAll(`#${containerId} .airport-pick-pill.selected`)).map(b => b.dataset.iata);
+  return Array.from(document.querySelectorAll(`#${containerId} .airport-pick-pill.selected[data-iata]`)).map(b => b.dataset.iata);
 }
 
 function _showAddUserForm() {
