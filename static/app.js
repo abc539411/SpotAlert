@@ -3917,7 +3917,7 @@ function renderBoard() {
     const wx = wxDesc ? `<span class="rdc-weather" style="${wxStyle}">${_WX_ICONS[wc] || '🌡'} ${esc(wxDesc)}</span>${temp}` : '';
     const nFeed = day.rows.filter(r => r.kind === 'feed').length;
     const sub = nFeed
-      ? `<span class="rdc-window">${_lang === 'zh' ? `Feed 卡片 ${nFeed}` : `${nFeed} in Feed`}</span>`
+      ? `<span class="rdc-window">${_lang === 'zh' ? `${nFeed}动态卡片` : `${nFeed} in Feed`}</span>`
       : `<span class="rdc-window" style="color:var(--dim);font-weight:400">${tt('No Feed cards')}</span>`;
     return `<div class="bd-card${day.is_today ? ' bd-today' : ''}${day.spotted ? ' day-spotted' : ''}">
       <div class="rec-day-hdr">
