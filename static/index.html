@@ -682,9 +682,11 @@
       background-image: linear-gradient(rgba(34,197,94,0.13), rgba(34,197,94,0.13));
       border-bottom-color: rgba(34,197,94,0.45);
     }
-    .spot-day-pill { display: inline-flex; align-items: center; gap: 4px; margin-left: 8px; padding: 1px 7px 1px 6px; border-radius: 999px;
+    /* the date label becomes a centred row so the pill sits on the same centre line as the text, at any font size */
+    .rec-d-label:has(.spot-day-pill) { display: flex; align-items: center; gap: 8px; }
+    .spot-day-pill { display: inline-flex; align-items: center; gap: 4px; padding: 0 7px 0 6px; height: 16px; line-height: 1; border-radius: 999px;
                      background: rgba(34,197,94,0.18); border: 1px solid rgba(34,197,94,0.4); color: #86efac;
-                     font-size: 10px; font-weight: 600; letter-spacing: .02em; vertical-align: 1px; white-space: nowrap; }
+                     font-size: 10px; font-weight: 600; letter-spacing: .02em; white-space: nowrap; box-sizing: content-box; }
     .spot-day-pill svg { width: 11px; height: 11px; flex-shrink: 0; }
     /* "Older" slot at the far right end of the Board / Spotting strips */
     .bd-older, .rec-older { flex: 0 0 auto; align-self: center; display: flex; align-items: center; padding: 0 6px; }
