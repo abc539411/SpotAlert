@@ -184,6 +184,27 @@ def latest_photo_url(fr_api, registration: str) -> str:
     return url
 
 
+def _sun_times(day, lat: float, lon: float):
+    """(sunrise_ts, sunset_ts) in unix seconds for a calendar `day` at lat/lon (NOAA sunrise equation, good to ~1-2 minutes) —
+    the fallback for days the weather cache (Open-Meteo) does not cover. (0, 0) when there is no sun event (polar) or no position."""
+    import math
+    if not lat and not lon:
+        return 0, 0
+    n = day.toordinal() - 730120 + 0.0008                     # days since J2000 noon (2000-01-01 = ordinal 730120)
+    jstar = n - lon / 360.0                                    # mean solar noon, east longitude positive
+    m = math.radians((357.5291 + 0.98560028 * jstar) % 360)
+    c = 1.9148 * math.sin(m) + 0.0200 * math.sin(2 * m) + 0.0003 * math.sin(3 * m)
+    lam = math.radians((math.degrees(m) + c + 180 + 102.9372) % 360)
+    jtransit = 2451545.0 + jstar + 0.0053 * math.sin(m) - 0.0069 * math.sin(2 * lam)
+    decl = math.asin(math.sin(lam) * math.sin(math.radians(23.4397)))
+    cos_w = (math.sin(math.radians(-0.833)) - math.sin(math.radians(lat)) * math.sin(decl)) / (math.cos(math.radians(lat)) * math.cos(decl))
+    if not -1 <= cos_w <= 1:
+        return 0, 0
+    w0 = math.degrees(math.acos(cos_w)) / 360.0
+    to_ts = lambda jd: int(round((jd - 2440587.5) * 86400))
+    return to_ts(jtransit - w0), to_ts(jtransit + w0)
+
+
 def predict_pin_departure(store, airport_iata: str, flight_number: str, arrival_ts: int, dep_threshold: int = 0):
     """Best guess at the aircraft's next departure from the airport's learned departure patterns, as
     (dep_flight, dep_ts, dest_iata, dest_name, dep_label, confidence) — or None."""
@@ -5371,8 +5392,11 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
             if o not in ((0,) if month else _ahead) and not day["rows"]:
                 continue                                    # empty past days are skipped; today and the 3 days ahead always show
             w = wx.get(day["date"], {})
+            sr_, ss_ = w.get("sunrise_ts") or 0, w.get("sunset_ts") or 0
+            if not (sr_ and ss_):                          # day the weather cache does not cover: work it out from the position
+                sr_, ss_ = _sun_times(_dtm.date.fromisoformat(day["date"]), getattr(cfg_, "airport_lat", 0) or 0, getattr(cfg_, "airport_lon", 0) or 0)
             day.update({"weather_code": w.get("weather_code", 0), "weather_severe": w.get("weather_severe", False),
-                        "temp_max": w.get("temp_max"), "temp_min": w.get("temp_min")})
+                        "temp_max": w.get("temp_max"), "temp_min": w.get("temp_min"), "sunrise_ts": sr_, "sunset_ts": ss_})
             days.append(day)
         hidden_flights = []
         for hfn in sorted(hidden):

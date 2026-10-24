@@ -389,7 +389,7 @@ const UI_ZH = {
   'Refresh Board': '刷新大屏', 'Checking FR24…': '正在检查 FR24…', 'Board updated': '大屏已更新',
   "Waiting for this airport's first check — tap Refresh to run one now.": '正在等待该机场的首次检查——点击刷新立即检查。',
   'Could not load the Board.': '无法加载大屏。',
-  'Not assigned yet': '尚未分配飞机', 'No info yet': '暂无信息', 'Possible Equipment': '可能的机型', 'Previous Equipment': '此前机型', 'Swipe down to access Feed': '下拉进入动态', 'Swipe down to access Board': '下拉进入大屏', 'Spotting Day': '拍机日', 'No cards this week.': '本周没有卡片。', 'Look through older days': '查看更早的记录', 'Back': '返回', 'Month': '月份', 'Older': '更早', 'Older than 7 days': '7 天前的记录', 'No older days.': '没有更早的记录。', 'No activity in the last 7 days.': '最近 7 天没有活动。', 'Since': '始于', 'Tap to select, then Unhide': '点选后再点“取消隐藏”', 'Edit': '编辑', 'Done': '完成', 'Hide': '隐藏', 'selected': '已选', 'Hidden flights': '已隐藏航班', 'Select flights to hide or unhide': '选择要隐藏或取消隐藏的航班', 'No check yet': '尚未检查', 'Confirm Refresh?': '确认刷新？', 'Added by hand (one-off) — in Feed and Spotting': '手动添加（仅此一次）— 已在 Feed 和拍机时间线', 'Add to Feed + Spotting (one-off)': '加入 Feed 和拍机时间线（仅此一次）', 'Remove this one-off flight from Feed + Spotting': '从 Feed 和拍机时间线移除此航班', 'Click again to add it to Feed + Spotting': '再点一次确认加入', 'Click again to remove it': '再点一次确认移除', 'added to Feed + Spotting': '已加入 Feed 和拍机时间线', 'removed': '已移除', 'Already photographed': '已拍摄', 'today': '今天', 'Last triggered': '上次触发原因', 'Hidden from Feed by the Exclusion List': '已被排除名单隐藏', 'No regular flights to show.': '暂无需要关注的常规航班。', 'No Feed cards': '无动态卡片', 'Aircraft not assigned yet': '尚未分配飞机', 'Could not load aircraft details.': '无法加载飞机信息。',
+  'Not assigned yet': '尚未分配飞机', 'No info yet': '暂无信息', 'Possible Equipment': '可能的机型', 'Sunrise': '日出', 'Sunset': '日落', 'Previous Equipment': '此前机型', 'Swipe down to access Feed': '下拉进入动态', 'Swipe down to access Board': '下拉进入大屏', 'Spotting Day': '拍机日', 'No cards this week.': '本周没有卡片。', 'Look through older days': '查看更早的记录', 'Back': '返回', 'Month': '月份', 'Older': '更早', 'Older than 7 days': '7 天前的记录', 'No older days.': '没有更早的记录。', 'No activity in the last 7 days.': '最近 7 天没有活动。', 'Since': '始于', 'Tap to select, then Unhide': '点选后再点“取消隐藏”', 'Edit': '编辑', 'Done': '完成', 'Hide': '隐藏', 'selected': '已选', 'Hidden flights': '已隐藏航班', 'Select flights to hide or unhide': '选择要隐藏或取消隐藏的航班', 'No check yet': '尚未检查', 'Confirm Refresh?': '确认刷新？', 'Added by hand (one-off) — in Feed and Spotting': '手动添加（仅此一次）— 已在 Feed 和拍机时间线', 'Add to Feed + Spotting (one-off)': '加入 Feed 和拍机时间线（仅此一次）', 'Remove this one-off flight from Feed + Spotting': '从 Feed 和拍机时间线移除此航班', 'Click again to add it to Feed + Spotting': '再点一次确认加入', 'Click again to remove it': '再点一次确认移除', 'added to Feed + Spotting': '已加入 Feed 和拍机时间线', 'removed': '已移除', 'Already photographed': '已拍摄', 'today': '今天', 'Last triggered': '上次触发原因', 'Hidden from Feed by the Exclusion List': '已被排除名单隐藏', 'No regular flights to show.': '暂无需要关注的常规航班。', 'No Feed cards': '无动态卡片', 'Aircraft not assigned yet': '尚未分配飞机', 'Could not load aircraft details.': '无法加载飞机信息。',
   'No equipment history yet.': '暂无机型使用记录。', 'Registration': '注册号', 'Aircraft': '飞机', 'Manufacturer': '制造商', 'Operator': '运营商',
   'Owner': '所有者', 'Livery': '涂装', 'Country': '国家/地区', 'Mode S': 'Mode S', 'Serial No.': '序列号', 'Built': '出厂年份', 'Feed cards here': '本场 Feed 卡片数',
   'Feed card': '动态卡片', 'Missing from your Fleet': '您的机队中尚未拍到',  'Excluded': '已排除', 'Has a card in Feed': '动态中已有卡片',
@@ -4116,6 +4116,24 @@ function initBoardScroll(wrap) {
   });
 }
 
+// Inline sunrise / sunset lines (a glowing coloured dot + text) dropped into the day's list at their time of day.
+function _bdSunLine(kind, ts) {
+  return `<div class="bd-sun bd-sun-${kind}"><span class="bd-sun-dot"></span><span>${esc(tt(kind === 'rise' ? 'Sunrise' : 'Sunset'))} ${esc(fmtTs(ts))}</span></div>`;
+}
+function _bdRowsHtml(day, isMobile) {
+  const marks = [];
+  if (day.sunrise_ts) marks.push({ kind: 'rise', ts: day.sunrise_ts });
+  if (day.sunset_ts)  marks.push({ kind: 'set',  ts: day.sunset_ts });
+  marks.sort((a, b) => a.ts - b.ts);
+  let out = '', mi = 0;
+  for (const r of day.rows) {
+    while (mi < marks.length && marks[mi].ts <= r.eff_ts) { out += _bdSunLine(marks[mi].kind, marks[mi].ts); mi++; }
+    out += _bdRow(r, isMobile);
+  }
+  while (mi < marks.length) { out += _bdSunLine(marks[mi].kind, marks[mi].ts); mi++; }
+  return out;
+}
+
 function renderBoard() {
   const d = _bdData;
   if (!d) return;
@@ -4159,7 +4177,7 @@ function renderBoard() {
         <div><div class="rec-d-label">${esc(tRecDayLabel(day.date, day.label))}${day.spotted ? _SPOT_DAY_PILL() : ''}</div>${sub}</div>
         <div style="text-align:right">${wx}</div>
       </div>
-      <div class="bd-rows">${day.rows.map(r => _bdRow(r, isMobile)).join('')}${empty}</div>
+      <div class="bd-rows">${_bdRowsHtml(day, isMobile)}${empty}</div>
     </div>${day.is_today ? _bdHiddenCard() : ''}`;
   }).join('') + (_bdOlderView || !d.has_older ? '' : `<div class="bd-older"><button type="button" class="older-btn" onclick="bdLoadOlder(this)">${esc(tt('Older'))} ›</button><span class="older-cap">${esc(tt('Look through older days'))}</span></div>`);
   const justPositioned = !_bdPositioned && !!wrap.firstElementChild;
