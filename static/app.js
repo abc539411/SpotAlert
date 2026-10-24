@@ -2669,6 +2669,7 @@ function closeDetail() {
 let _openRecCard  = null;
 let _openRecPanel = null;
 let _openRecScrollEl = null;
+let _openRecStrip = null;      // the horizontal day strip the open popover sits in
 
 function openRecDetail(el) {
   if (window.innerWidth < 768) {
@@ -2724,6 +2725,10 @@ function openRecDetail(el) {
     _openRecScrollEl = scrollEl;
     scrollEl.addEventListener('scroll', _closeRecPanel, { once: true });
   }
+  // swiping / dragging the day strip sideways also dismisses it (the popover is fixed to the screen, so it would
+  // otherwise float over whichever card slides underneath)
+  const strip = el.closest('.rec-scroll');
+  if (strip) { _openRecStrip = strip; strip.addEventListener('scroll', _closeRecPanel, { once: true }); }
 
   requestAnimationFrame(() => requestAnimationFrame(() => panel.classList.add('rfc-panel-open')));
 }
@@ -2732,6 +2737,7 @@ function _closeRecPanel() {
   if (_openRecPanel) { _openRecPanel.remove(); _openRecPanel = null; }
   if (_openRecCard)  { _openRecCard.classList.remove('rfc-open', 'rfc-above'); _openRecCard = null; }
   if (_openRecScrollEl) { _openRecScrollEl.removeEventListener('scroll', _closeRecPanel); _openRecScrollEl = null; }
+  if (_openRecStrip) { _openRecStrip.removeEventListener('scroll', _closeRecPanel); _openRecStrip = null; }
 }
 
 document.addEventListener('click', e => {
