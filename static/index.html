@@ -339,6 +339,8 @@
     @media (max-width: 767px) {
       .detail-modal { max-height: 100%; }
       .detail-sheet-scroll { padding-bottom: calc(12px + env(safe-area-inset-bottom)); }
+      /* Spotting + Board (set by switchTab): the sheet rises higher than Feed's, but still stops short of the header. */
+      .detail-modal.sheet-tall .detail-sheet-scroll { max-height: min(72vh, calc(var(--app-vvh, 100vh) - 120px)); }
     }
     @media (min-width: 768px) {
       .detail-sheet {
