@@ -4783,6 +4783,25 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         _board_roster_cache[key] = (time.time(), roster, excluded_cards)
         return roster, excluded_cards
 
+    # FR24 gives a not-yet-assigned flight its planned equipment as an IATA code ("789", "73H"), while history and
+    # assigned aircraft use ICAO ("B789", "B738"). Good enough to tell "same type" apart for the common cases.
+    _IATA_TO_ICAO = {"73H": "B738", "73W": "B737", "73G": "B737", "7M8": "B38M", "7M9": "B39M", "77W": "B77W",
+                     "78X": "B78X", "32N": "A20N", "32Q": "A21N", "31N": "A19N", "351": "A35K", "223": "BCS1",
+                     "221": "BCS1", "E90": "E190", "E75": "E75L", "76W": "B763", "75W": "B752", "74H": "B748"}
+
+    def _same_aircraft_type(a, b) -> bool:
+        def cands(x):
+            x = (x or "").strip().upper()
+            if not x:
+                return set()
+            out = {x}
+            if len(x) == 3:
+                out |= {"B" + x, "A" + x}
+                if x in _IATA_TO_ICAO:
+                    out.add(_IATA_TO_ICAO[x])
+            return out
+        return bool(cands(a) & cands(b))
+
     def _build_board_payload(cfg_, user) -> dict:
         """Day cards (same window as Spotting: up to 3 days ahead, today, 7 days back; airport-local; empty ones
         skipped except today) of the schedule rows of every roster flight number
@@ -4884,7 +4903,11 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                                               "extra_info": c[3] or "", "aircraft_type": c[4] or "",
                                               "excluded": ex, "count": 0})
                 e_["count"] += 1
-            past = list(by_reg.values())
+            # Board only: a registration whose ONLY trigger reason was Rare Plane/Airline, on the very type that is
+            # operating this flight now, tells you nothing new — drop it from the possibilities.
+            past = [e_ for e_ in by_reg.values()
+                    if not (set(e_["card_types"] or []) == {"Rare Plane/Airline"}
+                            and _same_aircraft_type(e_["aircraft_type"], r["aircraft_type"]))]
             by_off[off]["rows"].append({
                 "past_triggers": past,
                 "flight_number": fn, "scheduled_ts": r["scheduled_ts"], "estimated_ts": r["estimated_ts"],
