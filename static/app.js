@@ -3279,7 +3279,7 @@ function _bdDetailHtml(r) {
         // Rare-plane triggers: which type it was (that is what made it rare).
         const rareType = (t.card_types || []).includes('Rare Plane/Airline') && t.aircraft_type
           ? `<span class="bd-trig-lv">${esc(t.aircraft_type)}</span>` : '';   // plain italic text, same style as the livery name
-        const days = Math.max(0, Math.floor((Date.now() / 1000 - t.ts) / 86400));
+        const days = Math.max(0, Math.floor((Date.now() / 1000 - (t.last_seen_ts || t.ts)) / 86400));   // since last seen at the airport
         const ago = days === 0 ? tt('today') : (_lang === 'zh' ? `${days} 天` : `${days} day${days === 1 ? '' : 's'}`);
         return `<div class="bd-trig-row${t.excluded ? ' is-excl' : ''}${t.registration === r.registration ? ' is-current' : ''}" title="${t.excluded ? esc(tt('Hidden from Feed by the Exclusion List')) : ''}">` +
           `<span class="bd-trig-d">${esc(ago)}</span>` +

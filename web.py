@@ -4884,6 +4884,24 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                 "status": r["status_text"], "hidden": is_hidden, "kind": kind, "card_types": card_types,
                 "extra_info": extra_info,
             })
+        # Possible-aircraft lines show "days since this aircraft was last seen at the airport" (any flight, from
+        # rego_sightings), not "since it last operated this flight number" — display only; list/order/counts unchanged.
+        _regs = {t["registration"] for o in by_off.values() for row in o["rows"]
+                 for t in row.get("past_triggers", []) if t.get("registration")}
+        _seen: dict = {}
+        if _regs:
+            _rl = sorted(_regs)
+            with store_._connect() as conn:
+                for i in range(0, len(_rl), 400):
+                    ch = _rl[i:i + 400]
+                    for rr in conn.execute(
+                            f"SELECT registration, last_seen_ts FROM rego_sightings WHERE registration IN ({','.join('?' * len(ch))})",
+                            tuple(ch)).fetchall():
+                        _seen[rr[0]] = rr[1]
+            for o in by_off.values():
+                for row in o["rows"]:
+                    for t in row.get("past_triggers", []):
+                        t["last_seen_ts"] = _seen.get(t["registration"]) or t["ts"]
         # "Expected" rows: a roster flight number with NO schedule row on today / tomorrow yet (FR24's board only
         # reaches so far ahead) is listed at its usual time, taken from its history. It stays until the latest
         # pull reaches PENDING_GRACE past that time without the flight showing up — then it's assumed not
