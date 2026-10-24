@@ -691,8 +691,9 @@
     .bd-row { cursor: pointer; }
     .bd-row.open { border-bottom: 1px solid var(--border); }
     .bd-detail { padding: 10px 12px 14px; background: var(--surface2); border-top: 1px solid var(--border); cursor: default; }
-    .bd-photo-wrap { position: relative; margin-bottom: 10px; }
-    .bd-photo { display: block; width: 100%; max-height: 240px; object-fit: cover; border-radius: var(--r); background: var(--surface); }
+    /* Natural aspect ratio (no cropping); capped so a 700px card doesn't get a 470px-tall photo. */
+    .bd-photo-wrap { position: relative; margin: 0 auto 10px; width: fit-content; max-width: 100%; }
+    .bd-photo { display: block; width: auto; max-width: 100%; max-height: 360px; border-radius: var(--r); background: var(--surface); }
     .bd-photo-credit { position: absolute; right: 6px; bottom: 6px; font-size: 10px; color: #fff; background: rgba(0,0,0,.55); padding: 1px 6px; border-radius: 8px; }
     .bd-from { display: flex; align-items: center; gap: 4px; font-size: 12px; margin-bottom: 10px; }
     .bd-facts { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
