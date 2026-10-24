@@ -2719,6 +2719,41 @@ function _buildRecDetail(el) {
   return `${photoHtml}${bodyHtml}`;
 }
 
+// Lightroom "Spotted" session pills (airport · date · photo count) — shared by the Feed card and the Board row.
+function _spotPillsHtml(sessions, registration, r) {
+  const isLivery = (r.notif_types || []).includes('Special Livery');
+  const curLivery = (r.extra_info || '').trim().toLowerCase();
+return sessions.map(s => {
+    const d   = new Date(s.ts * 1000);
+    const mon = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getMonth()];
+    const yr  = String(d.getFullYear()).slice(2);
+    const day = String(d.getDate()).padStart(2,'0');
+    const dateLabel = _lang === 'zh'
+      ? `${yr}/${String(d.getMonth()+1).padStart(2,'0')}/${day}`
+      : `${day} ${mon} '${yr}`;
+    const apt = s.airport || '';
+    const cc  = _airportCountry(apt);
+    const flag = _flag(cc, { h: 11, vab: -1 });
+    const codePart = flag
+      ? `<span style="display:inline-flex;align-items:center;gap:3px">${flag}${esc(apt)}</span>`
+      : esc(apt);
+    const sesNotes = (s.notes || '').trim().toLowerCase();
+    const hl = isLivery && curLivery && sesNotes && sesNotes === curLivery;
+    const isoDate = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    const clickable = _appRole === 'controller' && apt;
+    const clickAttrs = clickable
+      ? ` class="col-ex-pill${hl ? ' col-ex-pill-hl' : ''} col-ex-pill-clickable" onclick="_spOpenPhotos('${esc(registration)}','${esc(apt)}','${isoDate}')"`
+      : ` class="col-ex-pill${hl ? ' col-ex-pill-hl' : ''}"`;
+    return `<span${clickAttrs}>` +
+      `<span class="col-ex-pill-code">${codePart}</span>` +
+      `<span class="col-ex-pill-sep"></span>` +
+      `<span class="col-ex-pill-count" style="color:var(--text)">${dateLabel}</span>` +
+      `<span class="col-ex-pill-sep"></span>` +
+      `<span class="col-ex-pill-count">${s.count}</span>` +
+      `</span>`;
+  }).join('');
+}
+
 async function _loadAircraftDetail(registration, uid, r) {
   const placeholderId = `detail-lazy-${uid}`;
   // Military cards: the flag next to the registration can't be reliably
@@ -2755,37 +2790,7 @@ async function _loadAircraftDetail(registration, uid, r) {
       if (spotEl) {
         const sessions = data.sessions || [];
         if (sessions.length > 0) {
-          const isLivery = (r.notif_types || []).includes('Special Livery');
-          const curLivery = (r.extra_info || '').trim().toLowerCase();
-const pills = sessions.map(s => {
-            const d   = new Date(s.ts * 1000);
-            const mon = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getMonth()];
-            const yr  = String(d.getFullYear()).slice(2);
-            const day = String(d.getDate()).padStart(2,'0');
-            const dateLabel = _lang === 'zh'
-              ? `${yr}/${String(d.getMonth()+1).padStart(2,'0')}/${day}`
-              : `${day} ${mon} '${yr}`;
-            const apt = s.airport || '';
-            const cc  = _airportCountry(apt);
-            const flag = _flag(cc, { h: 11, vab: -1 });
-            const codePart = flag
-              ? `<span style="display:inline-flex;align-items:center;gap:3px">${flag}${esc(apt)}</span>`
-              : esc(apt);
-            const sesNotes = (s.notes || '').trim().toLowerCase();
-            const hl = isLivery && curLivery && sesNotes && sesNotes === curLivery;
-            const isoDate = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-            const clickable = _appRole === 'controller' && apt;
-            const clickAttrs = clickable
-              ? ` class="col-ex-pill${hl ? ' col-ex-pill-hl' : ''} col-ex-pill-clickable" onclick="_spOpenPhotos('${esc(registration)}','${esc(apt)}','${isoDate}')"`
-              : ` class="col-ex-pill${hl ? ' col-ex-pill-hl' : ''}"`;
-            return `<span${clickAttrs}>` +
-              `<span class="col-ex-pill-code">${codePart}</span>` +
-              `<span class="col-ex-pill-sep"></span>` +
-              `<span class="col-ex-pill-count" style="color:var(--text)">${dateLabel}</span>` +
-              `<span class="col-ex-pill-sep"></span>` +
-              `<span class="col-ex-pill-count">${s.count}</span>` +
-              `</span>`;
-          }).join('');
+          const pills = _spotPillsHtml(sessions, registration, r);
           spotEl.innerHTML = `<div class="col-ex-pills" style="padding:0">${pills}</div>`;
         } else if (data.last_spotted_ts) {
           const d = new Date(data.last_spotted_ts * 1000);
@@ -3130,6 +3135,7 @@ function _bdAccentRgb(types) {
 // re-renders around them, so the 60 s refresh keeps the row open.
 let _bdOpenKey = null;
 const _bdAc = {};            // registration -> /board/aircraft payload | 'err'
+const _bdSp = {};            // registration -> /aircraft/{reg} (Lightroom spotting sessions)
 const _bdEq = {};            // flight number -> [{aircraft_type, count, last_seen_ts}] | 'err'
 let _bdRowsByKey = {};
 
@@ -3145,6 +3151,10 @@ async function bdOpen(rowEl) {
   if (r.registration && !_bdAc[r.registration]) {
     jobs.push(api('/board/aircraft/' + encodeURIComponent(r.registration))
       .then(d => { _bdAc[r.registration] = d; }).catch(() => { _bdAc[r.registration] = 'err'; }));
+  }
+  if (r.registration && !_bdSp[r.registration]) {
+    jobs.push(api('/aircraft/' + encodeURIComponent(r.registration))
+      .then(d => { _bdSp[r.registration] = d; }).catch(() => { _bdSp[r.registration] = {}; }));
   }
   if (!_bdEq[r.flight_number]) {
     jobs.push(api('/search/route?fn=' + encodeURIComponent(r.flight_number)).then(d => {
@@ -3171,7 +3181,7 @@ function _bdDetailHtml(r) {
       `${(r.origin_city || oName) ? ` · <span${oName ? ` data-ext-name="${esc(oName)}" data-ext-city="1"` : ''}>${esc(r.origin_city || _routeAirportDisp(oName))}</span>` : ''}`
     : '';
 
-  let photo = '', facts = '', head = '', lastSeen = '';
+  let photo = '', facts = '', head = '', lastSeen = '', spotted = '';
   if (!r.registration) {
     facts = `<div class="bd-na" style="padding:4px 0">${esc(tt('Aircraft not assigned yet'))}${r.aircraft_type ? ` · ${esc(r.aircraft_type)}` : ''}</div>`;
   } else if (!ac) {
@@ -3187,6 +3197,13 @@ function _bdDetailHtml(r) {
     const model = ac.model || r.aircraft_type || '';
     const typeCode = ac.type_code || r.aircraft_type || '';
     lastSeen = ac.last_seen_ts ? (_fmtLastSeen(ac.last_seen_ts) || '') : '';
+    const sp = _bdSp[r.registration];
+    if (sp) {
+      const sess = sp.sessions || [];
+      spotted = `<div class="dc"><span class="lbl">${esc(tt('Spotted'))}</span>` + (sess.length
+        ? `<div class="col-ex-pills" style="padding:0;margin-top:4px">${_spotPillsHtml(sess, r.registration, { notif_types: r.card_types || [], extra_info: r.extra_info || '' })}</div>`
+        : `<div style="margin-top:4px;color:var(--dim);font-size:12px">${esc(tt('Never'))}</div>`) + `</div>`;
+    }
     const sameAsOperator = ac.owner && ac.operator && ac.owner.toLowerCase() === ac.operator.toLowerCase();
     // Header in the Feed card's style: rego + flag + status pill (as of the last check),
     // type chips / manufacturer / aircraft type, airline + livery on the left, quick-filter buttons on the right.
@@ -3206,7 +3223,7 @@ function _bdDetailHtml(r) {
           <a class="rego" style="font-size:20px;font-weight:700;color:var(--text);text-decoration:none;letter-spacing:.01em" href="${_fr24AircraftUrl(r.registration)}" target="_blank" rel="noopener">${esc(r.registration)}</a>
           ${_flag(_regoCountryCode(r.registration), { h: 26, vab: -13 })}
         </div>
-        <div style="display:flex;align-items:center;gap:8px">${statusPill}</div>
+        <div style="display:flex;align-items:center;gap:12px">${from}${statusPill}</div>
       </div>
       <div style="margin-top:9px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">
         ${chips}${mfrBadge(ac.manufacturer)}${(r.aircraft_type || typeCode) ? `<span class="fc-actype">${esc(r.aircraft_type || typeCode)}</span>` : ''}
@@ -3253,11 +3270,10 @@ function _bdDetailHtml(r) {
   return `<div class="bd-detail">
     ${photo}
     ${head}
-    ${from ? `<div class="bd-from" style="margin-top:10px">${from}</div>` : ''}
     ${facts.trim() ? `<div class="bd-facts" style="margin-top:10px">${facts}</div>` : ''}
-    <div class="bd-sec-t">${esc(tt('Equipment History'))}</div>
+    <div class="bd-sec-t" style="border-top:1px solid var(--border);padding-top:12px">${esc(tt('Equipment History'))}</div>
     <div class="srch-fl-rows" style="margin-top:0">${hist}</div>
-    ${lastSeen ? `<div class="detail-cards"><div class="dc"><span class="lbl">${esc(tt('Last Seen'))}</span><span class="val">${esc(lastSeen)}</span></div></div>` : ''}
+    ${lastSeen || spotted ? `<div class="detail-cards">${lastSeen ? `<div class="dc"><span class="lbl">${esc(tt('Last Seen'))}</span><span class="val">${esc(lastSeen)}</span></div>` : ''}${spotted}</div>` : ''}
   </div>`;
 }
 
