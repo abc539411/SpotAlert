@@ -636,12 +636,14 @@
     /* Lit state: this registration is already on that list — a tinted fill + solid ring. Declared
        after the hover rules and before the armed rules so "armed, click again to confirm" (a solid
        fill) still wins when a lit button is armed to be removed. */
-    .detail-quick-exclude.detail-quick-on { background: rgba(239,68,68,0.22); border-color: var(--danger); }
-    .detail-quick-watchlist.detail-quick-on { background: rgba(59,130,246,0.22); border-color: var(--accent); }
-    .detail-quick-mute.detail-quick-on { background: rgba(245,158,11,0.22); border-color: var(--warn); }
+    /* Active = solid colour fill + white icon (clearly 'on'); armed (awaiting the confirm click) adds a ring. */
+    .detail-quick-exclude.detail-quick-on { background: var(--danger); color: #fff; border-color: var(--danger); }
+    .detail-quick-watchlist.detail-quick-on { background: var(--accent); color: #fff; border-color: var(--accent); }
+    .detail-quick-mute.detail-quick-on { background: var(--warn); color: #fff; border-color: var(--warn); }
     .detail-quick-exclude.detail-quick-armed { background: var(--danger); color: #fff; border-color: var(--danger); }
     .detail-quick-watchlist.detail-quick-armed { background: var(--accent); color: #fff; border-color: var(--accent); }
     .detail-quick-mute.detail-quick-armed { background: var(--warn); color: #fff; border-color: var(--warn); }
+    .detail-quick-btn.detail-quick-armed { box-shadow: 0 0 0 3px rgba(255,255,255,0.28); }
     /* ── Board tab (Controller-only): two day cards of regular flight numbers ───────────────── */
     #tab-board { padding: 0; gap: 0; overflow: hidden; }
     .bd-top { display: flex; align-items: center; gap: 10px; padding: 10px 14px 8px; flex-shrink: 0; }
