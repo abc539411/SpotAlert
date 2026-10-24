@@ -4012,7 +4012,7 @@ function _bdDetailHtml(r) {
   </div>`;
 }
 
-// Small gold camera after the rego: this aircraft is in one of the viewer's Fleet cards and not yet photographed.
+// Small gold camera before the rego's flag: this aircraft is in one of the viewer's Fleet cards and not yet photographed.
 const _BD_FLEET_MISS = () => `<span class="bd-fleet-miss" title="${esc(tt('Missing from your Fleet'))}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8.5A1.5 1.5 0 0 1 5.5 7h2l1-2h7l1 2h2A1.5 1.5 0 0 1 20 8.5v9a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 17.5z"/><circle cx="12" cy="12.5" r="3.3"/></svg></span>`;
 function _bdRow(r, isMobile) {
   const fn = esc(r.flight_number);
@@ -4025,8 +4025,7 @@ function _bdRow(r, isMobile) {
     ? `<span class="bd-livery">${esc(tLiveryName(r.extra_info))}</span>` : '';
   const sub = [airline, livery].filter(Boolean).join(' · ');
   const ac = r.registration
-    ? `${_flag(_regoCountryCode(r.registration), { h: 11 })}<a href="${_fr24AircraftUrl(r.registration)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${esc(r.registration)}</a>` +
-      `${r.fleet_missing ? _BD_FLEET_MISS() : ''}` +
+    ? `${r.fleet_missing && _appRole !== 'passenger' ? _BD_FLEET_MISS() : ''}${_flag(_regoCountryCode(r.registration), { h: 11 })}<a href="${_fr24AircraftUrl(r.registration)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${esc(r.registration)}</a>` +
       `${r.aircraft_type ? `<div class="ty"><span class="fc-actype">${esc(r.aircraft_type)}</span></div>` : ''}`
     : `<span class="bd-na">${esc(tt(r.pending ? 'No info yet' : 'Not assigned yet'))}</span>${r.aircraft_type ? `<div class="ty"><span class="fc-actype">${esc(r.aircraft_type)}</span></div>` : ''}`;
   const oneOff = r.pinned && !r.kind;      // added by hand from the Board: shaded teal like a Feed-card row

@@ -5156,9 +5156,12 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
             _spot_flag.clear()                  # those flags come from the Controller's Lightroom catalog — not theirs
         # Registrations still missing from this viewer's Fleet cards (no photo of them in their own catalog yet), and their
         # Exclusion List. A flight carrying either one is shown even when its flight number is hidden — same as a flight that
-        # has a Feed card — and the missing ones get a faint accent. Only for users who have a catalog and fleet cards.
+        # has a Feed card — and the missing ones get a small icon. Only when the viewer's list owner has a catalog and fleet cards.
+        # A Passenger follows the Controller's lists, so those flights stay visible for them too (just without the icon).
         fleet_missing: set = set()
-        if user.role in ("controller", "pilot") and app.state.get_user_catalog(user):
+        _fleet_ok = (bool(app.state.control_store.get_controller_catalog_path()) if user.role == "passenger"
+                     else user.role in ("controller", "pilot") and bool(app.state.get_user_catalog(user)))
+        if _fleet_ok:
             for fc_ in app.state.control_store.get_fleet_cards(_owner_id(user)):
                 for a_ in fc_.get("aircraft") or []:
                     if a_.get("registration") and not (a_.get("photos") or 0):
@@ -5225,7 +5228,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                 "origin_iata": r["origin_iata"], "origin_name": r["origin_name"],
                 "origin_city": cities.get(r["origin_iata"], "") or "",
                 "origin_country_code": countries.get(r["origin_iata"], ""),
-                "status": r["status_text"], "hidden": is_hidden, "fleet_missing": bool(rg_) and rg_ in fleet_missing,
+                "status": r["status_text"], "hidden": is_hidden, "fleet_missing": user.role != "passenger" and bool(rg_) and rg_ in fleet_missing,
                 "excluded_rego": bool(rg_) and rg_ in excl_row_regs,
                 "kind": kind, "card_types": card_types,
                 "extra_info": extra_info,
