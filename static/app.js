@@ -385,7 +385,7 @@ const UI_ZH = {
   'Owner': '所有者', 'Livery': '涂装', 'Country': '国家/地区', 'Mode S': 'Mode S', 'Serial No.': '序列号', 'Built': '出厂年份', 'Feed cards here': '本场 Feed 卡片数',
   'Feed card': '动态卡片', 'Excluded': '已排除', 'Has a card in Feed': '动态中已有卡片',
   'Would have a Feed card, but the aircraft is on the Exclusion List': '本应有动态卡片，但该飞机在排除列表中',
-  'Updated': '更新于', 'Data through': '数据截至', 'just now': '刚刚',
+  'Updated': '更新于', 'Refreshed': '刷新于', 'Not refreshed yet': '尚未刷新', 'Latest photo': '最新照片', 'No catalog uploaded': '尚未上传图库', 'Data through': '数据截至', 'just now': '刚刚',
   'Hidden': '已隐藏', 'Unhide': '取消隐藏', 'Hide': '隐藏', 'hidden': '已隐藏', 'unhidden': '已取消隐藏',
   'Hidden flights only disappear from the Board — their Feed cards and notifications are unaffected. A hidden flight still reappears on a day it gets a Feed card.':
     '隐藏的航班只会从看板中消失——动态卡片和通知不受影响。隐藏的航班在当天出现动态卡片时仍会重新显示。',
@@ -950,11 +950,12 @@ async function _saveSiteSettings() {
 // so a future tab added to TABS defaults to hidden-for-non-controller, not
 // accidentally exposed. Called both on every tab switch and once at boot (the
 // default tab shown before any switchTab() call is 'history' — the Feed tab).
-const _NON_CONTROLLER_SAFE_REFRESH_TABS = new Set(['collection', 'recommendation']);
+const _NON_CONTROLLER_SAFE_REFRESH_TABS = new Set(['collection', 'recommendation', 'search']);
 function _syncRefreshBtnVisibility() {
   const btn = $('btn-refresh');
   if (!btn) return;
-  btn.classList.toggle('hidden', !_NON_CONTROLLER_SAFE_REFRESH_TABS.has(activeTab) && _appRole !== 'controller');
+  const noCatalogRole = _appRole === 'passenger' && activeTab === 'search';      // Passengers have no collection to refresh
+  btn.classList.toggle('hidden', noCatalogRole || (!_NON_CONTROLLER_SAFE_REFRESH_TABS.has(activeTab) && _appRole !== 'controller'));
 }
 
 let _allowSelfRegistration = false;
@@ -3323,8 +3324,8 @@ function switchTab(name) {
   if (btn && lbl) {
     if (typeof _resetRestartArm === 'function') _resetRestartArm();
     btn.classList.remove('btn-danger', 'btn-danger-armed');
-    if (name === 'collection') {
-      btn.onclick = () => loadCollection(true);
+    if (name === 'collection' || name === 'search') {          // Search refreshes the Collection too (its Catalogue data)
+      btn.onclick = () => _refreshGate(() => loadCollection(true), 'collection');
       lbl.textContent = tt('Refresh Collection');
     } else if (name === 'recommendation') {
       btn.onclick = () => { _recLoaded = false; toast('Plotting the windows…'); loadRecommendation(true); };
@@ -3445,22 +3446,37 @@ function _hideRefreshPill() {
   const el = $('refresh-pill'), btn = $('btn-refresh'), lbl = $('btn-refresh-label');
   if (el) el.classList.remove('show');
   if (btn) btn.classList.remove('btn-refresh-armed');
-  if (wasArmed && lbl) lbl.textContent = activeTab === 'board' ? tt('Refresh Board') : tt('Refresh Feed');
+  if (wasArmed && lbl) lbl.textContent = activeTab === 'board' ? tt('Refresh Board') : (activeTab === 'collection' || activeTab === 'search') ? tt('Refresh Collection') : tt('Refresh Feed');
 }
-async function _refreshGate(action) {
+async function _refreshGate(action, kind) {
   if (_rfArmed) { _hideRefreshPill(); action(); return; }
   _rfArmed = true;
   const btn = $('btn-refresh'), el = $('refresh-pill'), lbl = $('btn-refresh-label');
   // Same arm animation as Restart Server: the button fills solid and asks for confirmation.
   btn.classList.add('btn-refresh-armed');
   if (lbl) lbl.textContent = tt('Confirm Refresh?');
-  let m = null;
-  try { const st = await api('/status'); m = { u: st.updated_ts, t: st.data_through_ts }; } catch (e) { /* show the hint anyway */ }
-  if (!_rfArmed) return;                                   // switched tab / second click while fetching
   const bits = [];
-  if (m && m.u) bits.push(`${tt('Updated')} ${_bdAgo(m.u)}`);
-  if (m && m.t) bits.push(`${tt('Data through')} ${fmtTs(m.t, { weekday: 'short' })}`);
-  el.textContent = bits.join(' · ') || tt('No check yet');
+  let empty = tt('No check yet');
+  if (kind === 'collection') {                             // Collection / Search: when it was last refreshed + newest photo
+    let c = null;
+    try { c = await api('/catalog-stats/meta'); } catch (e) { /* show the hint anyway */ }
+    if (!_rfArmed) return;
+    if (c && c.no_catalog) empty = tt('No catalog uploaded');
+    else if (c) {
+      bits.push(c.refreshed_ts ? `${tt('Refreshed')} ${_bdAgo(c.refreshed_ts)}` : tt('Not refreshed yet'));
+      if (c.latest_photo_date) {
+        const [y, mo, da] = c.latest_photo_date.split('-').map(Number);
+        bits.push(`${tt('Latest photo')} ${new Date(y, mo - 1, da).toLocaleDateString(_locale(), { day: 'numeric', month: 'short', year: 'numeric' })}`);
+      }
+    }
+  } else {
+    let m = null;
+    try { const st = await api('/status'); m = { u: st.updated_ts, t: st.data_through_ts }; } catch (e) { /* show the hint anyway */ }
+    if (!_rfArmed) return;                                 // switched tab / second click while fetching
+    if (m && m.u) bits.push(`${tt('Updated')} ${_bdAgo(m.u)}`);
+    if (m && m.t) bits.push(`${tt('Data through')} ${fmtTs(m.t, { weekday: 'short' })}`);
+  }
+  el.textContent = bits.join(' · ') || empty;
   const r = btn.getBoundingClientRect();
   el.style.top = (r.bottom + 8) + 'px';
   el.style.right = Math.max(8, window.innerWidth - r.right) + 'px';
@@ -7193,13 +7209,9 @@ async function _srchMaybeRefreshFilters() {
 function _srchSetBtn(subtab) {
   const btn = $('btn-refresh'), lbl = $('btn-refresh-label');
   if (!btn || !lbl) return;
-  if (subtab === 'catalog') {
-    btn.onclick = () => loadCollection(true);
-    lbl.textContent = tt('Refresh Collection');
-  } else {
-    btn.onclick = () => forceCheck();
-    lbl.textContent = tt('Refresh Feed');
-  }
+  // Every Search subtab refreshes the Collection (same action + confirm pill as the Collection tab).
+  btn.onclick = () => _refreshGate(() => loadCollection(true), 'collection');
+  lbl.textContent = tt('Refresh Collection');
 }
 
 function _srchSubtab(name) {

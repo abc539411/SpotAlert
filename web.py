@@ -2661,6 +2661,32 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
             raise HTTPException(500, "Failed to compute stats")
         return JSONResponse(data)
 
+    @app.get("/api/catalog-stats/meta")
+    async def get_catalog_stats_meta(user=Depends(_auth_require_role("controller", "pilot"))):
+        """What the Refresh Collection confirm pill shows: when this user's collection stats were last computed, and
+        the newest photo date in their catalog."""
+        import asyncio
+        cat_str = _col_catalog_path(user)
+        if not cat_str:
+            return JSONResponse({"no_catalog": True})
+        slot = _col_stats_cache.get(user.user_id, {})
+
+        def _latest():
+            import sqlite3 as _sq
+            from pathlib import Path as _Path
+            if not _Path(cat_str).exists():
+                return None
+            con = _sq.connect(f"file:{cat_str}?mode=ro", uri=True)
+            try:
+                return con.execute("SELECT MAX(DATE(captureTime)) FROM Adobe_images").fetchone()[0]
+            finally:
+                con.close()
+        try:
+            latest = await asyncio.to_thread(_latest)
+        except Exception:
+            latest = None
+        return JSONResponse({"refreshed_ts": int(slot["ts"]) if slot.get("ts") else None, "latest_photo_date": latest})
+
     @app.get("/api/catalog-stats/airline")
     async def get_catalog_airline_details(airline: str = "", user=Depends(_auth_current_user)):
         from pathlib import Path as _Path
