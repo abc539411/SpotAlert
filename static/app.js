@@ -3054,27 +3054,51 @@ let _feedTimezone   = '';
 const TABS = ['recommendation', 'history', 'board', 'collection', 'search', 'settings'];
 let activeTab = 'history';
 
-// Tap the SpotAlert logo / name: jump back to the "start" of whatever you are looking at —
-//   Spotting & Board: Today in the default view; in the Older view, the Back + month picker page.
+// Tap the SpotAlert logo / name: close whatever is open, then jump back to the "start" of the current view —
+//   Spotting & Board: Today (default view) AND down to the current time; in the Older view, the Back + month page.
 //   Feed: top.   Fleet (Collection): leftmost card.
+function _collapseAllOpen() {
+  if (typeof closeDetail === 'function') closeDetail();              // phone bottom sheet (Feed / Spotting / Board)
+  if (typeof collapseGridDetail === 'function') collapseGridDetail(); // desktop Feed card panel
+  if (typeof _closeRecPanel === 'function') _closeRecPanel();         // Spotting card popover
+  if (typeof _spClosePhotos === 'function' && $('sp-photos-overlay')) _spClosePhotos();
+  if (_bdOpenKey) { _bdOpenKey = null; if (activeTab === 'board') renderBoard(); }   // expanded Board row
+  if (_feedOlderOpen) feedToggleOlder();                              // Feed's "Older than 7 days" section
+}
 function logoTap() {
+  _collapseAllOpen();
   const smooth = { behavior: 'smooth' };
   const mobile = window.innerWidth < 768;
   const toToday = (strip, todaySel) => {
     const today = strip && strip.querySelector(todaySel);
-    if (!today) { if (strip) strip.scrollTo({ left: 0, ...smooth }); return; }
+    if (!today) { if (strip) strip.scrollTo({ left: 0, ...smooth }); return null; }
     const delta = today.getBoundingClientRect().left - strip.getBoundingClientRect().left;
     strip.scrollTo({ left: strip.scrollLeft + delta - (mobile ? 6 : (strip.clientWidth - today.offsetWidth) / 2), ...smooth });
+    return today;
   };
   if (activeTab === 'recommendation') {
     const strip = document.querySelector('.rec-scroll');
     if (!strip) return;
-    if (strip.classList.contains('rec-older-view')) strip.scrollTo({ left: 0, ...smooth });   // Back + month picker
-    else toToday(strip, '.rec-today');
+    if (strip.classList.contains('rec-older-view')) { strip.scrollTo({ left: 0, ...smooth }); return; }   // Back + month picker
+    const today = toToday(strip, '.rec-today');
+    const line = today && today.querySelector('.rec-current-time');
+    if (line) {                                                      // down to the current time (same maths as the first load)
+      const HEADER_H = 94;
+      const visibleH = today.clientHeight - HEADER_H;
+      today.scrollTo({ top: Math.max(0, (parseFloat(line.style.top) || 0) - HEADER_H - visibleH / 2), ...smooth });
+    }
   } else if (activeTab === 'board') {
     const wrap = $('bd-wrap');
-    if (_bdOlderView) wrap.scrollTo({ left: 0, ...smooth });
-    else toToday(wrap, '.bd-today');
+    if (_bdOlderView) { wrap.scrollTo({ left: 0, ...smooth }); return; }
+    const today = toToday(wrap, '.bd-today');
+    const day = _bdData && (_bdData.days || []).find(d => d.is_today);
+    if (today && day && day.rows.length) {                          // down to the first flight that hasn't landed yet
+      const now = Date.now() / 1000;
+      const row = day.rows.find(r => r.eff_ts >= now) || day.rows[day.rows.length - 1];
+      const el = today.querySelector(`.bd-row[data-key="${CSS.escape(_bdKey(row))}"]`);
+      const rows = today.querySelector('.bd-rows');
+      if (el && rows) rows.scrollTo({ top: Math.max(0, el.offsetTop - rows.clientHeight * 0.25), ...smooth });
+    }
   } else if (activeTab === 'history') {
     $('tab-history').scrollTo({ top: 0, ...smooth });
     window.scrollTo({ top: 0, ...smooth });
