@@ -4264,15 +4264,48 @@ function bdRowClick(el) {
   bdOpen(el);
 }
 
+// Hiding updates the screen at once (the server confirms in the background); the full Board reload that used to follow
+// every change waited on a cold roster cache and could take seconds on the NAS. Rows of a hidden flight number vanish,
+// except flights that have a Feed card that day (the server keeps those, flagged hidden). Unhiding still reloads, because
+// the rows it brings back are not in the browser.
+function _bdApplyHideLocally(fns) {
+  const d = _bdData;
+  if (!d) return;
+  const set = new Set(fns);
+  d.hidden = [...new Set([...(d.hidden || []), ...fns])].sort();
+  const hf = d.hidden_flights = d.hidden_flights || [];
+  (d.days || []).forEach(day => {
+    day.rows = day.rows.filter(r => {
+      if (!set.has(r.flight_number)) return true;
+      if (r.kind === 'feed') { r.hidden = true; return true; }
+      if (!hf.some(h => h.flight_number === r.flight_number)) {
+        hf.push({ flight_number: r.flight_number, airline_name: r.airline_name || '', airline_icao: r.airline_icao || '',
+                  origin_iata: r.origin_iata || '', origin_city: r.origin_city || '' });
+      }
+      return false;
+    });
+  });
+}
+
 async function bdBatch(kind) {
   const hiddenSet = new Set((_bdData && _bdData.hidden) || []);
   const sel = [..._bdSel];
   const body = kind === 'hide' ? { hide: sel.filter(fn => !hiddenSet.has(fn)) } : { unhide: sel.filter(fn => hiddenSet.has(fn)) };
   const n = (body.hide || body.unhide).length;
   if (!n) return;
+  const label = `${n} ${kind === 'hide' ? tt('hidden') : tt('unhidden')}`;
+  if (kind === 'hide') {
+    _bdApplyHideLocally(body.hide);
+    toast(label);
+    _bdSel.clear();
+    renderBoard();
+    try { await api('/board/hidden/batch', { method: 'POST', body: JSON.stringify(body) }); }
+    catch (e) { toast('Error: ' + e.message); loadBoard(); }          // could not save: put the real list back
+    return;
+  }
   try {
     await api('/board/hidden/batch', { method: 'POST', body: JSON.stringify(body) });
-    toast(`${n} ${kind === 'hide' ? tt('hidden') : tt('unhidden')}`);
+    toast(label);
     _bdSel.clear();
     await loadBoard();
   } catch (e) { toast('Error: ' + e.message); }
