@@ -3328,7 +3328,7 @@ function switchTab(name) {
       btn.onclick = () => _refreshGate(() => loadCollection(true), 'collection');
       lbl.textContent = tt('Refresh Collection');
     } else if (name === 'recommendation') {
-      btn.onclick = () => { _recLoaded = false; toast('Plotting the windows…'); loadRecommendation(true); };
+      btn.onclick = () => _refreshGate(() => { _recLoaded = false; toast('Plotting the windows…'); loadRecommendation(true); }, 'spotting');
       lbl.textContent = tt('Refresh Spotting');
     } else if (name === 'board') {
       btn.onclick = () => _refreshGate(refreshBoard);
@@ -3446,7 +3446,7 @@ function _hideRefreshPill() {
   const el = $('refresh-pill'), btn = $('btn-refresh'), lbl = $('btn-refresh-label');
   if (el) el.classList.remove('show');
   if (btn) btn.classList.remove('btn-refresh-armed');
-  if (wasArmed && lbl) lbl.textContent = activeTab === 'board' ? tt('Refresh Board') : (activeTab === 'collection' || activeTab === 'search') ? tt('Refresh Collection') : tt('Refresh Feed');
+  if (wasArmed && lbl) lbl.textContent = activeTab === 'board' ? tt('Refresh Board') : (activeTab === 'collection' || activeTab === 'search') ? tt('Refresh Collection') : activeTab === 'recommendation' ? tt('Refresh Spotting') : tt('Refresh Feed');
 }
 async function _refreshGate(action, kind) {
   if (_rfArmed) { _hideRefreshPill(); action(); return; }
@@ -3474,7 +3474,7 @@ async function _refreshGate(action, kind) {
     try { const st = await api('/status'); m = { u: st.updated_ts, t: st.data_through_ts }; } catch (e) { /* show the hint anyway */ }
     if (!_rfArmed) return;                                 // switched tab / second click while fetching
     if (m && m.u) bits.push(`${tt('Updated')} ${_bdAgo(m.u)}`);
-    if (m && m.t) bits.push(`${tt('Data through')} ${fmtTs(m.t, { weekday: 'short' })}`);
+    if (m && m.t && kind !== 'spotting') bits.push(`${tt('Data through')} ${fmtTs(m.t, { weekday: 'short' })}`);   // Spotting is rebuilt by the same check, so only the check time matters
   }
   el.textContent = bits.join(' · ') || empty;
   const r = btn.getBoundingClientRect();
