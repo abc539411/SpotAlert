@@ -2214,7 +2214,9 @@ const _feedDayHtml = day => `
 function _feedCutoffDate() {
   return new Date(Date.parse(_todayStrInAppTz() + 'T00:00:00Z') - 7 * 86400000).toISOString().slice(0, 10);
 }
+let _feedHasOlder = true;                      // false for an airport with no history beyond the 7 days shown (e.g. a new one)
 function _feedOlderHtml() {
+  if (!_feedHasOlder) return '';
   return `<button type="button" class="feed-older-btn" id="feed-older-btn" onclick="feedToggleOlder()">▸ ${esc(tt('Older'))}</button><div id="feed-older-body" style="display:none"></div>`;
 }
 async function feedToggleOlder() {
@@ -2312,6 +2314,7 @@ async function loadFeed() {
     const data = await api('/feed?days=7');
     const cut = _feedCutoffDate();
     data.days = (data.days || []).filter(d => d.date >= cut);
+    _feedHasOlder = data.has_older !== false;
     _feedAirportIata = data.airport_iata || '';
     _feedAirportName = data.airport_name || '';
     _feedTimezone    = data.timezone     || '';

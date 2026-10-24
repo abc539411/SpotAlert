@@ -2003,7 +2003,17 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                     for c in d_["cards"]:
                         if not c.get("photo_url") and c["registration"] in got:
                             c["photo_url"] = got[c["registration"]]
-        return JSONResponse({"days": days_result, "airport_iata": airport_iata_, "airport_name": airport_name_, "timezone": tz_name})
+        # Is there anything older than the 7 days the Feed shows by default? (A newly added airport has none: no "Older" button.)
+        has_older = False
+        if not range_mode:
+            cut_d = (now_dt.date() - datetime.timedelta(days=7)).isoformat()
+            with store_._connect() as conn:
+                has_older = bool(conn.execute(
+                    "SELECT 1 FROM flight_arrivals WHERE arrival_date IS NOT NULL AND arrival_date < ? AND flight_number IS NOT NULL "
+                    "AND registration NOT IN (SELECT registration FROM filter_exclusions WHERE owner_user_id = ?) LIMIT 1",
+                    (cut_d, _owner_id(user))).fetchone())
+        return JSONResponse({"days": days_result, "airport_iata": airport_iata_, "airport_name": airport_name_, "timezone": tz_name,
+                             "has_older": has_older})
 
     @app.get("/api/recommendation")
     async def get_recommendation(back: int = 7, month: str = "", user=Depends(_auth_current_user)):
