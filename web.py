@@ -5302,7 +5302,8 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
             return _usual_min(hist_ts, day_date)
         _drop_days = store_.board_drop_after_days()
         _recent = store_.board_recently_seen_flight_numbers(cfg_.airport_iata, _drop_days) if _drop_days else None
-        for o in (0, 1):
+        _ahead = (0, 1, 2, 3)                      # today + the 3 days after it: each is filled by real rows as the monitor's checks reach it
+        for o in _ahead:
             if o not in by_off:
                 continue
             have = {r["flight_number"] for r in by_off[o]["rows"]}
@@ -5332,8 +5333,8 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         for o in _OFFSETS:
             day = by_off[o]
             day["spotted"] = day["date"] in spotted_days
-            if o != 0 and not day["rows"]:
-                continue                                    # like Spotting: empty future / past days are skipped
+            if o not in ((0,) if month else _ahead) and not day["rows"]:
+                continue                                    # empty past days are skipped; today and the 3 days ahead always show
             w = wx.get(day["date"], {})
             day.update({"weather_code": w.get("weather_code", 0), "weather_severe": w.get("weather_severe", False),
                         "temp_max": w.get("temp_max"), "temp_min": w.get("temp_min")})
