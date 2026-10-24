@@ -4116,9 +4116,9 @@ function initBoardScroll(wrap) {
   });
 }
 
-// Inline sunrise / sunset lines (a glowing coloured dot + text) dropped into the day's list at their time of day.
+// Inline sunrise / sunset lines (a glowing coloured dot + the word, centred, no time) dropped into the day's list at their time of day.
 function _bdSunLine(kind, ts) {
-  return `<div class="bd-sun bd-sun-${kind}"><span class="bd-sun-dot"></span><span>${esc(tt(kind === 'rise' ? 'Sunrise' : 'Sunset'))} ${esc(fmtTs(ts))}</span></div>`;
+  return `<div class="bd-sun bd-sun-${kind}"><span class="bd-sun-dot"></span><span>${esc(tt(kind === 'rise' ? 'Sunrise' : 'Sunset'))}</span></div>`;
 }
 function _bdRowsHtml(day, isMobile) {
   const marks = [];
