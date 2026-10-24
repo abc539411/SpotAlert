@@ -3171,7 +3171,7 @@ function _bdDetailHtml(r) {
       `${(r.origin_city || oName) ? ` · <span${oName ? ` data-ext-name="${esc(oName)}" data-ext-city="1"` : ''}>${esc(r.origin_city || _routeAirportDisp(oName))}</span>` : ''}`
     : '';
 
-  let photo = '', facts = '', head = '';
+  let photo = '', facts = '', head = '', lastSeen = '';
   if (!r.registration) {
     facts = `<div class="bd-na" style="padding:4px 0">${esc(tt('Aircraft not assigned yet'))}${r.aircraft_type ? ` · ${esc(r.aircraft_type)}` : ''}</div>`;
   } else if (!ac) {
@@ -3186,6 +3186,7 @@ function _bdDetailHtml(r) {
     }
     const model = ac.model || r.aircraft_type || '';
     const typeCode = ac.type_code || r.aircraft_type || '';
+    lastSeen = ac.last_seen_ts ? (_fmtLastSeen(ac.last_seen_ts) || '') : '';
     const sameAsOperator = ac.owner && ac.operator && ac.owner.toLowerCase() === ac.operator.toLowerCase();
     // Header in the Feed card's style: rego + flag + status pill (as of the last check),
     // type chips / manufacturer / aircraft type, airline + livery on the left, quick-filter buttons on the right.
@@ -3218,14 +3219,9 @@ function _bdDetailHtml(r) {
         ${_detailQuickFilterBtns(r.registration)}
       </div>`;
     facts = [
-      dc('Aircraft', `${esc(model)}`),
       dc('Owner', ac.owner && !sameAsOperator ? esc(ac.owner) : ''),
-      dc('Country', ac.country ? `${_flag(ac.country_code, { h: 12 })}${esc(ac.country)}` : ''),
-      dc('Mode S', ac.hex ? esc(ac.hex) : ''),
       dc('Serial No.', ac.serial_number ? esc(ac.serial_number) : ''),
       dc('Built', ac.built_year ? esc(String(ac.built_year)) : ''),
-      dc('Last Seen', ac.last_seen_ts ? esc(_fmtLastSeen(ac.last_seen_ts) || '') : ''),
-      dc('Feed cards here', ac.cards_here ? esc(String(ac.cards_here)) : ''),
     ].join('');
   }
 
@@ -3258,9 +3254,10 @@ function _bdDetailHtml(r) {
     ${photo}
     ${head}
     ${from ? `<div class="bd-from" style="margin-top:10px">${from}</div>` : ''}
-    <div class="bd-facts" style="margin-top:10px">${facts}</div>
+    ${facts.trim() ? `<div class="bd-facts" style="margin-top:10px">${facts}</div>` : ''}
     <div class="bd-sec-t">${esc(tt('Equipment History'))}</div>
     <div class="srch-fl-rows" style="margin-top:0">${hist}</div>
+    ${lastSeen ? `<div class="detail-cards"><div class="dc"><span class="lbl">${esc(tt('Last Seen'))}</span><span class="val">${esc(lastSeen)}</span></div></div>` : ''}
   </div>`;
 }
 
