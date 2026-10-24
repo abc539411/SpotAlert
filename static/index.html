@@ -721,6 +721,14 @@
       background-size: 100% 100%, 3px 100%; background-repeat: no-repeat; background-position: 0 0, 0 0;
     }
     .bd-row { cursor: pointer; }
+    /* Board card inside the bottom sheet: the sheet supplies the panel look */
+    .detail-sheet-scroll .bd-detail { background: none; border: none; padding: 0; }
+    @media (max-width: 767px) {
+      /* keep the registration on one line; the "Arr. From … / status" group wraps underneath if it must */
+      .bd-detail .detail-header { flex-wrap: wrap; gap: 6px 8px; }
+      .bd-detail .detail-header .rego { white-space: nowrap; }
+      .bd-detail .detail-header > div:last-child { margin-left: auto; }
+    }
     .bd-row.open { border-bottom: 1px solid var(--border); }
     .bd-detail { padding: 10px 12px 14px; background: var(--surface2); border-top: 1px solid var(--border); cursor: default; }
     /* Full card width at the photo's natural aspect ratio: no cropping, no side bars. */

@@ -2618,6 +2618,7 @@ function collapseGridDetail() {
 
 function closeDetail() {
   $('detail-modal').classList.add('hidden');
+  _bdOpenKey = null;
   _openRecCard = null;
 }
 
@@ -3209,10 +3210,30 @@ let _bdRowsByKey = {};
 
 function _bdKey(r) { return `${r.flight_number}|${r.scheduled_ts}`; }
 
+// Phone: the flight's card slides up from the bottom (the shared #detail-modal sheet, like Feed and Spotting).
+const _bdIsPhone = () => window.innerWidth < 768;
+function _bdRefreshSheet(show) {
+  if (!_bdIsPhone()) return;
+  const r = _bdRowsByKey[_bdOpenKey];
+  const modal = $('detail-modal');
+  if (!r || (!show && modal.classList.contains('hidden'))) return;
+  const sheet = modal.querySelector('.detail-sheet-scroll');
+  const keep = sheet.scrollTop;
+  sheet.innerHTML = _bdDetailHtml(r);
+  sheet.scrollTop = keep;
+  modal.classList.remove('hidden');
+}
+
 async function bdOpen(rowEl) {
   const key = rowEl.dataset.key;
-  _bdOpenKey = _bdOpenKey === key ? null : key;
+  if (_bdIsPhone()) {
+    if (_bdOpenKey === key && !$('detail-modal').classList.contains('hidden')) { closeDetail(); return; }
+    _bdOpenKey = key;
+  } else {
+    _bdOpenKey = _bdOpenKey === key ? null : key;
+  }
   renderBoard();
+  _bdRefreshSheet(true);
   const r = _bdRowsByKey[_bdOpenKey];
   if (!r) return;
   const jobs = [];
@@ -3230,7 +3251,7 @@ async function bdOpen(rowEl) {
       _bdEq[r.flight_number] = rows.sort((a, b) => (b.count || 0) - (a.count || 0));
     }).catch(() => { _bdEq[r.flight_number] = 'err'; }));
   }
-  if (jobs.length) { await Promise.all(jobs); if (_bdOpenKey === key) renderBoard(); }
+  if (jobs.length) { await Promise.all(jobs); if (_bdOpenKey === key) { renderBoard(); _bdRefreshSheet(); } }
 }
 
 function _bdDetailHtml(r) {
@@ -3395,7 +3416,7 @@ function _bdRow(r, isMobile) {
     ? `<span class="bd-chips">${r.card_types.map(t => `<span class="chip ${chipClass(t)}">${esc(chipLabel(t))}</span>`).join('')}</span>`
     : '';
   const key = _bdKey(r);
-  const open = key === _bdOpenKey;
+  const open = key === _bdOpenKey && !_bdIsPhone();
   return `<div class="bd-row${kindCls}${open ? ' open' : ''}${r.pending ? ' bd-row-pending' : ''}${_bdSel.has(r.flight_number) ? ' bd-row-sel' : ''}${r.hidden ? ' bd-row-hidden' : ''}" data-key="${esc(key)}" data-fn="${fn}" onclick="bdRowClick(this)"${kindTip ? ` title="${esc(kindTip)}"` : ''}${rgb ? ` style="--bd-rgb:${rgb}"` : ''}>
       <div class="bd-time">${time}</div>
       <div class="bd-main">
@@ -3480,6 +3501,7 @@ function renderBoard() {
     _bdPositioned = true;
   } else wrap.scrollLeft = keepX;
   _bdInitThumbs();
+  _bdRefreshSheet();
   wrap.querySelectorAll('.bd-rows').forEach((el, i) => { el.scrollTop = keepY[i] || 0; });
   if (_lang === 'zh') {
     const open = _bdRowsByKey[_bdOpenKey];
