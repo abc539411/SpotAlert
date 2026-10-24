@@ -4866,6 +4866,72 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
     async def get_board(user=Depends(_auth_require_role("controller"))):
         return JSONResponse(await asyncio.to_thread(_build_board_payload, _cfg_for_user(user), user))
 
+    # Expanded Board row: photo + aircraft facts for ONE registration. FR24's aircraft lookup is a live call
+    # (and these aircraft usually never triggered a card, so nothing is cached in airframes yet) — cache the
+    # answer per registration for an hour so re-opening / the 60 s refresh never re-hits FR24.
+    _board_ac_cache: dict = {}
+
+    def _board_aircraft_info(cfg_, registration: str) -> dict:
+        import re as _re3
+        reg = registration.strip().upper()
+        hit = _board_ac_cache.get((cfg_.airport_iata, reg))
+        if hit and time.time() - hit[0] < 3600:
+            return hit[1]
+        store_ = cfg_.store
+        af = store_.get_airframe(reg) or {}
+        out = {"registration": reg, "photo_url": af.get("photo_url") or "", "manufacturer": af.get("manufacturer") or "",
+               "serial_number": af.get("serial_number") or "", "built_year": af.get("built_year"),
+               "owner": af.get("owner") or "", "operator": af.get("operator") or "",
+               "model": "", "type_code": "", "country": "", "country_code": "", "hex": "", "livery": "",
+               "photo_credit": "", "photo_link": ""}
+        if cfg_.fr_api:
+            try:
+                rd = cfg_.fr_api.get_rego_details(reg) or {}
+                info = rd.get("aircraftInfo") or ((rd.get("data") or [{}])[0].get("aircraft") or {})
+                model = info.get("model") or {}
+                out["model"], out["type_code"] = model.get("text") or "", model.get("code") or ""
+                ctry = info.get("country") or {}
+                out["country"], out["country_code"] = ctry.get("name") or "", (ctry.get("alpha2") or "").upper()
+                out["hex"] = info.get("hex") or ""
+                if info.get("serialNo"):
+                    out["serial_number"] = out["serial_number"] or str(info["serialNo"])
+                if (info.get("owner") or {}).get("name"):
+                    out["owner"] = info["owner"]["name"]
+                al = info.get("airline") or {}
+                # "Qantas (Oneworld Livery)" vs short "Qantas" — anything extra in the name is the livery.
+                m = _re3.match(r"^.*?\((.+)\)\s*$", al.get("name") or "")
+                if m:
+                    out["livery"] = m.group(1).strip()
+                if al.get("short") or al.get("name"):
+                    out["operator"] = al.get("short") or _re3.sub(r"\s*\(.*\)\s*$", "", al.get("name") or "")
+                images = rd.get("aircraftImages") or []
+                if images:
+                    imgs = images[0]["images"]
+                    large = imgs.get("large") or imgs.get("medium") or []
+                    if large:
+                        out["photo_url"] = large[0]["src"].replace("/640cb/", "/640/")
+                        out["photo_credit"] = large[0].get("copyright") or ""
+                        out["photo_link"] = large[0].get("link") or ""
+                    from monitor import _derive_manufacturer
+                    out["manufacturer"] = out["manufacturer"] or _derive_manufacturer(out["model"]) or ""
+                    store_.upsert_airframe_from_fr24(reg, photo_url=out["photo_url"] or None,
+                                                     manufacturer=out["manufacturer"] or None)
+            except Exception as exc:
+                log.debug("Board aircraft lookup failed for %s: %s", reg, exc)
+        with store_._connect() as conn:
+            n, first, last = conn.execute(
+                "SELECT COUNT(*), MIN(arrival_ts), MAX(arrival_ts) FROM flight_arrivals WHERE registration = ? "
+                "AND COALESCE(current_status,'') NOT IN ('Cancelled','Swapped')", (reg,)).fetchone()
+            ss = conn.execute("SELECT last_seen_ts FROM rego_sightings WHERE registration = ?", (reg,)).fetchone()
+        out.update({"cards_here": n or 0, "first_card_ts": first, "last_card_ts": last,
+                    "last_seen_ts": ss[0] if ss else None})
+        _board_ac_cache[(cfg_.airport_iata, reg)] = (time.time(), out)
+        return out
+
+    @app.get("/api/board/aircraft/{registration}")
+    async def get_board_aircraft(registration: str, user=Depends(_auth_require_role("controller"))):
+        return JSONResponse(await asyncio.to_thread(_board_aircraft_info, _cfg_for_user(user), registration))
+
     @app.post("/api/board/hidden")
     async def add_board_hidden(request: Request, user=Depends(_auth_require_role("controller"))):
         body = await request.json()

@@ -355,7 +355,9 @@ const UI_ZH = {
   'Refresh Board': '刷新看板', 'Checking FR24…': '正在检查 FR24…', 'Board updated': '看板已更新',
   "Waiting for this airport's first check — tap Refresh to run one now.": '正在等待该机场的首次检查——点击刷新立即检查。',
   'Could not load the Board.': '无法加载看板。',
-  'Not assigned yet': '尚未分配机号', 'No regular flights to show.': '暂无需要关注的常规航班。', 'No Feed cards': '无 Feed 卡片',
+  'Not assigned yet': '尚未分配机号', 'No regular flights to show.': '暂无需要关注的常规航班。', 'No Feed cards': '无 Feed 卡片', 'Aircraft not assigned yet': '尚未分配飞机', 'Could not load aircraft details.': '无法加载飞机信息。',
+  'No equipment history yet.': '暂无机型使用记录。', 'Registration': '注册号', 'Aircraft': '飞机', 'Manufacturer': '制造商', 'Operator': '运营商',
+  'Owner': '所有者', 'Livery': '涂装', 'Country': '国家/地区', 'Mode S': 'Mode S', 'Serial No.': '序列号', 'Built': '出厂年份', 'Feed cards here': '本场 Feed 卡片数',
   'Feed card': '动态卡片', 'Excluded': '已排除', 'Has a card in Feed': '动态中已有卡片',
   'Would have a Feed card, but the aircraft is on the Exclusion List': '本应有动态卡片，但该飞机在排除列表中',
   'Updated': '更新于', 'Data through': '数据截至', 'just now': '刚刚',
@@ -3123,18 +3125,128 @@ function _bdAccentRgb(types) {
   return _BD_TYPE_RGB[chipClass(t)] || '120,120,120';
 }
 
+// Expanded row (one at a time): photo, where it's coming from, aircraft facts and the flight number's
+// equipment history. Aircraft facts / history load lazily (cached for the page's life) and the whole Board
+// re-renders around them, so the 60 s refresh keeps the row open.
+let _bdOpenKey = null;
+const _bdAc = {};            // registration -> /board/aircraft payload | 'err'
+const _bdEq = {};            // flight number -> [{aircraft_type, count, last_seen_ts}] | 'err'
+let _bdRowsByKey = {};
+
+function _bdKey(r) { return `${r.flight_number}|${r.scheduled_ts}`; }
+
+async function bdOpen(rowEl) {
+  const key = rowEl.dataset.key;
+  _bdOpenKey = _bdOpenKey === key ? null : key;
+  renderBoard();
+  const r = _bdRowsByKey[_bdOpenKey];
+  if (!r) return;
+  const jobs = [];
+  if (r.registration && !_bdAc[r.registration]) {
+    jobs.push(api('/board/aircraft/' + encodeURIComponent(r.registration))
+      .then(d => { _bdAc[r.registration] = d; }).catch(() => { _bdAc[r.registration] = 'err'; }));
+  }
+  if (!_bdEq[r.flight_number]) {
+    jobs.push(api('/search/route?fn=' + encodeURIComponent(r.flight_number)).then(d => {
+      const rows = (d.results || []).filter(x => (x.flight_number || '').toUpperCase() === r.flight_number.toUpperCase());
+      _bdEq[r.flight_number] = rows.sort((a, b) => (b.count || 0) - (a.count || 0));
+    }).catch(() => { _bdEq[r.flight_number] = 'err'; }));
+  }
+  if (jobs.length) { await Promise.all(jobs); if (_bdOpenKey === key) renderBoard(); }
+}
+
+function _bdDetailHtml(r) {
+  const ac = r.registration ? _bdAc[r.registration] : null;
+  const eq = _bdEq[r.flight_number];
+  const loading = `<span style="color:var(--dim)">${esc(tt('Loading…'))}</span>`;
+  const dc = (lbl, val) => val ? `<div class="dc"><span class="lbl">${esc(tt(lbl))}</span><span class="val">${val}</span></div>` : '';
+
+  // Departure airport ("arriving from") — moved here from the row.
+  const oIata = r.origin_iata || '';
+  const oName = r.origin_name || '';
+  const from = oIata
+    ? `<span class="rb-lbl" style="margin-right:8px">${esc(tt('Arr. From'))}</span>` +
+      `${_flag(r.origin_country_code || _airportCountry(oIata), { h: 12 })}` +
+      `<a href="${_fr24AirportUrl(oIata)}" target="_blank" rel="noopener" style="font-weight:700;color:var(--text);text-decoration:none">${esc(oIata)}</a>` +
+      `${(r.origin_city || oName) ? ` · <span${oName ? ` data-ext-name="${esc(oName)}" data-ext-city="1"` : ''}>${esc(r.origin_city || _routeAirportDisp(oName))}</span>` : ''}`
+    : '';
+
+  let photo = '', facts = '', quick = '';
+  if (!r.registration) {
+    facts = `<div class="bd-na" style="padding:4px 0">${esc(tt('Aircraft not assigned yet'))}${r.aircraft_type ? ` · ${esc(r.aircraft_type)}` : ''}</div>`;
+  } else if (!ac) {
+    facts = loading;
+  } else if (ac === 'err') {
+    facts = `<span style="color:var(--dim)">${esc(tt('Could not load aircraft details.'))}</span>`;
+  } else {
+    if (ac.photo_url) {
+      const full = ac.photo_url.replace('/640/', '/full/');
+      photo = `<div class="bd-photo-wrap"><img class="bd-photo" src="${esc(full)}" loading="lazy" alt="${esc(r.registration)}" onerror="this.onerror=null;this.src='${esc(ac.photo_url)}'">` +
+        `${ac.photo_credit ? `<span class="bd-photo-credit">© ${esc(ac.photo_credit)}</span>` : ''}</div>`;
+    }
+    const model = ac.model || r.aircraft_type || '';
+    const typeCode = ac.type_code || r.aircraft_type || '';
+    const sameAsOperator = ac.owner && ac.operator && ac.owner.toLowerCase() === ac.operator.toLowerCase();
+    facts = [
+      dc('Registration', `${_flag(_regoCountryCode(r.registration), { h: 12 })}<a href="${_fr24AircraftUrl(r.registration)}" target="_blank" rel="noopener" style="color:var(--text);font-weight:700;text-decoration:none">${esc(r.registration)}</a>`),
+      dc('Aircraft', `${esc(model)}${typeCode && model !== typeCode ? ` <span style="color:var(--dim)">(${esc(typeCode)})</span>` : ''}`),
+      dc('Manufacturer', ac.manufacturer ? mfrBadge(ac.manufacturer) : ''),
+      dc('Operator', ac.operator ? `<span data-ext-name="${esc(ac.operator)}">${esc(tExternalName(ac.operator))}</span>` : ''),
+      dc('Owner', ac.owner && !sameAsOperator ? esc(ac.owner) : ''),
+      dc('Livery', ac.livery ? esc(tLiveryName(ac.livery)) : ''),
+      dc('Country', ac.country ? `${_flag(ac.country_code, { h: 12 })}${esc(ac.country)}` : ''),
+      dc('Mode S', ac.hex ? esc(ac.hex) : ''),
+      dc('Serial No.', ac.serial_number ? esc(ac.serial_number) : ''),
+      dc('Built', ac.built_year ? esc(String(ac.built_year)) : ''),
+      dc('Last Seen', ac.last_seen_ts ? esc(_fmtLastSeen(ac.last_seen_ts) || '') : ''),
+      dc('Feed cards here', ac.cards_here ? esc(String(ac.cards_here)) : ''),
+    ].join('');
+    quick = _detailQuickFilterBtns(r.registration);
+  }
+
+  // Equipment history for this flight number: share of each aircraft type it has flown (same bars as
+  // Search → Route Equipment).
+  let hist;
+  if (!eq) hist = loading;
+  else if (eq === 'err') hist = `<span style="color:var(--dim)">${esc(tt('Search failed.'))}</span>`;
+  else if (!eq.length) hist = `<span style="color:var(--dim)">${esc(tt('No equipment history yet.'))}</span>`;
+  else {
+    const total = eq.reduce((s, t) => s + (t.count || 0), 0);
+    const pcts = eq.map(t => total > 0 ? (t.count / total) * 100 : 0);
+    const mn = Math.min(...pcts), mx = Math.max(...pcts);
+    let cum = 0;
+    hist = eq.map((t, i) => {
+      const start = Math.round(cum), end = Math.round(cum + pcts[i]); cum += pcts[i];
+      const rel = mx > mn ? (pcts[i] - mn) / (mx - mn) : 1;
+      const fill = `rgba(${Math.round(220 + rel * (34 - 220))},${Math.round(55 + rel * (197 - 55))},${Math.round(40 + rel * (80 - 40))},0.22)`;
+      const bg = `linear-gradient(to right,var(--surface2) ${start}%,${fill} ${start}%,${fill} ${end}%,var(--surface2) ${end}%)`;
+      const mfr = _deriveManufacturerFromType(t.aircraft_type);
+      return `<div class="srch-fl-row" style="grid-template-columns:minmax(90px,auto) 1fr auto;background:${bg}">
+        <span class="srch-fl-fn" style="display:flex;align-items:center;gap:5px">${mfr ? mfrBadge(mfr) : ''}<span>${esc(t.aircraft_type)}</span></span>
+        <span class="srch-fl-date"><span style="color:var(--dim);text-transform:uppercase;font-size:10px;letter-spacing:.04em">${esc(tt('Last Seen'))}</span> ${esc(_srchShortDate(t.last_seen_ts))}</span>
+        <span class="srch-fl-status" style="color:var(--dim);text-align:right">${Math.round(pcts[i])}%</span>
+      </div>`;
+    }).join('');
+  }
+
+  return `<div class="bd-detail">
+    ${photo}
+    ${from || quick ? `<div class="bd-from">${from}<span style="margin-left:auto">${quick}</span></div>` : ''}
+    <div class="bd-facts">${facts}</div>
+    <div class="bd-sec-t">${esc(tt('Equipment History'))}</div>
+    <div class="srch-fl-rows" style="margin-top:0">${hist}</div>
+  </div>`;
+}
+
 function _bdRow(r, isMobile) {
   const fn = esc(r.flight_number);
   const late = r.estimated_ts && Math.abs(r.estimated_ts - r.scheduled_ts) >= 600;
   const time = `${esc(fmtTs(r.eff_ts))}${late ? `<small>${esc(fmtTs(r.scheduled_ts))}</small>` : ''}`;
-  const originLabel = isMobile ? (r.origin_iata || '') : (r.origin_city || r.origin_name || r.origin_iata || '');
-  const origin = originLabel
-    ? `${r.origin_iata ? _flag(r.origin_country_code || _airportCountry(r.origin_iata), { h: 11 }) : ''}${esc(originLabel)}` : '';
   const airline = r.airline_name
     ? `<span data-ext-name="${esc(r.airline_name)}">${esc(tExternalName(r.airline_name))}</span>` : '';
-  const sub = [airline, origin].filter(Boolean).join(' · ');
+  const sub = airline;     // departure airport lives in the expanded card
   const ac = r.registration
-    ? `${_flag(_regoCountryCode(r.registration), { h: 11 })}<a href="${_fr24AircraftUrl(r.registration)}" target="_blank" rel="noopener">${esc(r.registration)}</a>` +
+    ? `${_flag(_regoCountryCode(r.registration), { h: 11 })}<a href="${_fr24AircraftUrl(r.registration)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${esc(r.registration)}</a>` +
       `${r.aircraft_type ? `<div class="ty">${esc(r.aircraft_type)}</div>` : ''}`
     : `<span class="bd-na">${esc(tt('Not assigned yet'))}</span>${r.aircraft_type ? `<div class="ty">${esc(r.aircraft_type)}</div>` : ''}`;
   const kindCls = r.kind === 'feed' ? ' bd-row-feed' : r.kind === 'excluded' ? ' bd-row-excl' : '';
@@ -3142,17 +3254,19 @@ function _bdRow(r, isMobile) {
   const rgb = r.kind ? _bdAccentRgb(r.card_types) : '';
   const chips = (r.kind && (r.card_types || []).length)
     ? `<span class="bd-chips">${r.card_types.map(t => `<span class="chip ${chipClass(t)}">${esc(chipLabel(t))}</span>`).join('')}</span>` : '';
-  return `<div class="bd-row${kindCls}"${kindTip ? ` title="${esc(kindTip)}"` : ''}${rgb ? ` style="--bd-rgb:${rgb}"` : ''}>
+  const key = _bdKey(r);
+  const open = key === _bdOpenKey;
+  return `<div class="bd-row${kindCls}${open ? ' open' : ''}" data-key="${esc(key)}" onclick="bdOpen(this)"${kindTip ? ` title="${esc(kindTip)}"` : ''}${rgb ? ` style="--bd-rgb:${rgb}"` : ''}>
       <div class="bd-time">${time}</div>
       <div class="bd-main">
-        <a class="bd-fn" href="${_fr24FlightUrl(r.flight_number)}" target="_blank" rel="noopener">${_srchLogoWithFallback(r.airline_icao, r.airline_name, 16, '')}${fn}</a>${chips}
+        <a class="bd-fn" href="${_fr24FlightUrl(r.flight_number)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${_srchLogoWithFallback(r.airline_icao, r.airline_name, 16, '')}${fn}</a>${chips}
         <div class="bd-sub">${sub}</div>
       </div>
       <div class="bd-ac">${ac}</div>
       <button type="button" class="bd-hide${r.hidden ? ' is-hidden' : ''}" data-fn="${fn}" data-hidden="${r.hidden ? 1 : 0}"
               title="${esc(r.hidden ? tt('Unhide') : tt('Hide this flight number from the Board'))}"
-              onclick="bdToggle(this)">${r.hidden ? _BD_EYE : _BD_EYE_OFF}</button>
-    </div>`;
+              onclick="event.stopPropagation(); bdToggle(this)">${r.hidden ? _BD_EYE : _BD_EYE_OFF}</button>
+    </div>${open ? _bdDetailHtml(r) : ''}`;
 }
 
 function renderBoard() {
@@ -3162,6 +3276,10 @@ function renderBoard() {
   const keepX = wrap.scrollLeft;
   const keepY = [...wrap.querySelectorAll('.bd-rows')].map(el => el.scrollTop);
   const isMobile = window.innerWidth < 768;
+
+  _bdRowsByKey = {};
+  (d.days || []).forEach(day => day.rows.forEach(r => { _bdRowsByKey[_bdKey(r)] = r; }));
+  if (_bdOpenKey && !_bdRowsByKey[_bdOpenKey]) _bdOpenKey = null;   // its row left the board
 
   const bits = [];
   if (d.updated_ts) bits.push(`${tt('Updated')} ${_bdAgo(d.updated_ts)}`);
@@ -3199,7 +3317,9 @@ function renderBoard() {
   } else wrap.scrollLeft = keepX;
   wrap.querySelectorAll('.bd-rows').forEach((el, i) => { el.scrollTop = keepY[i] || 0; });
   if (_lang === 'zh') {
-    _translateNamesForZh((d.days || []).flatMap(day => day.rows.map(r => r.airline_name)).filter(Boolean));
+    const open = _bdRowsByKey[_bdOpenKey];
+    _translateNamesForZh([...(d.days || []).flatMap(day => day.rows.map(r => r.airline_name)),
+                          open && open.origin_name].filter(Boolean));
   }
 }
 
