@@ -3312,7 +3312,7 @@ function renderBoard() {
   if (!_bdPositioned && wrap.firstElementChild) {
     // First render: land on today's card (future days sit to its left, past days to its right).
     const today = wrap.querySelector('.bd-today');
-    if (today) wrap.scrollLeft += today.getBoundingClientRect().left - wrap.getBoundingClientRect().left - (isMobile ? 6 : 14);
+    if (today) wrap.scrollLeft += today.getBoundingClientRect().left - wrap.getBoundingClientRect().left - (isMobile ? 6 : (wrap.clientWidth - today.offsetWidth) / 2);
     _bdPositioned = true;
   } else wrap.scrollLeft = keepX;
   wrap.querySelectorAll('.bd-rows').forEach((el, i) => { el.scrollTop = keepY[i] || 0; });

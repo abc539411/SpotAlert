@@ -654,11 +654,11 @@
     .bd-hidden-note { color: var(--dim); font-size: 11px; margin-bottom: 6px; }
     .bd-hidden-chip { display: inline-flex; align-items: center; gap: 6px; margin: 0 6px 6px 0; padding: 3px 4px 3px 10px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface2); }
     .bd-hidden-chip button { background: none; border: none; color: var(--accent); font-size: 11px; cursor: pointer; padding: 0 6px; }
-    .bd-wrap { flex: 1; min-height: 0; display: flex; gap: 12px; padding: 0 14px 14px; overflow-x: auto; scroll-snap-type: x mandatory; scroll-padding-inline: 14px; scrollbar-width: none; }
+    .bd-wrap { flex: 1; min-height: 0; display: flex; gap: 12px; padding: 0 max(14px, calc(50% - 350px)) 14px; overflow-x: auto; scroll-snap-type: x mandatory; scroll-padding-inline: max(14px, calc(50% - 350px)); scrollbar-width: none; }
     .bd-wrap::-webkit-scrollbar { display: none; }
     /* Day cards are fixed-width and swipe/scroll sideways like the Spotting table; the header reuses its
        .rec-day-hdr / .rec-d-label / .rdc-* styles (label, count, weather). */
-    .bd-card { flex: 0 0 480px; min-width: 0; display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); overflow: hidden; scroll-snap-align: start; }
+    .bd-card { flex: 0 0 700px; min-width: 0; display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); overflow: hidden; scroll-snap-align: start; }
     .bd-card.bd-today { border-color: var(--accent); }
     .bd-card .rec-day-hdr { position: static; }
     .bd-rows { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
