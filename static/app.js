@@ -3054,6 +3054,37 @@ let _feedTimezone   = '';
 const TABS = ['recommendation', 'history', 'board', 'collection', 'search', 'settings'];
 let activeTab = 'history';
 
+// Tap the SpotAlert logo / name: jump back to the "start" of whatever you are looking at —
+//   Spotting & Board: Today in the default view; in the Older view, the Back + month picker page.
+//   Feed: top.   Fleet (Collection): leftmost card.
+function logoTap() {
+  const smooth = { behavior: 'smooth' };
+  const mobile = window.innerWidth < 768;
+  const toToday = (strip, todaySel) => {
+    const today = strip && strip.querySelector(todaySel);
+    if (!today) { if (strip) strip.scrollTo({ left: 0, ...smooth }); return; }
+    const delta = today.getBoundingClientRect().left - strip.getBoundingClientRect().left;
+    strip.scrollTo({ left: strip.scrollLeft + delta - (mobile ? 6 : (strip.clientWidth - today.offsetWidth) / 2), ...smooth });
+  };
+  if (activeTab === 'recommendation') {
+    const strip = document.querySelector('.rec-scroll');
+    if (!strip) return;
+    if (strip.classList.contains('rec-older-view')) strip.scrollTo({ left: 0, ...smooth });   // Back + month picker
+    else toToday(strip, '.rec-today');
+  } else if (activeTab === 'board') {
+    const wrap = $('bd-wrap');
+    if (_bdOlderView) wrap.scrollTo({ left: 0, ...smooth });
+    else toToday(wrap, '.bd-today');
+  } else if (activeTab === 'history') {
+    $('tab-history').scrollTo({ top: 0, ...smooth });
+    window.scrollTo({ top: 0, ...smooth });
+  } else if (activeTab === 'collection') {
+    const fleet = $('col-subtab-fleet');
+    const wrap = $('flt-wrap');
+    if (fleet && !fleet.classList.contains('hidden') && wrap) wrap.scrollTo({ left: 0, ...smooth });
+  }
+}
+
 function switchTab(name) {
   if (!TABS.includes(name)) return;
   activeTab = name;

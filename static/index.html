@@ -69,6 +69,7 @@
       border-right: 1px solid var(--border);
     }
     .header-logo span { color: var(--accent); margin-right: 6px; }
+    .header-logo { cursor: pointer; -webkit-tap-highlight-color: transparent; user-select: none; }
     .btn-refresh {
       background: none; border: 1px solid var(--border); color: var(--dim);
       border-radius: var(--r); padding: 5px 10px; font-size: 13px; cursor: pointer;
@@ -2107,7 +2108,7 @@
 
 <div id="refresh-pill" class="refresh-pill"></div>
 <header>
-  <div class="header-logo"><span>✈</span>SpotAlert</div>
+  <div class="header-logo" onclick="logoTap()" title="Back to the start of this view" role="button"><span>✈</span>SpotAlert</div>
   <nav class="nav-tabs" id="nav-tabs">
     <button class="nav-tab" data-tab="recommendation"><span class="tab-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 21s-7-6.6-7-12a7 7 0 0 1 14 0c0 5.4-7 12-7 12z"/><circle cx="12" cy="9" r="2.4"/></svg></span><span data-i18n="nav.spotting">Spotting</span></button>
     <button class="nav-tab" data-tab="collection"><span class="tab-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 8.5a1.5 1.5 0 0 1 1.5-1.5h2l1-2h7l1 2h2A1.5 1.5 0 0 1 20 8.5v9A1.5 1.5 0 0 1 18.5 19h-13A1.5 1.5 0 0 1 4 17.5z"/><circle cx="12" cy="12.5" r="3.3"/></svg></span><span data-i18n="nav.collection">Collection</span></button>
