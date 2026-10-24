@@ -1622,9 +1622,31 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
 
         return JSONResponse(result)
 
+    @app.get("/api/feed/weeks")
+    async def get_feed_weeks(user=Depends(_auth_current_user)):
+        """ISO weeks (Mon–Sun) that contain at least one Feed card, newest first, grouped client-side by year."""
+        import datetime
+        store_ = _cfg_for_user(user).store
+        with store_._connect() as conn:
+            dates = [r[0] for r in conn.execute(
+                "SELECT DISTINCT arrival_date FROM flight_arrivals WHERE arrival_date IS NOT NULL AND flight_number IS NOT NULL "
+                "AND registration NOT IN (SELECT registration FROM filter_exclusions WHERE owner_user_id = ?)",
+                (_owner_id(user),)).fetchall()]
+        weeks: dict = {}
+        for ds in dates:
+            try:
+                d = datetime.date.fromisoformat(ds)
+            except ValueError:
+                continue
+            y, w, wd = d.isocalendar()
+            mon = d - datetime.timedelta(days=wd - 1)
+            weeks[(y, w)] = {"year": y, "week": w, "start": mon.isoformat(), "end": (mon + datetime.timedelta(days=6)).isoformat()}
+        return JSONResponse({"weeks": sorted(weeks.values(), key=lambda x: x["start"], reverse=True)})
+
     @app.get("/api/feed")
-    async def get_feed(days: int = 30, user=Depends(_auth_current_user)):
+    async def get_feed(days: int = 30, start: str = "", end: str = "", user=Depends(_auth_current_user)):
         import datetime, json as _json, pytz
+        import re as _re_f
 
         cfg_   = _cfg_for_user(user)
         store_ = cfg_.store
@@ -1641,6 +1663,13 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         now_dt    = datetime.datetime.now(tz)
         now_ts    = int(time.time())
         cutoff_ts = now_ts - max(1, min(days, 30)) * 86400
+        range_mode = bool(_re_f.match(r"^\d{4}-\d{2}-\d{2}$", start or "") and _re_f.match(r"^\d{4}-\d{2}-\d{2}$", end or ""))
+        if range_mode:
+            _start_d = datetime.date.fromisoformat(start)
+            _end_d = min(datetime.date.fromisoformat(end), _start_d + datetime.timedelta(days=13))   # sanity cap: 2 weeks
+            # a departure can land the day after its arrival, so read one extra day each side
+            _sql_lo = (_start_d - datetime.timedelta(days=1)).isoformat()
+            _sql_hi = (_end_d + datetime.timedelta(days=1)).isoformat()
         dep_threshold = int(
             store_.load_setting("DEPARTURE_PATTERN_THRESHOLD")
             or (getattr(cfg_, 'departure_pattern_threshold', None) if cfg_ else None)
@@ -1668,10 +1697,11 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                 LEFT JOIN rego_sightings sh  ON sh.registration = fe.registration
                 LEFT JOIN airports ap_o      ON ap_o.iata = fe.origin_iata
                 LEFT JOIN airports ap_d      ON ap_d.iata = fd.dep_dest_iata
-                WHERE fe.first_seen_ts >= ? AND fe.flight_number IS NOT NULL
+                WHERE {where} AND fe.flight_number IS NOT NULL
                   AND fe.registration NOT IN (SELECT registration FROM filter_exclusions WHERE owner_user_id = ?)
                 ORDER BY fe.arrival_ts ASC
-            """, (cutoff_ts, _owner_id(user))).fetchall()
+            """.replace("{where}", "fe.arrival_date BETWEEN ? AND ?" if range_mode else "fe.first_seen_ts >= ?"),
+                (((_sql_lo, _sql_hi) if range_mode else (cutoff_ts,)) + (_owner_id(user),))).fetchall()
             _livery_excl = _viewer_livery_exclude_keywords(conn, user)
             _rare_min_days = _viewer_rare_plane_min_days(conn, user)
             _watchlist_sets = _viewer_watchlist_sets(store_, user)
@@ -1822,7 +1852,9 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
 
         today_local = now_dt.date()
         days_result = []
-        for i in range(-3, 30):  # -3 to +3 days future, 0 = today, up to 30 days back
+        _day_range = (range((today_local - _end_d).days, (today_local - _start_d).days + 1) if range_mode
+                      else range(-3, 30))
+        for i in _day_range:  # default: -3 to +3 days future, 0 = today, up to 30 days back
             d = today_local - datetime.timedelta(days=i)
             date_str = d.strftime("%Y-%m-%d")
             cards_for_day = list((day_cards.get(date_str) or {}).values())
