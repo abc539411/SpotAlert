@@ -871,6 +871,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
             raise HTTPException(401, "Invalid username or password")
         set_session_cookie(response, request, user_row["user_id"], user_row["role"],
                             user_row["session_epoch"])
+        cstore.set_tour_seen(user_row["user_id"], False)      # every sign-in offers the tour again
         return {"ok": True, "role": user_row["role"]}
 
     @app.post("/api/auth/logout")
@@ -935,7 +936,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
             "authenticated": True,
             "user": {"id": user.user_id, "username": user.username, "role": user.role, "language": user.language,
                      "board_default": cstore.get_board_default(user.user_id),
-                     "tour_seen": cstore.get_tour_seen(user.user_id)},
+                     "tour_due": cstore.tour_due(user.user_id, VERSION)},
             "airport": user.airport_iata,
             "airports": [{
                 "iata": a["airport_iata"], "name": a["airport_name"],
@@ -966,7 +967,10 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
     @app.put("/api/me/tour-seen")
     async def set_my_tour_seen(request: Request, user=Depends(_auth_current_user)):
         body = await request.json()
-        app.state.control_store.set_tour_seen(user.user_id, bool(body.get("seen", True)))
+        if body.get("seen", True):
+            app.state.control_store.mark_tour_done(user.user_id, VERSION)      # remembers which app version it was shown for
+        else:
+            app.state.control_store.set_tour_seen(user.user_id, False)
         return {"ok": True}
 
     @app.put("/api/me/board-default")

@@ -53,6 +53,8 @@ class ControlStore:
             if "tour_seen" not in _wu_cols:
                 # Every existing account starts at 0, so each user is offered the tour once on their next sign-in.
                 conn.execute("ALTER TABLE web_users ADD COLUMN tour_seen INTEGER NOT NULL DEFAULT 0")
+            if "tour_version" not in _wu_cols:
+                conn.execute("ALTER TABLE web_users ADD COLUMN tour_version TEXT DEFAULT NULL")
             if "board_default" not in _wu_cols:
                 conn.execute("ALTER TABLE web_users ADD COLUMN board_default INTEGER NOT NULL DEFAULT 0")
             if "last_seen_ts" not in _wu_cols:
@@ -341,6 +343,17 @@ class ControlStore:
         with self._connect() as conn:
             row = conn.execute("SELECT tour_seen FROM web_users WHERE user_id = ?", (user_id,)).fetchone()
             return bool(row and row["tour_seen"])
+
+    def tour_due(self, user_id: str, version: str) -> bool:
+        """The tour is offered on every sign-in (login clears tour_seen) and whenever the app version changed since the
+        user last finished or skipped it."""
+        with self._connect() as conn:
+            row = conn.execute("SELECT tour_seen, tour_version FROM web_users WHERE user_id = ?", (user_id,)).fetchone()
+            return bool(row) and (not row["tour_seen"] or row["tour_version"] != version)
+
+    def mark_tour_done(self, user_id: str, version: str) -> None:
+        with self._connect() as conn:
+            conn.execute("UPDATE web_users SET tour_seen = 1, tour_version = ? WHERE user_id = ?", (version, user_id))
 
     def set_board_default(self, user_id: str, on: bool) -> None:
         """Per-user: open on the Board instead of the Feed (phones: Feed becomes the pull-down page)."""

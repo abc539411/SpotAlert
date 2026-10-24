@@ -1038,7 +1038,7 @@ async function _authBoot() {
   _applyRoleUI(me.user.role);
   _boardDefault = !!me.user.board_default;
   _applyBoardDefault();
-  if (me.user.tour_seen === false) setTimeout(startTour, 1500);       // first sign-in (existing accounts: next sign-in)
+  if (me.user.tour_due) setTimeout(startTour, 1500);                 // every sign-in, and after an app version change
   if (_boardDefault) switchTab('board');                  // home page (deep links below still win)
   // The cards' mute/exclude/watch buttons light up from the filter lists, which otherwise
   // only load when the Settings tab is opened — so fetch them at boot (Controller/Pilot only,
@@ -3247,7 +3247,7 @@ function logoTap() {
 // Phones: the Board has no tab in the bottom bar. The Controller gets there by pulling the Feed all the way down from
 // its top — a cue ("Pull down for Board") follows the finger and the Board opens on release past the threshold.
 // ── Take a tour ─────────────────────────────────────────────────────────────────────────────────────────────────────
-// Offered once to every account (existing ones on their next sign-in, new ones on their first), and any time from
+// Offered to every account on each sign-in and whenever the app version changes (the server decides: tour_due), and any time from
 // Settings > Tour. Each step switches to a tab, rings its button in the bar and explains it. English / Chinese inline.
 let _tourStep = 0, _tourSteps = [], _tourAirport = null, _tourPrevTz = '', _tourReload = false;
 function _tourBuildSteps() {
