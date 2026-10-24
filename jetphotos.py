@@ -91,10 +91,12 @@ def url_alive(url: str, timeout: float = 6) -> bool:
 
 
 def pick_live_photo(registration: str, fresh_url: str, stored_url: str) -> str:
-    """The photo a new card should use: FR24's fresh one, else the aircraft's stored one — but only if that link still
-    loads — else the newest picture from FR24's aircraft page / JetPhotos. Same chain the Feed's repair of old cards
+    """The photo a new card should use. FR24's fresh photo is taken as is (it was just served, so no extra request).
+    Only when FR24 gave none is the aircraft's stored link used — and only if it still loads (one request); if it does
+    not, the newest picture from FR24's aircraft page / JetPhotos replaces it. Same chain the Feed's repair of old cards
     uses, so a card never starts life with a dead link. Returns '' when nothing works (the caller keeps what it had)."""
-    for cand in (fresh_url, stored_url):
-        if cand and url_alive(cand):
-            return cand
+    if fresh_url:
+        return fresh_url
+    if stored_url and url_alive(stored_url):
+        return stored_url
     return fetch_photo_url_via_fr24_page(registration) or fetch_photo_url_640(registration) or ""
