@@ -5088,7 +5088,14 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
             day.update({"weather_code": w.get("weather_code", 0), "weather_severe": w.get("weather_severe", False),
                         "temp_max": w.get("temp_max"), "temp_min": w.get("temp_min")})
             days.append(day)
+        hidden_flights = []
+        for hfn in sorted(hidden):
+            hh_ = (roster.get(hfn) or {}).get("hist") or {}
+            hidden_flights.append({"flight_number": hfn, "airline_name": hh_.get("airline_name") or "",
+                                   "airline_icao": hh_.get("airline_icao") or "", "origin_iata": hh_.get("origin_iata") or "",
+                                   "origin_city": cities.get(hh_.get("origin_iata"), "") or ""})
         return {
+            "hidden_flights": hidden_flights,
             "airport_iata": cfg_.airport_iata, "timezone": tz_name, "now_ts": now_ts,
             "updated_ts": int(meta["updated_ts"]) if meta.get("updated_ts") else None,
             "data_through_ts": through, "hidden": sorted(hidden), "roster_size": len(roster), "days": days,

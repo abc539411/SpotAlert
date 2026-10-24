@@ -355,7 +355,7 @@ const UI_ZH = {
   'Refresh Board': '刷新看板', 'Checking FR24…': '正在检查 FR24…', 'Board updated': '看板已更新',
   "Waiting for this airport's first check — tap Refresh to run one now.": '正在等待该机场的首次检查——点击刷新立即检查。',
   'Could not load the Board.': '无法加载看板。',
-  'Not assigned yet': '尚未分配机号', 'Not on board yet': '尚未上板', 'Possible aircraft': '可能的飞机', 'Edit': '编辑', 'Done': '完成', 'Hide': '隐藏', 'selected': '已选', 'Hidden flights': '已隐藏航班', 'Select flights to hide or unhide': '选择要隐藏或取消隐藏的航班', 'No check yet': '尚未检查', 'Confirm Refresh?': '确认刷新？', 'Added by hand (one-off) — in Feed and Spotting': '手动添加（仅此一次）— 已在 Feed 和拍机时间线', 'Add to Feed + Spotting (one-off)': '加入 Feed 和拍机时间线（仅此一次）', 'Remove this one-off flight from Feed + Spotting': '从 Feed 和拍机时间线移除此航班', 'Click again to add it to Feed + Spotting': '再点一次确认加入', 'Click again to remove it': '再点一次确认移除', 'added to Feed + Spotting': '已加入 Feed 和拍机时间线', 'removed': '已移除', 'Already photographed': '已拍摄', 'today': '今天', 'Last triggered': '上次触发原因', 'Hidden from Feed by the Exclusion List': '已被排除名单隐藏', 'No regular flights to show.': '暂无需要关注的常规航班。', 'No Feed cards': '无 Feed 卡片', 'Aircraft not assigned yet': '尚未分配飞机', 'Could not load aircraft details.': '无法加载飞机信息。',
+  'Not assigned yet': '尚未分配机号', 'Not on board yet': '尚未上板', 'Possible aircraft': '可能的飞机', 'Tap to select, then Unhide': '点选后再点“取消隐藏”', 'Edit': '编辑', 'Done': '完成', 'Hide': '隐藏', 'selected': '已选', 'Hidden flights': '已隐藏航班', 'Select flights to hide or unhide': '选择要隐藏或取消隐藏的航班', 'No check yet': '尚未检查', 'Confirm Refresh?': '确认刷新？', 'Added by hand (one-off) — in Feed and Spotting': '手动添加（仅此一次）— 已在 Feed 和拍机时间线', 'Add to Feed + Spotting (one-off)': '加入 Feed 和拍机时间线（仅此一次）', 'Remove this one-off flight from Feed + Spotting': '从 Feed 和拍机时间线移除此航班', 'Click again to add it to Feed + Spotting': '再点一次确认加入', 'Click again to remove it': '再点一次确认移除', 'added to Feed + Spotting': '已加入 Feed 和拍机时间线', 'removed': '已移除', 'Already photographed': '已拍摄', 'today': '今天', 'Last triggered': '上次触发原因', 'Hidden from Feed by the Exclusion List': '已被排除名单隐藏', 'No regular flights to show.': '暂无需要关注的常规航班。', 'No Feed cards': '无 Feed 卡片', 'Aircraft not assigned yet': '尚未分配飞机', 'Could not load aircraft details.': '无法加载飞机信息。',
   'No equipment history yet.': '暂无机型使用记录。', 'Registration': '注册号', 'Aircraft': '飞机', 'Manufacturer': '制造商', 'Operator': '运营商',
   'Owner': '所有者', 'Livery': '涂装', 'Country': '国家/地区', 'Mode S': 'Mode S', 'Serial No.': '序列号', 'Built': '出厂年份', 'Feed cards here': '本场 Feed 卡片数',
   'Feed card': '动态卡片', 'Excluded': '已排除', 'Has a card in Feed': '动态中已有卡片',
@@ -3421,7 +3421,6 @@ function renderBoard() {
   if (d.updated_ts) bits.push(`${tt('Updated')} ${_bdAgo(d.updated_ts)}`);
   if (d.data_through_ts) bits.push(`${tt('Data through')} ${fmtTs(d.data_through_ts, { weekday: 'short' })}`);
   $('bd-meta').textContent = bits.join(' · ');
-  renderBoardHidden();
   _bdSyncEditBar();
 
   wrap.innerHTML = (d.days || []).map(day => {
@@ -3444,7 +3443,7 @@ function renderBoard() {
         <div style="text-align:right">${wx}</div>
       </div>
       <div class="bd-rows">${day.rows.map(r => _bdRow(r, isMobile)).join('')}${empty}</div>
-    </div>`;
+    </div>${day.is_today ? _bdHiddenCard() : ''}`;
   }).join('');
   if (!_bdPositioned && wrap.firstElementChild) {
     // First render: land on today's card (future days sit to its left, past days to its right).
@@ -3464,14 +3463,26 @@ function renderBoard() {
 let _bdEdit = false;
 const _bdSel = new Set();      // flight numbers (hiding is per flight number, every day)
 
-function renderBoardHidden() {
-  const fns = (_bdData && _bdData.hidden) || [];
-  const panel = $('bd-hidden-panel');
-  const show = _bdEdit && fns.length > 0;
-  panel.classList.toggle('open', show);
-  if (!show) { panel.innerHTML = ''; return; }
-  panel.innerHTML = `<div class="bd-hidden-note">${esc(tt('Hidden flights'))} (${fns.length}) — ${esc(tt('Hidden flights only disappear from the Board — their Feed cards and notifications are unaffected. A hidden flight still reappears on a day it gets a Feed card.'))}</div>` +
-    fns.map(fn => `<span class="bd-hidden-chip${_bdSel.has(fn) ? ' sel' : ''}" data-fn="${esc(fn)}" onclick="bdSelToggle(this.dataset.fn)" style="cursor:pointer">${esc(fn)}</span>`).join('');
+// Temporary card (edit mode only): every hidden flight number, right next to the Today card. Tap to select, then Unhide.
+function _bdHiddenCard() {
+  const list = (_bdData && _bdData.hidden_flights) || [];
+  if (!_bdEdit || !list.length) return '';
+  const rows = list.map(h => `<div class="bd-row bd-hrow${_bdSel.has(h.flight_number) ? ' bd-row-sel' : ''}" data-fn="${esc(h.flight_number)}" onclick="bdSelToggle(this.dataset.fn)">
+      <div class="bd-time">${_BD_EYE_OFF}</div>
+      <div class="bd-main">
+        <div class="bd-fnrow"><a class="bd-fn" href="${_fr24FlightUrl(h.flight_number)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${_srchLogoWithFallback(h.airline_icao, h.airline_name, 16, '')}${esc(h.flight_number)}</a></div>
+        <div class="bd-sub">${h.airline_name ? `<span data-ext-name="${esc(h.airline_name)}">${esc(tExternalName(h.airline_name))}</span>` : ''}</div>
+      </div>
+      <div class="bd-ac">${esc(h.origin_city || h.origin_iata || '')}</div>
+      <div class="bd-check">✓</div>
+    </div>`).join('');
+  return `<div class="bd-card bd-hidden-card">
+    <div class="rec-day-hdr">
+      <div><div class="rec-d-label">${esc(tt('Hidden flights'))}</div><span class="rdc-window" style="color:var(--dim);font-weight:400">${esc(tt('Tap to select, then Unhide'))}</span></div>
+      <div style="text-align:right"><div class="rec-d-count">${list.length}</div></div>
+    </div>
+    <div class="bd-rows">${rows}</div>
+  </div>`;
 }
 
 function _bdSyncEditBar() {

@@ -666,11 +666,6 @@
     .bd-hidden-btn { flex-shrink: 0; background: none; border: 1px solid var(--border); color: var(--dim); font-size: 11px; padding: 4px 10px; border-radius: 12px; cursor: pointer; }
     .bd-hidden-btn:hover, .bd-hidden-btn.open { color: var(--text); border-color: var(--accent); }
     .bd-hidden-btn.hidden { display: none; }
-    .bd-hidden-panel { display: none; flex-shrink: 0; margin: 0 14px 8px; padding: 8px 10px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); font-size: 12px; }
-    .bd-hidden-panel.open { display: block; }
-    .bd-hidden-note { color: var(--dim); font-size: 11px; margin-bottom: 6px; }
-    .bd-hidden-chip { display: inline-flex; align-items: center; gap: 6px; margin: 0 6px 6px 0; padding: 3px 4px 3px 10px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface2); }
-    .bd-hidden-chip button { background: none; border: none; color: var(--accent); font-size: 11px; cursor: pointer; padding: 0 6px; }
     .bd-wrap { flex: 1; min-height: 0; display: flex; gap: 12px; padding: 0 max(14px, calc(50% - 280px)) 14px; overflow-x: auto; scroll-snap-type: x mandatory; scroll-padding-inline: max(14px, calc(50% - 280px)); scrollbar-width: none; }
     .bd-wrap::-webkit-scrollbar { display: none; }
     /* Day cards are fixed-width and swipe/scroll sideways like the Spotting table; the header reuses its
@@ -706,7 +701,11 @@
     .bd-eb:disabled { opacity: .35; cursor: default; }
     .bd-eb:not(:disabled):hover { border-color: var(--accent); }
     .bd-hidden-btn.on { background: var(--accent); border-color: var(--accent); color: #fff; }
-    .bd-hidden-chip.sel { border-color: var(--accent); background: rgba(59,130,246,0.18); }
+    /* Edit mode: temporary card right of the Today card listing every hidden flight number. */
+    .bd-hidden-card { border-style: dashed; }
+    .bd-hrow .bd-time { display: flex; align-items: center; color: var(--dim); }
+    .bd-hrow .bd-time svg { width: 16px; height: 16px; }
+    .bd-hrow .bd-ac { color: var(--dim); font-size: 12px; }
     .bd-empty { padding: 26px 16px; text-align: center; color: var(--dim); font-size: 12px; }
     /* Row colour = the accent of the card type it has (or, for an aircraft on the Exclusion List, WOULD have) in Feed —
        same palette as the .chip-* type chips: livery blue, rare amber, rego green, type purple, airline/military red.
@@ -2280,7 +2279,6 @@
       </div>
       <button type="button" class="bd-hidden-btn" id="bd-edit-btn" onclick="bdToggleEdit()"></button>
     </div>
-    <div class="bd-hidden-panel" id="bd-hidden-panel"></div>
     <div class="bd-wrap" id="bd-wrap"></div>
   </div>
 
