@@ -7656,7 +7656,7 @@ function _eqSinceLabel(rows) {
   const ts = (rows || []).map(t => t && t.first_seen_ts).filter(Boolean);
   if (!ts.length) return '';
   const d = new Date(Math.min(...ts) * 1000).toLocaleDateString(_locale(), { day: 'numeric', month: 'short', year: 'numeric' });
-  return `${tt('Since')} ${d}`;
+  return _lang === 'zh' ? `自${d}起` : `${tt('Since')} ${d}`;
 }
 
 function _deriveManufacturerFromType(t) {
