@@ -73,3 +73,28 @@ def fetch_photo_url_via_fr24_page(registration: str) -> str | None:
     except Exception as exc:
         log.debug("FR24 aircraft-page photo lookup failed for %s: %s", registration, exc)
         return None
+
+
+def url_alive(url: str, timeout: float = 6) -> bool:
+    """True when a stored photo link still serves an image (JetPhotos removes pictures; a dead link renders as a blank tile)."""
+    if not url:
+        return False
+    try:
+        import requests
+        r = requests.get(url, stream=True, timeout=timeout, headers={"User-Agent": "Mozilla/5.0"})
+        try:
+            return r.status_code < 400 and "image" in (r.headers.get("Content-Type") or "image")
+        finally:
+            r.close()
+    except Exception:
+        return False
+
+
+def pick_live_photo(registration: str, fresh_url: str, stored_url: str) -> str:
+    """The photo a new card should use: FR24's fresh one, else the aircraft's stored one — but only if that link still
+    loads — else the newest picture from FR24's aircraft page / JetPhotos. Same chain the Feed's repair of old cards
+    uses, so a card never starts life with a dead link. Returns '' when nothing works (the caller keeps what it had)."""
+    for cand in (fresh_url, stored_url):
+        if cand and url_alive(cand):
+            return cand
+    return fetch_photo_url_via_fr24_page(registration) or fetch_photo_url_640(registration) or ""

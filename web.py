@@ -1995,7 +1995,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
             else:        label = f"{d.strftime('%a')}, {d.day} {d.strftime('%b')}"
             days_result.append({"date": date_str, "label": label, "is_today": i == 0, "cards": cards_for_day})
 
-        if range_mode and cfg_ is not None:
+        if cfg_ is not None:                              # the main Feed heals missing photos too (capped per request, 7-day retry wait)
             missing = sorted({c["registration"] for d_ in days_result for c in d_["cards"] if not c.get("photo_url")})
             if missing:
                 got = await asyncio.to_thread(_backfill_missing_photos, cfg_, missing)

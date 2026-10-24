@@ -981,12 +981,13 @@ async def _enrich_and_store(
                         _fresh_photo = large[0]["src"].replace("/640cb/", "/640/") if large else ""
                     except (KeyError, IndexError):
                         pass
-                if not _fresh_photo and not _photo_url:
-                    try:                      # FR24 only had its generic type drawing — its aircraft page / JetPhotos have pictures
-                        import jetphotos as _jp
-                        _fresh_photo = _jp.fetch_photo_url_via_fr24_page(registration) or _jp.fetch_photo_url_640(registration) or ""
-                    except Exception:
-                        pass
+                try:                          # FR24's photo, else the stored one IF it still loads, else FR24's aircraft page / JetPhotos
+                    import jetphotos as _jp
+                    _best = _jp.pick_live_photo(registration, _fresh_photo, _photo_url)
+                    if _best:
+                        _fresh_photo = _best
+                except Exception:
+                    pass
                 if _fresh_photo:
                     _photo_url = _fresh_photo
                 cfg.store.upsert_airframe_from_fr24(registration, photo_url=_fresh_photo or None, manufacturer=_mfr)
@@ -2732,13 +2733,13 @@ async def _send_notification(
                     _fresh_photo = large[0]["src"].replace("/640cb/", "/640/") if large else ""
                 except (KeyError, IndexError):
                     pass
-            if not _fresh_photo and not photo_url:
-                try:                          # FR24 only had its generic type drawing — its aircraft page / JetPhotos have pictures
-                    import jetphotos as _jp
-                    _fresh_photo = (await asyncio.to_thread(
-                        lambda: _jp.fetch_photo_url_via_fr24_page(registration) or _jp.fetch_photo_url_640(registration))) or ""
-                except Exception:
-                    pass
+            try:                              # FR24's photo, else the stored one IF it still loads, else FR24's aircraft page / JetPhotos
+                import jetphotos as _jp
+                _best = await asyncio.to_thread(_jp.pick_live_photo, registration, _fresh_photo, photo_url)
+                if _best:
+                    _fresh_photo = _best
+            except Exception:
+                pass
             if _fresh_photo:
                 photo_url = _fresh_photo
             cfg.store.upsert_airframe_from_fr24(registration, photo_url=_fresh_photo or None, manufacturer=_mfr)

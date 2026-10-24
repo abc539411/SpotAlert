@@ -2324,6 +2324,7 @@ async function loadFeed() {
     _feedAirportName = data.airport_name || '';
     _feedTimezone    = data.timezone     || '';
     el.innerHTML = data.days.map(_feedDayHtml).join('') + _feedOlderHtml();
+    _feedProbePhotos(el, data.days);                  // a saved picture that no longer loads is checked and replaced (once per aircraft)
     if (_feedOlderOpen) { _feedOlderOpen = false; feedToggleOlder(); }   // keep it open across refreshes
     const _names = [
       ...data.days.flatMap(day => (day.cards || []).map(g => _cardAirlineName(g))),
