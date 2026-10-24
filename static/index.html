@@ -1853,6 +1853,11 @@
     }
     .sp-photos-modal .sp-photo-img { display: block; max-width: min(94vw, 1400px); max-height: 90vh; width: auto; height: auto;
       user-select: none; -webkit-user-drag: none; pointer-events: none; }
+    @media (max-width: 767px) {
+      /* the overlay already has 20px padding, so 94vw was wider than the room left and the photo got clipped */
+      .sp-photos-modal { max-width: 100%; }
+      .sp-photos-modal .sp-photo-img { max-width: 100%; width: 100%; }
+    }
     @media (min-width: 768px) {
       .sp-photos-modal { width: 900px; }
       .sp-photos-modal .sp-photo-img { width: 100%; max-width: none; height: auto; }
