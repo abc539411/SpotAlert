@@ -3246,8 +3246,8 @@ function logoTap() {
     pull = dy;
     if (pull >= lockAt()) { lockOpen(); return; }
     // stiffness: the Board travels only part of the finger's distance, and gets stiffer the further you pull
-    const p = Math.min(pull / lockAt(), 1);
-    setY(-H + pull * (0.62 - 0.22 * p), 0);
+    const frac = Math.min(pull / lockAt(), 1);
+    setY(-H + pull * (0.62 - 0.22 * frac), 0);
   }, { passive: false });
   const end = () => {
     if (startY === null || locked || busy) { if (!locked && !busy) { startY = null; } return; }
