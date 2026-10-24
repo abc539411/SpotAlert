@@ -3187,10 +3187,10 @@ function _bdDetailHtml(r) {
     const model = ac.model || r.aircraft_type || '';
     const typeCode = ac.type_code || r.aircraft_type || '';
     const sameAsOperator = ac.owner && ac.operator && ac.owner.toLowerCase() === ac.operator.toLowerCase();
-    // Header in the Feed card's style: rego + flag (+ status pill only when this flight has a Feed card),
+    // Header in the Feed card's style: rego + flag + status pill (as of the last check),
     // type chips / manufacturer / aircraft type, airline + livery on the left, quick-filter buttons on the right.
     let statusPill = '';
-    if (r.kind === 'feed') {
+    {
       const st = _barStatus({ current_status: r.status, arrival_ts: r.eff_ts }, Math.floor(Date.now() / 1000));
       if (st && st !== 'N/A') {
         const [bg, fg] = _STATUS_STYLE[st] || _STATUS_STYLE['N/A'];
