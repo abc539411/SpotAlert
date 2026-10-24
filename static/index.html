@@ -102,11 +102,11 @@
     .nav-tab.hidden { display: none; }
     .tab-icon { display: none; }
     @media (min-width: 768px) {
-      /* Desktop order: Spotting, Feed, Collection, Search, Settings.
+      /* Desktop order: Spotting, Board, Feed, Collection, Search, Settings.
          DOM order is Spotting, Collection, Feed, Search, Settings (mobile's order) — reorder visually here only. */
       .nav-tab[data-tab="recommendation"] { order: 1; }
-      .nav-tab[data-tab="history"]        { order: 2; }
-      .nav-tab[data-tab="board"]          { order: 3; }
+      .nav-tab[data-tab="board"]          { order: 2; }
+      .nav-tab[data-tab="history"]        { order: 3; }
       .nav-tab[data-tab="collection"]     { order: 4; }
       .nav-tab[data-tab="search"]         { order: 5; }
       .nav-tab[data-tab="settings"]       { order: 6; }
