@@ -3333,6 +3333,7 @@ function switchTab(name) {
       btn.onclick = () => _refreshGate(() => { _recLoaded = false; toast('Plotting the windows…'); loadRecommendation(true); }, 'spotting');
       lbl.textContent = tt('Refresh Spotting');
     } else if (name === 'board') {
+      if (!_bdOlderView) _bdPositioned = false;               // each visit lands on Today at the current time
       btn.onclick = () => _refreshGate(refreshBoard);
       lbl.textContent = tt('Refresh Board');
     } else if (name === 'settings') {
@@ -3871,7 +3872,8 @@ function renderBoard() {
       <div class="bd-rows">${day.rows.map(r => _bdRow(r, isMobile)).join('')}${empty}</div>
     </div>${day.is_today ? _bdHiddenCard() : ''}`;
   }).join('') + (_bdOlderView || !d.has_older ? '' : `<div class="bd-older"><button type="button" class="older-btn" onclick="bdLoadOlder(this)">${esc(tt('Older'))} ›</button><span class="older-cap">${esc(tt('Look through older days'))}</span></div>`);
-  if (!_bdPositioned && wrap.firstElementChild) {
+  const justPositioned = !_bdPositioned && !!wrap.firstElementChild;
+  if (justPositioned) {
     // First render: land on today's card (future days sit to its left, past days to its right).
     const today = wrap.querySelector('.bd-today');
     if (today) wrap.scrollLeft += today.getBoundingClientRect().left - wrap.getBoundingClientRect().left - (isMobile ? 6 : (wrap.clientWidth - today.offsetWidth) / 2);
@@ -3885,6 +3887,15 @@ function renderBoard() {
     wrap.scrollLeft = (isMobile && fc) ? fc.offsetLeft - 6 : 0;     // phone: land on the first older card, controls page is to its left
   }
   wrap.querySelectorAll('.bd-rows').forEach((el, i) => { el.scrollTop = keepY[i] || 0; });
+  if (justPositioned && !_bdOlderView) {                 // like Spotting: Today's card is also scrolled down to the current time
+    const todayDay = (d.days || []).find(x => x.is_today), todayCard = wrap.querySelector('.bd-today');
+    if (todayDay && todayDay.rows.length && todayCard) {
+      const nowTs = Date.now() / 1000;
+      const row = todayDay.rows.find(r => r.eff_ts >= nowTs) || todayDay.rows[todayDay.rows.length - 1];
+      const el = todayCard.querySelector(`.bd-row[data-key="${CSS.escape(_bdKey(row))}"]`), rows = todayCard.querySelector('.bd-rows');
+      if (el && rows) rows.scrollTop = Math.max(0, el.offsetTop - rows.clientHeight * 0.25);
+    }
+  }
   if (_lang === 'zh') {
     const open = _bdRowsByKey[_bdOpenKey];
     _translateNamesForZh([...(d.days || []).flatMap(day => day.rows.map(r => r.airline_name)),
