@@ -4774,7 +4774,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         tasks = [
             _entry(_t('arrivals_check', scoped=True), 'Airport Scan',  'FR24 airport feed → filter matching → store flights + clusters', check_int, scoped=True, task_key='arrivals_check'),
             _entry(_t('military_check', scoped=True), 'Military Scan', 'adsb.fi query for military traffic near airport', mil_int, scoped=True, task_key='military_check'),
-            _entry(_t('feed_cleanup'),      'Flight Cleanup',     'Prune flight records older than 30 days', check_int),
+            _entry(_t('feed_cleanup'),      'Flight Cleanup',     'Prune flight records older than 3 years', check_int),
             _entry(_t('collection_stats'),  'Collection Stats',   'Lightroom catalog stats cache refresh', check_int),
             _entry(_t('db_backup'),         'DB Backup',          'SQLite database backup to disk', 86400),
             _entry(_t('fleet_update'),      'Fleet Update',       'Refresh all fleet card data from FR24', 7 * 86400),

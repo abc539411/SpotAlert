@@ -2357,7 +2357,7 @@ async def run_check(context: ContextTypes.DEFAULT_TYPE) -> None:
     except Exception as exc:
         log.error("Unexpected error in run_check: %s", exc, exc_info=True)
 
-    # Prune stale flight_arrivals rows (30 days) — dispatched off the event loop; see
+    # Prune stale flight_arrivals rows (3 years) — dispatched off the event loop; see
     # Step 2's comment above for why per-connection writes shouldn't block the loop
     # thread directly.
     await asyncio.to_thread(cfg.store.cleanup_arrived_flights, int(datetime.now().timestamp()))

@@ -311,8 +311,8 @@ const UI_ZH = {
   'Last Visit': '上次到访', 'Spotted': '已拍摄', 'Last Spotted': '上次拍摄', 'Last Seen': '上次出现', 'Never': '从未',
   'First visit': '首次到访',
   'From': '来自',
-  'No arrivals in the past 30 days': '过去 30 天内无到达记录',
-  'Arrivals · past 30 days': '到达记录 · 过去 30 天',
+  'No arrivals in the past 3 years': '过去 3 年内无到达记录',
+  'Arrivals · past 3 years': '到达记录 · 过去 3 年',
   'No window': '无拍机窗口',
   'Window': '窗口', 'Alt': '备选', 'No results.': '无结果。',
   'REMARKS': '备注', 'LIVERY': '涂装',
@@ -406,7 +406,7 @@ const _SYS_NAME_ZH = {
 const _SYS_DESC_ZH = {
   'FR24 airport feed → filter matching → store flights + clusters': 'FR24 机场数据 → 筛选匹配 → 存储航班与聚类',
   'adsb.fi query for military traffic near airport': '通过 adsb.fi 查询机场附近的军机动态',
-  'Prune flight records older than 30 days': '清理超过 30 天的航班记录',
+  'Prune flight records older than 3 years': '清理超过 3 年的航班记录',
   'Lightroom catalog stats cache refresh': '刷新 Lightroom 目录统计缓存',
   'SQLite database backup to disk': '将 SQLite 数据库备份到磁盘',
   'Refresh all fleet card data from FR24': '从 FR24 刷新所有机队卡片数据',
@@ -7857,8 +7857,8 @@ async function _srchFlExec() {
           <span class="srch-fl-fn">${esc(f.flight_number)}</span>
           <span class="srch-fl-route" style="display:inline-flex;align-items:center;gap:5px;overflow:hidden"><span style="font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:.04em;flex-shrink:0">${tt('From')}</span>${originFlag}<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" data-ext-name="${esc(originName)}">${esc(tExternalName(originName))}</span></span>
         </div>`;
-      }).join('') || `<div style="font-size:11px;color:var(--dim);padding:6px 0">${tt('No arrivals in the past 30 days')}</div>`;
-      const note = `<div style="font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:.05em;padding:0 0 6px 0">${tt('Arrivals · past 30 days')}</div>`;
+      }).join('') || `<div style="font-size:11px;color:var(--dim);padding:6px 0">${tt('No arrivals in the past 3 years')}</div>`;
+      const note = `<div style="font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:.05em;padding:0 0 6px 0">${tt('Arrivals · past 3 years')}</div>`;
       return `<div class="srch-fl-card">
         <div class="srch-fl-header">
           <span class="srch-fl-rego"><span style="width:40px;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0">${flag || ''}</span><a href="${_fr24AircraftUrl(g.reg)}" target="_blank" style="color:inherit;text-decoration:none">${esc(g.reg)}</a></span>
