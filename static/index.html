@@ -824,11 +824,13 @@
     /* aircraft still missing from the viewer's Fleet cards: a small gold camera before the rego's flag (any row with a rego) */
     .bd-fleet-miss { display: inline-flex; align-items: center; margin-right: 5px; color: #fbbf24; vertical-align: -2px; }
     .bd-fleet-miss svg { width: 12px; height: 12px; }
-    /* sunrise / sunset lines inside a day's list: a glowing coloured dot + small text */
-    .bd-sun { display: flex; align-items: center; gap: 8px; padding: 5px 12px; font-size: 11px; color: var(--dim); border-bottom: 1px solid var(--border); }
-    .bd-sun-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; background: var(--sun-c); box-shadow: 0 0 6px 2px var(--sun-c); }
-    .bd-sun-rise { --sun-c: #fbbf24; }
-    .bd-sun-set  { --sun-c: #fb7185; }
+    /* sunrise / sunset lines inside a day's list — Spotting's colours (amber / orange) and style, plus the glowing dot */
+    .bd-sun { display: flex; align-items: center; gap: 7px; padding: 5px 12px; font-size: 10px; font-weight: 700; border-top: 1px solid var(--border); white-space: nowrap; }
+    .bd-sun:first-child { border-top: none; }
+    .bd-sun-rise { color: #f59e0b; }
+    .bd-sun-set  { color: #f97316; }
+    .bd-sun-dot, .rec-sun-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; background: currentColor; box-shadow: 0 0 6px 2px currentColor; }
+    .rec-sun-dot { margin-right: 5px; vertical-align: 0; }
     .bd-row { cursor: pointer; }
     /* Board card inside the bottom sheet: the sheet supplies the panel look */
     .detail-sheet-scroll .bd-detail { background: none; border: none; padding: 0; }
@@ -1459,7 +1461,7 @@
       background: var(--surface); padding: 0 5px; z-index: 2; pointer-events: none;
       white-space: nowrap;
     }
-    .rec-sun-set { color: #f97316; }
+    .rec-sun-set { color: #f97316; }   /* the glowing dot before the label is .rec-sun-dot (shared with the Board's .bd-sun-dot) */
 
     /* ── Column labels (sticky below header) ─── */
     .rec-col-labels {

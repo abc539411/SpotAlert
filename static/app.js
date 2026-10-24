@@ -6801,11 +6801,11 @@ function _renderDayCard(day, tzName) {
   let srLine = '', ssLine = '';
   if (day.sunrise_ts) {
     const py = layout.toY(_tsToLocalMin(day.sunrise_ts, tzName));
-    srLine = `<span class="rec-sun-line" style="top:${py.toFixed(1)}px">${tt('Sunrise')}</span>`;
+    srLine = `<span class="rec-sun-line" style="top:${py.toFixed(1)}px"><i class="rec-sun-dot"></i>${tt('Sunrise')}</span>`;
   }
   if (day.sunset_ts) {
     const py = layout.toY(_tsToLocalMin(day.sunset_ts, tzName));
-    ssLine = `<span class="rec-sun-line rec-sun-set" style="top:${py.toFixed(1)}px">${tt('Sunset')}</span>`;
+    ssLine = `<span class="rec-sun-line rec-sun-set" style="top:${py.toFixed(1)}px"><i class="rec-sun-dot"></i>${tt('Sunset')}</span>`;
   }
 
   // Collect all card events; separate arrivals (left) and departures (right)
