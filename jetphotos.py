@@ -39,3 +39,37 @@ def fetch_photo_url(registration: str) -> str | None:
     if src.startswith("//"):
         src = "https:" + src
     return src
+
+
+def fetch_photo_url_640(registration: str) -> str | None:
+    """Same lookup, but returned in the 640px form the rest of the app stores (cdn.jetphotos.com/640/...?v=0)."""
+    url = fetch_photo_url(registration)
+    if not url:
+        return None
+    return url.replace("/400/", "/640/").split("?")[0] + "?v=0"
+
+
+_FR24_PAGE_RE = re.compile(r"https://cdn\.jetphotos\.com/(?:400|640)/([^\"' )?]+)")
+
+
+def fetch_photo_url_via_fr24_page(registration: str) -> str | None:
+    """FR24's public aircraft page lists the aircraft's JetPhotos pictures even when its JSON feed only returns a
+    generic type drawing. A plain request gets through (unlike jetphotos.com itself). 640px URL, newest first."""
+    if not registration:
+        return None
+    try:
+        import requests
+        r = requests.get(f"https://www.flightradar24.com/data/aircraft/{registration.strip().lower()}",
+                         headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                                                "(KHTML, like Gecko) Chrome/124.0 Safari/537.36", "Accept": "text/html"},
+                         timeout=12)
+        r.raise_for_status()
+        # file names are <photo id>_<upload timestamp>.jpg — take the newest upload (the page isn't ordered by it)
+        found = {m.group(1) for m in _FR24_PAGE_RE.finditer(r.text)}
+        if not found:
+            return None
+        newest = max(found, key=lambda p: int(re.search(r"_(\d+)\.", p).group(1)) if re.search(r"_(\d+)\.", p) else 0)
+        return f"https://cdn.jetphotos.com/640/{newest}?v=0"
+    except Exception as exc:
+        log.debug("FR24 aircraft-page photo lookup failed for %s: %s", registration, exc)
+        return None

@@ -161,6 +161,29 @@ def _push_owner_id(user) -> str:
 PIN_NOTIF_TYPE = "Manual"     # chip shown on a Spotting card that was added by hand from the Board
 
 
+def latest_photo_url(fr_api, registration: str) -> str:
+    """Newest picture for a registration: FR24's own aircraft photo first; when FR24 only has its generic type
+    drawing (it sometimes does for aircraft that clearly have JetPhotos pictures — e.g. JA923A) fall back to the
+    JetPhotos lookup the military path already uses. Returns '' when neither has one."""
+    url = ""
+    try:
+        rd = fr_api.get_rego_details(registration.upper()) or {} if fr_api else {}
+        images = rd.get("aircraftImages") or []
+        if images:
+            imgs = images[0]["images"]
+            large = imgs.get("large") or imgs.get("medium") or []
+            url = large[0]["src"].replace("/640cb/", "/640/") if large else ""
+    except Exception as exc:
+        log.debug("FR24 photo lookup failed for %s: %s", registration, exc)
+    if not url:
+        try:
+            import jetphotos
+            url = jetphotos.fetch_photo_url_via_fr24_page(registration) or jetphotos.fetch_photo_url_640(registration) or ""
+        except Exception as exc:
+            log.debug("Photo fallback failed for %s: %s", registration, exc)
+    return url
+
+
 def predict_pin_departure(store, airport_iata: str, flight_number: str, arrival_ts: int, dep_threshold: int = 0):
     """Best guess at the aircraft's next departure from the airport's learned departure patterns, as
     (dep_flight, dep_ts, dest_iata, dest_name, dep_label, confidence) — or None."""
@@ -1636,16 +1659,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
             return out
         todo = [r for r in regs if time.time() - _photo_backfill_miss.get((cfg_.airport_iata, r), 0) > 7 * 86400]
         for reg in todo[:_PHOTO_BACKFILL_MAX]:
-            url = ""
-            try:
-                rd = cfg_.fr_api.get_rego_details(reg.upper()) or {}
-                images = rd.get("aircraftImages") or []
-                if images:
-                    imgs = images[0]["images"]
-                    large = imgs.get("large") or imgs.get("medium") or []
-                    url = large[0]["src"].replace("/640cb/", "/640/") if large else ""
-            except Exception as exc:
-                log.debug("Photo backfill failed for %s: %s", reg, exc)
+            url = latest_photo_url(cfg_.fr_api, reg)
             if url:
                 with store_._connect() as conn:       # backfill only: never touches a card that already has a photo
                     conn.execute("UPDATE flight_arrivals SET photo_url = ? WHERE registration = ? AND (photo_url IS NULL OR photo_url = '')", (url, reg))
@@ -1676,16 +1690,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
             pass                                           # unreachable / DNS / timeout counts as dead
         if time.time() - _photo_backfill_miss.get((cfg_.airport_iata, reg), 0) <= 7 * 86400 or not cfg_.fr_api:
             return ""
-        url = ""
-        try:
-            rd = cfg_.fr_api.get_rego_details(reg.upper()) or {}
-            images = rd.get("aircraftImages") or []
-            if images:
-                imgs = images[0]["images"]
-                large = imgs.get("large") or imgs.get("medium") or []
-                url = large[0]["src"].replace("/640cb/", "/640/") if large else ""
-        except Exception as exc:
-            log.debug("Dead-photo refresh failed for %s: %s", reg, exc)
+        url = latest_photo_url(cfg_.fr_api, reg)
         if not url or url == bad_url:
             _photo_backfill_miss[(cfg_.airport_iata, reg)] = time.time()
             return ""
@@ -5329,6 +5334,13 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                                                      manufacturer=out["manufacturer"] or None)
             except Exception as exc:
                 log.debug("Board aircraft lookup failed for %s: %s", reg, exc)
+            if not out["photo_url"]:                      # FR24 had none: try JetPhotos once and save it
+                out["photo_url"] = latest_photo_url(None, reg)
+                if out["photo_url"]:
+                    try:
+                        store_.upsert_airframe_from_fr24(reg, photo_url=out["photo_url"])
+                    except Exception:
+                        pass
         with store_._connect() as conn:
             n, first, last = conn.execute(
                 "SELECT COUNT(*), MIN(arrival_ts), MAX(arrival_ts) FROM flight_arrivals WHERE registration = ? "
