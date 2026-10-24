@@ -4711,8 +4711,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
     def _board_roster(cfg_, user) -> dict:
         """Returns (roster, excluded_cards).
 
-        roster = {flight_number: {"arrival_ts": [...], "cards": [(arrival_ts, registration, types)...], "last_ts",
-        "last_reg", "airline_icao"}} for every candidate flight number that still has at least one Feed card
+        roster = {flight_number: {"arrival_ts": [...], "cards": [(arrival_ts, registration, types)...]}} for every candidate flight number that still has at least one Feed card
         surviving this viewer's own filters — including cards for registrations on their Exclusion List, which
         Feed hides but which still show a flight number is worth checking (the row is coloured red). Cards that
         were Cancelled/Swapped never materialised and don't count. Expires with flight_arrivals itself
@@ -4757,26 +4756,23 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                                                    fr["airline_icao"], _watchlist_sets)
                 if not nt or not fr["arrival_ts"]:
                     continue
-                e = roster.setdefault(fr["flight_number"], {"arrival_ts": [], "cards": [], "last_ts": 0, "last_reg": "", "airline_icao": ""})
+                e = roster.setdefault(fr["flight_number"], {"arrival_ts": [], "cards": []})
                 if fr["registration"] in excl_regs:
                     # Would have been a card, but Feed hides it. Still evidence that this flight number is one
-                    # worth watching (and what lets the Board colour its row red) — just not a visible Feed card.
+                    # worth watching (and what lets the Board colour its row) — just not a visible Feed card.
                     excluded_cards.setdefault(fr["flight_number"], []).append((fr["arrival_ts"], fr["registration"], nt))
                 else:
                     e["arrival_ts"].append(fr["arrival_ts"])
                     e["cards"].append((fr["arrival_ts"], fr["registration"], nt))
-                if fr["arrival_ts"] >= e["last_ts"]:
-                    e["last_ts"], e["last_reg"] = fr["arrival_ts"], fr["registration"] or ""
-                    e["airline_icao"] = fr["airline_icao"] or e["airline_icao"]
         _board_roster_cache[key] = (time.time(), roster, excluded_cards)
         return roster, excluded_cards
 
     def _build_board_payload(cfg_, user) -> dict:
-        """The Board is a stable list: EVERY roster flight number (regular + has triggered a card before,
-        minus the ones the Controller hid) appears on both day cards every day. A day card shows the flight's
-        scheduled row when FR24 has one (landed / cancelled / unlisted flights stay, with their status);
-        otherwise a compact "not scheduled" entry. Flights only leave the list by being hidden or when their
-        trigger history expires. A hidden flight number reappears on a day it has a real Feed card."""
+        """Two day cards (airport-local today / tomorrow) of the schedule rows of every roster flight number
+        (regular + has triggered a card before, minus the ones the Controller hid). Rows stay on the card all day
+        (landed / cancelled / unlisted ones too) — they are only pruned once their day is over. A hidden flight
+        number reappears on a day it has a real Feed card. Flight numbers with no schedule row that day are
+        simply not listed."""
         import datetime as _dtm, pytz
         store_ = cfg_.store
         tz_name = getattr(cfg_, "airport_tz", None) or "UTC"
@@ -4791,9 +4787,8 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         roster, excluded_cards = _board_roster(cfg_, user)
         hidden = set(store_.get_board_hidden(_owner_id(user)))
         rows = [r for r in store_.get_board_rows(starts[0], starts[2]) if r["flight_number"] in roster]
-        profiles = store_.get_board_flight_profiles(cfg_.airport_iata, roster.keys())
 
-        iatas = {r["origin_iata"] for r in rows if r["origin_iata"]} | {p["origin_iata"] for p in profiles.values()}
+        iatas = {r["origin_iata"] for r in rows if r["origin_iata"]}
         cities: dict = {}
         countries: dict = {}
         if iatas:
@@ -4804,9 +4799,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                     cities[c["iata"]], countries[c["iata"]] = c["city"], (c["country_code"] or "")
 
         days = [{"date": (d0 + _dtm.timedelta(days=i)).isoformat(), "label": "Today" if i == 0 else "Tomorrow",
-                 "rows": [], "absent": [], "horizon_reached": bool(through and through >= starts[i + 1] - 3600)}
-                for i in range(2)]
-        listed = [set(), set()]
+                 "rows": []} for i in range(2)]
         for r in rows:
             fn = r["flight_number"]
             eff = r["estimated_ts"] or r["scheduled_ts"]
@@ -4814,7 +4807,6 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
             if is_hidden and not any(abs(t - r["scheduled_ts"]) <= 12 * 3600 for t in roster[fn]["arrival_ts"]):
                 continue                                    # hidden, and no Feed card for this flight → stays hidden
             idx = 0 if eff < starts[1] else 1
-            listed[idx].add(fn)
             reg = r["registration"]
             # Colour key: "feed" = this very flight already has a Feed card; "excluded" = it would have, but its
             # aircraft is on the Exclusion List (Feed hides it). Matched on flight number + registration + time.
@@ -4837,17 +4829,6 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                 "origin_country_code": countries.get(r["origin_iata"], ""),
                 "status": r["status_text"], "hidden": is_hidden, "kind": kind, "card_types": card_types,
             })
-        for fn in sorted(roster):
-            if fn in hidden:
-                continue
-            info, prof = roster[fn], profiles.get(fn, {})
-            entry = {"flight_number": fn, "airline_name": prof.get("airline_name"), "airline_icao": info["airline_icao"],
-                     "origin_iata": prof.get("origin_iata"), "origin_city": cities.get(prof.get("origin_iata"), "") or "",
-                     "origin_country_code": countries.get(prof.get("origin_iata"), ""),
-                     "last_trigger_ts": info["last_ts"], "last_trigger_reg": info["last_reg"]}
-            for i in range(2):
-                if fn not in listed[i]:
-                    days[i]["absent"].append(entry)
         return {
             "airport_iata": cfg_.airport_iata, "timezone": tz_name, "now_ts": now_ts,
             "updated_ts": int(meta["updated_ts"]) if meta.get("updated_ts") else None,

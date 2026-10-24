@@ -1142,24 +1142,6 @@ class SqliteStore:
                 (start_ts, end_ts),
             ).fetchall()]
 
-    def get_board_flight_profiles(self, airport_iata: str, flight_numbers) -> dict:
-        """Latest known airline + origin per flight number (from route_type_tracker, which is never
-        pruned) — lets the Board describe a flight number on days it has no schedule row.
-        Returns {flight_number: {"airline_name", "origin_iata"}}."""
-        fns = list(flight_numbers)
-        out: dict = {}
-        with self._connect() as conn:
-            for i in range(0, len(fns), 400):
-                chunk = fns[i:i + 400]
-                for r in conn.execute(
-                    f"SELECT flight_number, airline, origin_iata FROM route_type_tracker "
-                    f"WHERE airport_iata = ? AND origin_iata IS NOT NULL AND origin_iata != '' "
-                    f"AND flight_number IN ({','.join('?' * len(chunk))}) ORDER BY last_seen_ts ASC",
-                    (airport_iata, *chunk),
-                ).fetchall():
-                    out[r["flight_number"]] = {"airline_name": r["airline"], "origin_iata": r["origin_iata"]}
-        return out
-
     def get_board_meta(self) -> dict:
         with self._connect() as conn:
             return {r["key"]: r["value"] for r in conn.execute("SELECT key, value FROM board_meta").fetchall()}

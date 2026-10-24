@@ -358,7 +358,6 @@ const UI_ZH = {
   'Not assigned yet': '尚未分配机号', 'No regular flights to show.': '暂无需要关注的常规航班。',
   'Feed card': '动态卡片', 'Excluded': '已排除', 'Has a card in Feed': '动态中已有卡片',
   'Would have a Feed card, but the aircraft is on the Exclusion List': '本应有动态卡片，但该飞机在排除列表中',
-  'Not scheduled': '未排班', 'Not on the schedule yet': '尚未出现在时刻表', 'Last card': '上次卡片',
   'Updated': '更新于', 'Data through': '数据截至', 'just now': '刚刚',
   'Hidden': '已隐藏', 'Unhide': '取消隐藏', 'Hide': '隐藏', 'hidden': '已隐藏', 'unhidden': '已取消隐藏',
   'Hidden flights only disappear from the Board — their Feed cards and notifications are unaffected. A hidden flight still reappears on a day it gets a Feed card.':
@@ -3155,29 +3154,6 @@ function _bdRow(r, isMobile) {
     </div>`;
 }
 
-// A roster flight number with no schedule row on this day: still listed (so the list is the same every
-// day and any flight can be checked), with what we know about it and the last time it triggered a card.
-function _bdAbsentRow(a, isMobile) {
-  const fn = esc(a.flight_number);
-  const originLabel = isMobile ? (a.origin_iata || '') : (a.origin_city || a.origin_iata || '');
-  const origin = originLabel ? `${a.origin_iata ? _flag(a.origin_country_code || _airportCountry(a.origin_iata), { h: 11 }) : ''}${esc(originLabel)}` : '';
-  const airline = a.airline_name ? `<span data-ext-name="${esc(a.airline_name)}">${esc(tExternalName(a.airline_name))}</span>` : '';
-  const sub = [airline, origin].filter(Boolean).join(' · ');
-  const last = a.last_trigger_ts
-    ? `${esc(tt('Last card'))} ${esc(fmtDate(a.last_trigger_ts))}${a.last_trigger_reg ? ' · ' + esc(a.last_trigger_reg) : ''}`
-    : '';
-  return `<div class="bd-row bd-row-absent">
-      <div class="bd-time">—</div>
-      <div class="bd-main">
-        <a class="bd-fn" href="${_fr24FlightUrl(a.flight_number)}" target="_blank" rel="noopener">${_srchLogoWithFallback(a.airline_icao, a.airline_name, 16, '')}${fn}</a>
-        <div class="bd-sub">${sub}</div>
-      </div>
-      <div class="bd-ac"><span class="bd-na">${last}</span></div>
-      <button type="button" class="bd-hide" data-fn="${fn}" data-hidden="0" title="${esc(tt('Hide this flight number from the Board'))}"
-              onclick="bdToggle(this)">${_BD_EYE_OFF}</button>
-    </div>`;
-}
-
 function renderBoard() {
   const d = _bdData;
   if (!d) return;
@@ -3194,24 +3170,17 @@ function renderBoard() {
 
   wrap.innerHTML = (d.days || []).map(day => {
     const dateLbl = new Date(`${day.date}T12:00:00`).toLocaleDateString(_locale(), { weekday: 'short', day: 'numeric', month: 'short' });
-    const absent = day.absent || [];
-    const sched = day.rows.length ? day.rows.map(r => _bdRow(r, isMobile)).join('') : '';
-    const absentHd = absent.length
-      ? `<div class="bd-group-hd">${esc(day.horizon_reached ? tt('Not scheduled') : tt('Not on the schedule yet'))} (${absent.length})</div>${absent.map(a => _bdAbsentRow(a, isMobile)).join('')}`
-      : '';
-    const empty = (!day.rows.length && !absent.length)
-      ? `<div class="bd-empty">${esc(d.updated_ts ? tt('No regular flights to show.') : tt("Waiting for this airport's first check — tap Refresh to run one now."))}</div>` : '';
-    const note = (!d.updated_ts && absent.length)
-      ? `<div class="bd-empty">${esc(tt("Waiting for this airport's first check — tap Refresh to run one now."))}</div>` : '';
+    const empty = day.rows.length ? '' :
+      `<div class="bd-empty">${esc(d.updated_ts ? tt('No regular flights to show.') : tt("Waiting for this airport's first check — tap Refresh to run one now."))}</div>`;
     return `<div class="bd-card">
-      <div class="bd-card-hd"><span class="t">${esc(tFeedDayLabel(day.date, day.label))}</span><span class="d">${esc(dateLbl)}</span><span class="n">${day.rows.length} / ${day.rows.length + absent.length}</span></div>
-      <div class="bd-rows">${note}${sched}${absentHd}${empty}</div>
+      <div class="bd-card-hd"><span class="t">${esc(tFeedDayLabel(day.date, day.label))}</span><span class="d">${esc(dateLbl)}</span><span class="n">${day.rows.length}</span></div>
+      <div class="bd-rows">${day.rows.map(r => _bdRow(r, isMobile)).join('')}${empty}</div>
     </div>`;
   }).join('');
   wrap.scrollLeft = keepX;
   wrap.querySelectorAll('.bd-rows').forEach((el, i) => { el.scrollTop = keepY[i] || 0; });
   if (_lang === 'zh') {
-    _translateNamesForZh((d.days || []).flatMap(day => [...day.rows, ...(day.absent || [])].map(r => r.airline_name)).filter(Boolean));
+    _translateNamesForZh((d.days || []).flatMap(day => day.rows.map(r => r.airline_name)).filter(Boolean));
   }
 }
 
