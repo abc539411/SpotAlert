@@ -4854,10 +4854,17 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                     hit = near(excluded_cards.get(fn, []))
                     if hit:
                         kind, card_types, extra_info = "excluded", hit[2], hit[3] or ""
+            # FR24 attaches a bogus airline to some flights that have no aircraft yet (e.g. JL51 → "Jet Linx
+            # Aviation" instead of Japan Airlines). Until an aircraft is assigned, trust the airline this flight
+            # number has historically flown under.
+            al_name, al_icao = r["airline_name"], r["airline_icao"]
+            hh = roster[fn].get("hist") or {}
+            if not reg and hh.get("airline_icao"):
+                al_name, al_icao = hh.get("airline_name") or al_name, hh["airline_icao"]
             by_off[off]["rows"].append({
                 "flight_number": fn, "scheduled_ts": r["scheduled_ts"], "estimated_ts": r["estimated_ts"],
                 "eff_ts": eff, "registration": r["registration"], "aircraft_type": r["aircraft_type"],
-                "airline_name": r["airline_name"], "airline_icao": r["airline_icao"],
+                "airline_name": al_name, "airline_icao": al_icao,
                 "origin_iata": r["origin_iata"], "origin_name": r["origin_name"],
                 "origin_city": cities.get(r["origin_iata"], "") or "",
                 "origin_country_code": countries.get(r["origin_iata"], ""),
