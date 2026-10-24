@@ -3064,7 +3064,7 @@ let activeTab = 'history';
 
 // Tap the SpotAlert logo / name: close whatever is open, then jump back to the "start" of the current view —
 //   Spotting & Board: Today (default view) AND down to the current time; in the Older view, the Back + month page.
-//   Feed: top.   Fleet (Collection): leftmost card.
+//   Feed: top.   Fleet (Collection): everything collapsed + leftmost card.
 function _collapseAllOpen() {
   if (typeof closeDetail === 'function') closeDetail();              // phone bottom sheet (Feed / Spotting / Board)
   if (typeof collapseGridDetail === 'function') collapseGridDetail(); // desktop Feed card panel
@@ -3113,7 +3113,11 @@ function logoTap() {
   } else if (activeTab === 'collection') {
     const fleet = $('col-subtab-fleet');
     const wrap = $('flt-wrap');
-    if (fleet && !fleet.classList.contains('hidden') && wrap) wrap.scrollTo({ left: 0, ...smooth });
+    if (fleet && !fleet.classList.contains('hidden') && wrap) {
+      // collapse every expanded aircraft-type group (flip each open one back, in place), then back to the leftmost card
+      Object.keys(_fleetExpanded).filter(k => _fleetExpanded[k]).forEach(k => _fleetToggleType(k));
+      wrap.scrollTo({ left: 0, ...smooth });
+    }
   }
 }
 
