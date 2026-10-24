@@ -743,6 +743,13 @@
     }
     .flight-num { color: var(--dim); font-size: 13px; }
 
+    /* Detail-card badge row (Feed + Board): card-type chip, manufacturer and aircraft type share one size. */
+    .detail-badges .chip, .detail-badges .mfr, .detail-badges .fc-actype {
+      height: 20px; padding: 0 7px; box-sizing: border-box; border-radius: 4px; font-size: 11px; line-height: 1;
+      display: inline-flex; align-items: center; margin: 0;
+    }
+    .detail-badges .chip, .detail-badges .mfr { font-weight: 700; letter-spacing: .04em; }
+    .detail-badges .chip { border: 1px solid transparent; }
     /* ── Type chips ──────────────────────────────────────────────────────── */
     .chip {
       display: inline-flex; align-items: center; height: 20px; padding: 0 7px; box-sizing: border-box;

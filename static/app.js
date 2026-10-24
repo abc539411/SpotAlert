@@ -2404,7 +2404,7 @@ function _detailInner(r, closeCmd, showPhoto = true) {
           ${cardStatusPill}
         </div>
       </div>
-      <div style="margin-top:9px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+      <div class="detail-badges" style="margin-top:9px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">
         ${chips}
         ${mfrBadge(r.manufacturer)}
         ${acType ? `<span class="fc-actype">${esc(acType)}</span>` : ''}
@@ -2445,7 +2445,7 @@ function _detailInner(r, closeCmd, showPhoto = true) {
         ${statusStr ? `<span style="font-size:11px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;padding:3px 9px;border-radius:20px;${statusPillStyle}">${esc(tLabel(_normStatus(statusStr) || statusStr))}</span>` : ''}
       </div>
     </div>
-    <div style="margin-top:9px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+    <div class="detail-badges" style="margin-top:9px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">
       <span class="chip ${chipClass(type)}">${chipLabel(type)}</span>
       ${mfrBadge(r.manufacturer)}
       ${acType ? `<span class="fc-actype">${esc(acType)}</span>` : ''}
@@ -3227,7 +3227,7 @@ function _bdDetailHtml(r) {
         </div>
         <div style="display:flex;align-items:center;gap:10px">${from}${statusPill}</div>
       </div>
-      <div style="margin-top:9px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+      <div class="detail-badges" style="margin-top:9px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">
         ${chips}${mfrBadge(ac.manufacturer)}${(r.aircraft_type || typeCode) ? `<span class="fc-actype">${esc(r.aircraft_type || typeCode)}</span>` : ''}
       </div>
       <div style="margin-top:4px;display:flex;justify-content:space-between;align-items:flex-end;gap:8px">
