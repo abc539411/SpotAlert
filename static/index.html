@@ -125,7 +125,6 @@
     /* ── Take a tour: dim layer + spotlight ring on the tab being explained + a caption card ───────────────── */
     .tour-layer { position: fixed; inset: 0; z-index: 3000; display: none; }
     .tour-layer.show { display: block; }
-    .tour-layer.tour-passthrough, .tour-layer.tour-passthrough .tour-scrim { pointer-events: none; }   /* airport page step: the cards stay tappable */
     .tour-card { pointer-events: auto; }
     .tour-spot { position: fixed; border-radius: 12px; pointer-events: none; box-shadow: 0 0 0 9999px rgba(0,0,0,.72), 0 0 0 2px var(--accent) inset;
                  transition: all .25s ease; }
