@@ -355,7 +355,7 @@ const UI_ZH = {
   'Refresh Board': '刷新看板', 'Checking FR24…': '正在检查 FR24…', 'Board updated': '看板已更新',
   "Waiting for this airport's first check — tap Refresh to run one now.": '正在等待该机场的首次检查——点击刷新立即检查。',
   'Could not load the Board.': '无法加载看板。',
-  'Not assigned yet': '尚未分配机号', 'Not on board yet': '尚未上板', 'Possible aircraft': '可能的飞机', 'No check yet': '尚未检查', 'Tap again to refresh': '再点一次刷新', 'Added by hand (one-off) — in Feed and Spotting': '手动添加（仅此一次）— 已在 Feed 和拍机时间线', 'Add to Feed + Spotting (one-off)': '加入 Feed 和拍机时间线（仅此一次）', 'Remove this one-off flight from Feed + Spotting': '从 Feed 和拍机时间线移除此航班', 'Click again to add it to Feed + Spotting': '再点一次确认加入', 'Click again to remove it': '再点一次确认移除', 'added to Feed + Spotting': '已加入 Feed 和拍机时间线', 'removed': '已移除', 'Already photographed': '已拍摄', 'today': '今天', 'Last triggered': '上次触发原因', 'Hidden from Feed by the Exclusion List': '已被排除名单隐藏', 'No regular flights to show.': '暂无需要关注的常规航班。', 'No Feed cards': '无 Feed 卡片', 'Aircraft not assigned yet': '尚未分配飞机', 'Could not load aircraft details.': '无法加载飞机信息。',
+  'Not assigned yet': '尚未分配机号', 'Not on board yet': '尚未上板', 'Possible aircraft': '可能的飞机', 'No check yet': '尚未检查', 'Confirm Refresh?': '确认刷新？', 'Added by hand (one-off) — in Feed and Spotting': '手动添加（仅此一次）— 已在 Feed 和拍机时间线', 'Add to Feed + Spotting (one-off)': '加入 Feed 和拍机时间线（仅此一次）', 'Remove this one-off flight from Feed + Spotting': '从 Feed 和拍机时间线移除此航班', 'Click again to add it to Feed + Spotting': '再点一次确认加入', 'Click again to remove it': '再点一次确认移除', 'added to Feed + Spotting': '已加入 Feed 和拍机时间线', 'removed': '已移除', 'Already photographed': '已拍摄', 'today': '今天', 'Last triggered': '上次触发原因', 'Hidden from Feed by the Exclusion List': '已被排除名单隐藏', 'No regular flights to show.': '暂无需要关注的常规航班。', 'No Feed cards': '无 Feed 卡片', 'Aircraft not assigned yet': '尚未分配飞机', 'Could not load aircraft details.': '无法加载飞机信息。',
   'No equipment history yet.': '暂无机型使用记录。', 'Registration': '注册号', 'Aircraft': '飞机', 'Manufacturer': '制造商', 'Operator': '运营商',
   'Owner': '所有者', 'Livery': '涂装', 'Country': '国家/地区', 'Mode S': 'Mode S', 'Serial No.': '序列号', 'Built': '出厂年份', 'Feed cards here': '本场 Feed 卡片数',
   'Feed card': '动态卡片', 'Excluded': '已排除', 'Has a card in Feed': '动态中已有卡片',
@@ -3114,22 +3114,28 @@ const _BD_EYE_OFF = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" 
 // board reaches ("Updated N min ago · Data through Sun 9:35am"); a second click within a few seconds really refreshes.
 let _rfArmed = false, _rfTimer = null;
 function _hideRefreshPill() {
+  const wasArmed = _rfArmed;
   _rfArmed = false;
   clearTimeout(_rfTimer);
-  const el = $('refresh-pill');
+  const el = $('refresh-pill'), btn = $('btn-refresh'), lbl = $('btn-refresh-label');
   if (el) el.classList.remove('show');
+  if (btn) btn.classList.remove('btn-refresh-armed');
+  if (wasArmed && lbl) lbl.textContent = activeTab === 'board' ? tt('Refresh Board') : tt('Refresh Feed');
 }
 async function _refreshGate(action) {
   if (_rfArmed) { _hideRefreshPill(); action(); return; }
   _rfArmed = true;
-  const btn = $('btn-refresh'), el = $('refresh-pill');
+  const btn = $('btn-refresh'), el = $('refresh-pill'), lbl = $('btn-refresh-label');
+  // Same arm animation as Restart Server: the button fills solid and asks for confirmation.
+  btn.classList.add('btn-refresh-armed');
+  if (lbl) lbl.textContent = tt('Confirm Refresh?');
   let m = null;
   try { const st = await api('/status'); m = { u: st.updated_ts, t: st.data_through_ts }; } catch (e) { /* show the hint anyway */ }
   if (!_rfArmed) return;                                   // switched tab / second click while fetching
   const bits = [];
   if (m && m.u) bits.push(`${tt('Updated')} ${_bdAgo(m.u)}`);
   if (m && m.t) bits.push(`${tt('Data through')} ${fmtTs(m.t, { weekday: 'short' })}`);
-  el.innerHTML = `${esc(bits.join(' · ') || tt('No check yet'))}<span class="rp-hint">${esc(tt('Tap again to refresh'))}</span>`;
+  el.textContent = bits.join(' · ') || tt('No check yet');
   const r = btn.getBoundingClientRect();
   el.style.top = (r.bottom + 8) + 'px';
   el.style.right = Math.max(8, window.innerWidth - r.right) + 'px';

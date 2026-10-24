@@ -82,6 +82,7 @@
     .btn-refresh.btn-danger { border-color: var(--danger); color: var(--danger); }
     .btn-refresh.btn-danger:hover { border-color: var(--danger); color: var(--danger); }
     .btn-refresh.btn-danger-armed { background: var(--danger); color: #fff; border-color: var(--danger); }
+    .btn-refresh.btn-refresh-armed { background: var(--accent); color: #fff; border-color: var(--accent); }
     .btn-refresh.hidden { display: none; }
 
     /* ── Nav — desktop: top tabs ─────────────────────────────────────────── */
@@ -495,7 +496,6 @@
                     border: 1px solid var(--border); color: var(--text); font-size: 12px; white-space: nowrap; max-width: calc(100vw - 16px);
                     overflow: hidden; text-overflow: ellipsis; box-shadow: 0 6px 20px rgba(0,0,0,.45); }
     .refresh-pill.show { display: block; }
-    .refresh-pill .rp-hint { color: var(--accent); margin-left: 8px; }
     @media (min-width: 768px) {
       #tab-board .bd-meta { display: none; }
       #tab-board .bd-top:not(:has(.bd-hidden-btn:not(.hidden))) { display: none; }   /* nothing left in the bar */
