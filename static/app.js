@@ -3333,9 +3333,6 @@ function _bdDetailHtml(r) {
         </div>
         ${_detailQuickFilterBtns(r.registration, pinBtn)}
       </div>`;
-    facts = [
-      dc('Owner', ac.owner && !sameAsOperator ? esc(ac.owner) : ''),
-    ].join('');
   }
 
   // Equipment history for this flight number: share of each aircraft type it has flown (same bars as
