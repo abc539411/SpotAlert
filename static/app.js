@@ -3255,6 +3255,7 @@ function logoTap() {
 // ── Take a tour ─────────────────────────────────────────────────────────────────────────────────────────────────────
 // Offered to every account on each sign-in and whenever the app version changes (the server decides: tour_due), and any time from
 // Settings > Tour. Each step switches to a tab, rings its button in the bar and explains it. English / Chinese inline.
+let _appVersion = '';
 let _tourStep = 0, _tourSteps = [], _tourAirport = null, _tourPrevTz = '', _tourReload = false;
 function _tourBuildSteps() {
   const phone = window.innerWidth < 768, passenger = _appRole === 'passenger';
@@ -3272,6 +3273,23 @@ function _tourBuildSteps() {
       body: z(`SpotAlert watches an airport for the aircraft worth going out for, and tells you what is coming. This tour covers every tab and the main controls, in about two minutes. You can skip it at any time. We start here, on the airport page: each card is an airport you can watch, with the local time there. You choose yours as soon as the tour is over.`,
               `SpotAlert 会盯着一座机场，告诉您哪些飞机值得去拍、什么时候来。本导览会介绍每个标签页和主要操作，约两分钟，随时可以跳过。我们从机场页面开始：每张卡片是一座可以关注的机场，并显示当地时间，导览结束后即可选择您的机场。`) +
             (_tourReload ? z(` The examples use ${_tourAirport.iata} data (${_tourAirport.name}).`, ` 示例数据来自 ${_tourAirport.iata}（${tExternalName(_tourAirport.name)}）。`) : '') },
+    { picker: true, sel: '.airport-pick-card', pos: 'bottom',
+      title: z(`What's new in ${_appVersion || '2.10'}`, `${_appVersion || '2.10'} 版本新增内容`),
+      body: z(`Added since version 2.01:`, `相比 2.01 版本新增：`),
+      items: [
+        z(`Board: an arrivals board for regular flight numbers, with the aircraft assigned before it lands.`,
+          `大屏：常规航班号的到达大屏，在飞机落地前就能看到已分配的飞机。`),
+        z(`Looking further back: Older with a month picker on Feed, Spotting and the Board, and Feed groups older weeks by year and week.`,
+          `回看更久之前：动态、拍机和大屏都有“更早”和月份选择，动态按年份和周分组。`),
+        z(`Refresh buttons now ask twice and show when the data was last updated.`,
+          `刷新按钮现在需要确认两次，并显示数据上次更新的时间。`),
+        z(`Missing or broken aircraft photos are filled in automatically.`,
+          `缺失或失效的飞机照片会自动补全。`),
+        z(`Mute notifications for any aircraft, on every account type.`,
+          `所有账号类型都可以静音任意飞机的通知。`),
+        z(`Flight history is now kept for 3 years, and this tour is offered at every sign-in and update.`,
+          `航班历史现在保留 3 年；每次登录和更新时都会提供本导览。`),
+      ] },
     { tab: 'history', sel: '#btn-switch-airport',
       title: z('Your airport', '您的机场'),
       body: z(`This button switches the airport you are looking at. Every time on screen is that airport's local time, and each airport keeps its own Feed, Spotting windows and history.`,
@@ -3345,6 +3363,7 @@ function _tourBuildSteps() {
   return steps;
 }
 async function startTour() {
+  try { _appVersion = (await api('/version')).version || ''; } catch (e) { _appVersion = ''; }
   try { _tourAirport = await api('/tour/airport', { headers: { 'X-Tour-Airport': '0' } }); } catch (e) { _tourAirport = null; }   // asked WITHOUT the override: 'same' compares to the user's own airport
   _tourReload = !!(_tourAirport && _tourAirport.iata && !_tourAirport.same);
   _tourOn = _tourReload;                                    // same airport as the user's own: nothing to override
@@ -3394,7 +3413,7 @@ async function _tourRender() {
   $('tour-layer').innerHTML =
     `<div class="tour-scrim${r ? ' off' : ''}"></div>` +
     `<div class="tour-spot${r ? '' : ' none'}" style="${r ? `left:${r.left - 4}px;top:${r.top - 4}px;width:${r.width + 8}px;height:${r.height + 8}px` : 'display:none'}"></div>` +
-    `<div class="tour-card" id="tour-card"><h3>${esc(st.title)}</h3><p>${esc(st.body)}</p>${st.link ? `<a class="tour-link" href="${esc(st.link)}" target="_blank" rel="noopener">github.com/abc539411/SpotAlert ↗</a>` : ''}${st.note ? `<div class="tour-note">${esc(st.note)}</div>` : ''}` +
+    `<div class="tour-card" id="tour-card"><h3>${esc(st.title)}</h3><p>${esc(st.body)}</p>${st.items ? `<ul class="tour-list">${st.items.map(i => `<li>${esc(i)}</li>`).join('')}</ul>` : ''}${st.link ? `<a class="tour-link" href="${esc(st.link)}" target="_blank" rel="noopener">github.com/abc539411/SpotAlert ↗</a>` : ''}${st.note ? `<div class="tour-note">${esc(st.note)}</div>` : ''}` +
     `<div class="tour-dots">${_tourSteps.map((_, i) => `<i class="${i === _tourStep ? 'on' : ''}"></i>`).join('')}</div>` +
     `<div class="tour-btns">${last ? '' : `<button class="tour-skip" onclick="_tourEnd()">${esc(z('Skip', '跳过'))}</button>`}` +
     `${_tourStep > 0 ? `<button class="tour-b" onclick="_tourGo(-1)">${esc(z('Back', '上一步'))}</button>` : ''}` +
