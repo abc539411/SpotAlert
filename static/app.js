@@ -3351,7 +3351,10 @@ document.addEventListener('click', e => { if (_rfArmed && !e.target.closest('#bt
 function _bdAgo(ts) {
   const mins = Math.max(0, Math.round((Date.now() / 1000 - ts) / 60));
   if (mins < 1) return tt('just now');
-  return _lang === 'zh' ? `${mins} 分钟前` : `${mins} min ago`;
+  if (mins < 60) return _lang === 'zh' ? `${mins} 分钟前` : `${mins} min ago`;
+  const h = Math.floor(mins / 60), m = mins % 60;                    // an hour or more: "6 hr 21 min ago"
+  if (_lang === 'zh') return m ? `${h} 小时 ${m} 分钟前` : `${h} 小时前`;
+  return m ? `${h} hr ${m} min ago` : `${h} hr ago`;
 }
 
 async function loadBoard() {
