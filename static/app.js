@@ -355,7 +355,7 @@ const UI_ZH = {
   'Refresh Board': '刷新看板', 'Checking FR24…': '正在检查 FR24…', 'Board updated': '看板已更新',
   "Waiting for this airport's first check — tap Refresh to run one now.": '正在等待该机场的首次检查——点击刷新立即检查。',
   'Could not load the Board.': '无法加载看板。',
-  'Not assigned yet': '尚未分配机号', 'Not on board yet': '尚未上板', 'Possible aircraft': '可能的飞机', 'Since': '始于', 'Tap to select, then Unhide': '点选后再点“取消隐藏”', 'Edit': '编辑', 'Done': '完成', 'Hide': '隐藏', 'selected': '已选', 'Hidden flights': '已隐藏航班', 'Select flights to hide or unhide': '选择要隐藏或取消隐藏的航班', 'No check yet': '尚未检查', 'Confirm Refresh?': '确认刷新？', 'Added by hand (one-off) — in Feed and Spotting': '手动添加（仅此一次）— 已在 Feed 和拍机时间线', 'Add to Feed + Spotting (one-off)': '加入 Feed 和拍机时间线（仅此一次）', 'Remove this one-off flight from Feed + Spotting': '从 Feed 和拍机时间线移除此航班', 'Click again to add it to Feed + Spotting': '再点一次确认加入', 'Click again to remove it': '再点一次确认移除', 'added to Feed + Spotting': '已加入 Feed 和拍机时间线', 'removed': '已移除', 'Already photographed': '已拍摄', 'today': '今天', 'Last triggered': '上次触发原因', 'Hidden from Feed by the Exclusion List': '已被排除名单隐藏', 'No regular flights to show.': '暂无需要关注的常规航班。', 'No Feed cards': '无 Feed 卡片', 'Aircraft not assigned yet': '尚未分配飞机', 'Could not load aircraft details.': '无法加载飞机信息。',
+  'Not assigned yet': '尚未分配机号', 'Not on board yet': '尚未上板', 'Possible aircraft': '可能的飞机', 'Older': '更早', 'Older than 7 days': '7 天前的记录', 'No older days.': '没有更早的记录。', 'No activity in the last 7 days.': '最近 7 天没有活动。', 'Since': '始于', 'Tap to select, then Unhide': '点选后再点“取消隐藏”', 'Edit': '编辑', 'Done': '完成', 'Hide': '隐藏', 'selected': '已选', 'Hidden flights': '已隐藏航班', 'Select flights to hide or unhide': '选择要隐藏或取消隐藏的航班', 'No check yet': '尚未检查', 'Confirm Refresh?': '确认刷新？', 'Added by hand (one-off) — in Feed and Spotting': '手动添加（仅此一次）— 已在 Feed 和拍机时间线', 'Add to Feed + Spotting (one-off)': '加入 Feed 和拍机时间线（仅此一次）', 'Remove this one-off flight from Feed + Spotting': '从 Feed 和拍机时间线移除此航班', 'Click again to add it to Feed + Spotting': '再点一次确认加入', 'Click again to remove it': '再点一次确认移除', 'added to Feed + Spotting': '已加入 Feed 和拍机时间线', 'removed': '已移除', 'Already photographed': '已拍摄', 'today': '今天', 'Last triggered': '上次触发原因', 'Hidden from Feed by the Exclusion List': '已被排除名单隐藏', 'No regular flights to show.': '暂无需要关注的常规航班。', 'No Feed cards': '无 Feed 卡片', 'Aircraft not assigned yet': '尚未分配飞机', 'Could not load aircraft details.': '无法加载飞机信息。',
   'No equipment history yet.': '暂无机型使用记录。', 'Registration': '注册号', 'Aircraft': '飞机', 'Manufacturer': '制造商', 'Operator': '运营商',
   'Owner': '所有者', 'Livery': '涂装', 'Country': '国家/地区', 'Mode S': 'Mode S', 'Serial No.': '序列号', 'Built': '出厂年份', 'Feed cards here': '本场 Feed 卡片数',
   'Feed card': '动态卡片', 'Excluded': '已排除', 'Has a card in Feed': '动态中已有卡片',
@@ -2138,21 +2138,63 @@ function regoCard(group) {
   </div>`;
 }
 
+// Feed shows the last 7 days; everything older is collapsed and only fetched (days=30) when the user opens it.
+let _feedOlderOpen = false;
+const _feedDayHtml = day => `
+      <div class="section-heading">${esc(tFeedDayLabel(day.date, day.label))}</div>
+      <div class="fc-grid">${(day.cards || []).map(g => regoCard(g)).join('')}</div>
+    `;
+function _feedCutoffDate() {
+  return new Date(Date.parse(_todayStrInAppTz() + 'T00:00:00Z') - 7 * 86400000).toISOString().slice(0, 10);
+}
+function _feedOlderHtml() {
+  return `<button type="button" class="feed-older-btn" id="feed-older-btn" onclick="feedToggleOlder()">▸ ${esc(tt('Older than 7 days'))}</button><div id="feed-older-body" style="display:none"></div>`;
+}
+async function feedToggleOlder() {
+  const body = $('feed-older-body'), btn = $('feed-older-btn');
+  if (!body || !btn) return;
+  if (_feedOlderOpen) {                       // collapse (keep what was loaded for a quick re-open)
+    _feedOlderOpen = false;
+    body.style.display = 'none';
+    btn.textContent = `▸ ${tt('Older than 7 days')}`;
+    return;
+  }
+  _feedOlderOpen = true;
+  body.style.display = '';
+  btn.textContent = `▾ ${tt('Older than 7 days')}`;
+  if (body.dataset.loaded) return;
+  body.innerHTML = `<div class="empty">${esc(tt('Loading…'))}</div>`;
+  try {
+    const data = await api('/feed?days=30');
+    const cut = _feedCutoffDate();
+    const older = (data.days || []).filter(d => d.date < cut);
+    body.innerHTML = older.length ? older.map(_feedDayHtml).join('') : `<div class="empty">${esc(tt('No older days.'))}</div>`;
+    body.dataset.loaded = '1';
+    _translateNamesForZh(older.flatMap(day => (day.cards || []).map(g => _cardAirlineName(g))).filter(Boolean));
+  } catch (e) {
+    body.innerHTML = `<div class="empty">${esc(e.message)}</div>`;
+  }
+}
+
 async function loadFeed() {
   const el = $('history-list');
   try {
-    const data = await api('/feed?days=30');
-    if (!data.days || !data.days.length) {
-      el.innerHTML = '<div class="empty">No activity yet.</div>';
+    const data = await api('/feed?days=7');
+    const cut = _feedCutoffDate();
+    data.days = (data.days || []).filter(d => d.date >= cut);
+    _feedAirportIata = data.airport_iata || '';
+    _feedAirportName = data.airport_name || '';
+    _feedTimezone    = data.timezone     || '';
+    if (!data.days.length) {
+      el.innerHTML = '<div class="empty">No activity in the last 7 days.</div>' + _feedOlderHtml();
+      if (_feedOlderOpen) { _feedOlderOpen = false; feedToggleOlder(); }
       return;
     }
     _feedAirportIata = data.airport_iata || '';
     _feedAirportName = data.airport_name || '';
     _feedTimezone    = data.timezone     || '';
-    el.innerHTML = data.days.map(day => `
-      <div class="section-heading">${esc(tFeedDayLabel(day.date, day.label))}</div>
-      <div class="fc-grid">${(day.cards || []).map(g => regoCard(g)).join('')}</div>
-    `).join('');
+    el.innerHTML = data.days.map(_feedDayHtml).join('') + _feedOlderHtml();
+    if (_feedOlderOpen) { _feedOlderOpen = false; feedToggleOlder(); }   // keep it open across refreshes
     const _names = [
       ...data.days.flatMap(day => (day.cards || []).map(g => _cardAirlineName(g))),
       ...data.days.flatMap(day => (day.cards || []).flatMap(g => (g.flights || []).flatMap(f => [f.origin_name, f.dep_dest_name]))),
@@ -3109,7 +3151,8 @@ async function loadHistory() {
 // server-side by the monitor every check (see docs/13-board.md); this just polls while the tab is open.
 let _bdData = null;
 let _bdTimer = null;
-let _bdPositioned = false;   // true once the wrap has been scrolled to today's card
+let _bdPositioned = false;
+let _bdBack = 7;             // past days requested; the Older button raises it to 30   // true once the wrap has been scrolled to today's card
 
 const _BD_EYE     = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12z"/><circle cx="12" cy="12" r="2.6"/></svg>';
 const _BD_EYE_OFF = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3l18 18"/><path d="M10.6 6.1A10 10 0 0 1 12 6c6.4 0 10 6 10 6a17 17 0 0 1-3.2 3.9M6.3 7.7C3.9 9.3 2 12 2 12s3.6 6 10 6c1.6 0 3-.3 4.2-.9"/><path d="M9.9 10a3 3 0 0 0 4.1 4.1"/></svg>';
@@ -3158,7 +3201,7 @@ function _bdAgo(ts) {
 async function loadBoard() {
   clearTimeout(_bdTimer);
   try {
-    _bdData = await api('/board');
+    _bdData = await api('/board?back=' + _bdBack);
   } catch (e) {
     $('bd-wrap').innerHTML = `<div class="bd-empty" style="width:100%">${esc(tt('Could not load the Board.'))}</div>`;
     return;
@@ -3524,7 +3567,7 @@ function renderBoard() {
       </div>
       <div class="bd-rows">${day.rows.map(r => _bdRow(r, isMobile)).join('')}${empty}</div>
     </div>${day.is_today ? _bdHiddenCard() : ''}`;
-  }).join('');
+  }).join('') + (_bdBack < 30 ? `<div class="bd-older"><button type="button" class="older-btn" onclick="bdLoadOlder(this)">${esc(tt('Older'))} ›</button></div>` : '');
   if (!_bdPositioned && wrap.firstElementChild) {
     // First render: land on today's card (future days sit to its left, past days to its right).
     const today = wrap.querySelector('.bd-today');
@@ -3589,6 +3632,18 @@ function bdToggleEdit() {
   _bdSel.clear();
   _bdOpenKey = null;
   renderBoard();
+}
+
+// "Older" (far right of the strip): bring in the Board's history beyond the default 7 days (up to 30).
+async function bdLoadOlder(btn) {
+  if (btn) btn.disabled = true;
+  _bdBack = 30;
+  await loadBoard();
+  if (!(_bdData.days || []).some(d => d.date < _bdBackCutoff())) toast(tt('No older days.'));
+}
+function _bdBackCutoff() {
+  const t = _todayStrInAppTz();
+  return new Date(Date.parse(t + 'T00:00:00Z') - 7 * 86400000).toISOString().slice(0, 10);
 }
 
 function bdSelToggle(fn) {
@@ -5633,6 +5688,31 @@ async function loadRecommendation(force) {
   }
 }
 
+// "Older" slot at the right end of the Spotting strip: load the days beyond the default 7 back (up to 30, the cache's
+// retention) and slot their cards in before the button — nothing else is re-rendered, so the view doesn't jump.
+async function recLoadOlder(btn) {
+  btn.disabled = true;
+  try {
+    const data = await api('/recommendation?back=30');
+    const have = new Set((_recData.days || []).map(d => d.date));
+    const extra = (data.days || []).filter(d => !have.has(d.date));
+    const slot = btn.closest('.rec-older');
+    const tmp = document.createElement('div');
+    tmp.innerHTML = extra.map(d => _renderDayCard(d, data.timezone || '')).join('');
+    [...tmp.children].forEach(card => {
+      slot.parentNode.insertBefore(card, slot);
+      _initDragScrollY(card);
+      card.style.overflowY = card.scrollHeight > card.clientHeight ? 'auto' : 'hidden';
+    });
+    _recData.days = (_recData.days || []).concat(extra);
+    slot.remove();
+    if (!extra.length) toast(tt('No older days.'));
+  } catch (e) {
+    btn.disabled = false;
+    toast('Error: ' + e.message);
+  }
+}
+
 function _renderRecommendation(data) {
   if (!data || !data.days || !data.days.length)
     return '<div style="padding:24px;text-align:center;color:var(--dim)">No data yet.</div>';
@@ -5640,7 +5720,7 @@ function _renderRecommendation(data) {
   const render = d => _renderDayCard(d, tz);
   const cards = data.days.filter(d => d.clusters && d.clusters.length > 0 || d.is_today);
   if (!cards.length) return '<div class="rec-scroll">' + data.days.slice(0,3).map(render).join('') + '</div>';
-  return `<div class="rec-scroll">${data.days.map(render).join('')}</div>`;
+  return `<div class="rec-scroll">${data.days.map(render).join('')}<div class="rec-older"><button type="button" class="older-btn" onclick="recLoadOlder(this)">${esc(tt('Older'))} ›</button></div></div>`;
 }
 
 // Wall-clock hour/minute of a given instant (default: now) AT THE AIRPORT's own

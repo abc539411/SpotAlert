@@ -1846,8 +1846,9 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         return JSONResponse({"days": days_result, "airport_iata": airport_iata_, "airport_name": airport_name_, "timezone": tz_name})
 
     @app.get("/api/recommendation")
-    async def get_recommendation(user=Depends(_auth_current_user)):
+    async def get_recommendation(back: int = 7, user=Depends(_auth_current_user)):
         import datetime as _dt2, json as _json, pytz
+        back = max(7, min(int(back), 30))      # default window -7 .. +3 days; the "Older" button asks for up to 30 back
 
         cfg_   = _cfg_for_user(user)
         store_ = cfg_.store
@@ -1864,7 +1865,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         today_local = _dt2.datetime.now(tz).date()
         cache_dates = []
         day_meta = []  # (date_str, label, is_today, i)
-        for i in range(-3, 8):
+        for i in range(-3, back + 1):
             d        = today_local - _dt2.timedelta(days=i)
             date_str = d.strftime("%Y-%m-%d")
             date_label = f"{d.strftime('%a')}, {d.day} {d.strftime('%b')}"
@@ -4863,7 +4864,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
             return out
         return bool(cands(a) & cands(b))
 
-    def _build_board_payload(cfg_, user) -> dict:
+    def _build_board_payload(cfg_, user, back: int = 7) -> dict:
         """Day cards (same window as Spotting: up to 3 days ahead, today, 7 days back; airport-local; empty ones
         skipped except today) of the schedule rows of every roster flight number
         (regular + has triggered a card before, minus the ones the Controller hid). Rows stay on their card
@@ -4878,16 +4879,17 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         d0 = _dtm.datetime.fromtimestamp(now_ts, tz).date()
         # Same window as Spotting's /api/recommendation: up to 3 days ahead, today, 7 days back. Offsets are
         # "days from today" (positive = future); newest first, so the cards read like the Spotting table.
-        _OFFSETS = list(range(3, -8, -1))
+        back = max(7, min(int(back), 30))
+        _OFFSETS = list(range(3, -back - 1, -1))
         starts = {o: int(tz.localize(_dtm.datetime.combine(d0 + _dtm.timedelta(days=o), _dtm.time.min)).timestamp())
-                  for o in range(-7, 5)}
+                  for o in range(-back, 5)}
         meta = store_.get_board_meta()
         through = int(meta["data_through_ts"]) if meta.get("data_through_ts") else None
 
         roster, excluded_cards = _board_roster(cfg_, user)
         hidden = set(store_.get_board_hidden(_owner_id(user)))
-        pinned_cards = store_.get_pinned_cards((d0 - _dtm.timedelta(days=8)).isoformat())
-        rows = [r for r in store_.get_board_rows(starts[-7], starts[4]) if r["flight_number"] in roster]
+        pinned_cards = store_.get_pinned_cards((d0 - _dtm.timedelta(days=back + 1)).isoformat())
+        rows = [r for r in store_.get_board_rows(starts[-back], starts[4]) if r["flight_number"] in roster]
 
         iatas = {r["origin_iata"] for r in rows if r["origin_iata"]} |                 {e["hist"].get("origin_iata") for e in roster.values() if e.get("hist", {}).get("origin_iata")}
         cities: dict = {}
@@ -5102,8 +5104,8 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         }
 
     @app.get("/api/board")
-    async def get_board(user=Depends(_auth_require_role("controller"))):
-        return JSONResponse(await asyncio.to_thread(_build_board_payload, _cfg_for_user(user), user))
+    async def get_board(back: int = 7, user=Depends(_auth_require_role("controller"))):
+        return JSONResponse(await asyncio.to_thread(_build_board_payload, _cfg_for_user(user), user, back))
 
     # Expanded Board row: photo + aircraft facts for ONE registration. FR24's aircraft lookup is a live call
     # (and these aircraft usually never triggered a card, so nothing is cached in airframes yet) — cache the

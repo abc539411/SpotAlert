@@ -1835,7 +1835,7 @@ async def run_check(context: ContextTypes.DEFAULT_TYPE) -> None:
             cfg.store.replace_board_rows(
                 _rows,
                 _window if _pages_failed == 0 else None,   # a failed page must never wipe real rows
-                prune_before_ts=int((_midnight - timedelta(days=7)).timestamp()),   # keep the 7 past days Board shows
+                prune_before_ts=int((_midnight - timedelta(days=30)).timestamp()),   # Board shows 7 back by default, up to 30 via its Older button
                 now_ts=int(datetime.now().timestamp()),
                 data_through_ts=_through,
             )
