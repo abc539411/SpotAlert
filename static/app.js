@@ -355,7 +355,7 @@ const UI_ZH = {
   'Refresh Board': '刷新看板', 'Checking FR24…': '正在检查 FR24…', 'Board updated': '看板已更新',
   "Waiting for this airport's first check — tap Refresh to run one now.": '正在等待该机场的首次检查——点击刷新立即检查。',
   'Could not load the Board.': '无法加载看板。',
-  'Not assigned yet': '尚未分配机号', 'No regular flights to show.': '暂无需要关注的常规航班。', 'No Feed cards': '无 Feed 卡片', 'Aircraft not assigned yet': '尚未分配飞机', 'Could not load aircraft details.': '无法加载飞机信息。',
+  'Not assigned yet': '尚未分配机号', 'Not listed yet': '尚未列入时刻表', 'Expected': '预计', 'Not on the schedule yet — expected at its usual time': '尚未列入时刻表 — 预计按往常时间到达', 'No regular flights to show.': '暂无需要关注的常规航班。', 'No Feed cards': '无 Feed 卡片', 'Aircraft not assigned yet': '尚未分配飞机', 'Could not load aircraft details.': '无法加载飞机信息。',
   'No equipment history yet.': '暂无机型使用记录。', 'Registration': '注册号', 'Aircraft': '飞机', 'Manufacturer': '制造商', 'Operator': '运营商',
   'Owner': '所有者', 'Livery': '涂装', 'Country': '国家/地区', 'Mode S': 'Mode S', 'Serial No.': '序列号', 'Built': '出厂年份', 'Feed cards here': '本场 Feed 卡片数',
   'Feed card': '动态卡片', 'Excluded': '已排除', 'Has a card in Feed': '动态中已有卡片',
@@ -3185,7 +3185,7 @@ function _bdDetailHtml(r) {
 
   let photo = '', facts = '', head = '', lastSeen = '', spotted = '';
   if (!r.registration) {
-    facts = `<div class="bd-na" style="padding:4px 0">${esc(tt('Aircraft not assigned yet'))}${r.aircraft_type ? ` · ${esc(r.aircraft_type)}` : ''}</div>`;
+    facts = `<div class="bd-na" style="padding:4px 0">${esc(tt(r.pending ? 'Not on the schedule yet — expected at its usual time' : 'Aircraft not assigned yet'))}${r.aircraft_type ? ` · ${esc(r.aircraft_type)}` : ''}</div>`;
   } else if (!ac) {
     facts = loading;
   } else if (ac === 'err') {
@@ -3281,19 +3281,20 @@ function _bdDetailHtml(r) {
 function _bdRow(r, isMobile) {
   const fn = esc(r.flight_number);
   const late = r.estimated_ts && Math.abs(r.estimated_ts - r.scheduled_ts) >= 600;
-  const time = `${esc(fmtTs(r.eff_ts))}${late ? `<small>${esc(fmtTs(r.scheduled_ts))}</small>` : ''}`;
+  const time = `${r.pending ? '~' : ''}${esc(fmtTs(r.eff_ts))}${late ? `<small>${esc(fmtTs(r.scheduled_ts))}</small>` : ''}`;
   const airline = r.airline_name
     ? `<span data-ext-name="${esc(r.airline_name)}">${esc(tExternalName(r.airline_name))}</span>` : '';
   const sub = airline;     // departure airport lives in the expanded card
   const ac = r.registration
     ? `${_flag(_regoCountryCode(r.registration), { h: 11 })}<a href="${_fr24AircraftUrl(r.registration)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${esc(r.registration)}</a>` +
       `${r.aircraft_type ? `<div class="ty"><span class="fc-actype">${esc(r.aircraft_type)}</span></div>` : ''}`
-    : `<span class="bd-na">${esc(tt('Not assigned yet'))}</span>${r.aircraft_type ? `<div class="ty"><span class="fc-actype">${esc(r.aircraft_type)}</span></div>` : ''}`;
+    : `<span class="bd-na">${esc(tt(r.pending ? 'Not listed yet' : 'Not assigned yet'))}</span>${r.aircraft_type ? `<div class="ty"><span class="fc-actype">${esc(r.aircraft_type)}</span></div>` : ''}`;
   const kindCls = r.kind === 'feed' ? ' bd-row-feed' : r.kind === 'excluded' ? ' bd-row-excl' : '';
   const kindTip = r.kind === 'feed' ? tt('Has a card in Feed') : r.kind === 'excluded' ? tt('Would have a Feed card, but the aircraft is on the Exclusion List') : '';
   const rgb = r.kind ? _bdAccentRgb(r.card_types) : '';
   const chips = (r.kind && (r.card_types || []).length)
-    ? `<span class="bd-chips">${r.card_types.map(t => `<span class="chip ${chipClass(t)}">${esc(chipLabel(t))}</span>`).join('')}</span>` : '';
+    ? `<span class="bd-chips">${r.card_types.map(t => `<span class="chip ${chipClass(t)}">${esc(chipLabel(t))}</span>`).join('')}</span>`
+    : r.pending ? `<span class="bd-chips"><span class="chip bd-chip-exp">${esc(tt('Expected'))}</span></span>` : '';
   const key = _bdKey(r);
   const open = key === _bdOpenKey;
   return `<div class="bd-row${kindCls}${open ? ' open' : ''}" data-key="${esc(key)}" onclick="bdOpen(this)"${kindTip ? ` title="${esc(kindTip)}"` : ''}${rgb ? ` style="--bd-rgb:${rgb}"` : ''}>

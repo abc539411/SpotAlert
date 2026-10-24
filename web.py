@@ -4729,6 +4729,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         roster: dict = {}
         excluded_cards: dict = {}
         excl_regs: set = set()
+        hist: dict = {}
         if cand:
             frows = []
             with store_._connect() as conn:
@@ -4736,7 +4737,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                     chunk = cand[i:i + 400]
                     frows += conn.execute(
                         f"SELECT flight_number, registration, arrival_ts, notif_types, extra_info, airline_icao, "
-                        f"aircraft_type, rare_absence_days FROM flight_arrivals "
+                        f"aircraft_type, rare_absence_days, origin_iata, origin_name, detail FROM flight_arrivals "
                         f"WHERE flight_number IN ({','.join('?' * len(chunk))}) "
                         f"AND COALESCE(current_status,'') NOT IN ('Cancelled','Swapped')",
                         tuple(chunk)).fetchall()
@@ -4745,6 +4746,16 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                 _livery_excl = _viewer_livery_exclude_keywords(conn, user)
                 _rare_min_days = _viewer_rare_plane_min_days(conn, user)
             _watchlist_sets = _viewer_watchlist_sets(store_, user)
+            # Per flight number: every past arrival time (for the "Expected" placeholder rows) + the latest
+            # row's origin / airline, whether or not that row produced a card.
+            for fr in sorted(frows, key=lambda x: x["arrival_ts"] or 0):
+                if fr["arrival_ts"]:
+                    h = hist.setdefault(fr["flight_number"], {"ts": []})
+                    h["ts"].append(fr["arrival_ts"])
+                    h["origin_iata"], h["origin_name"] = fr["origin_iata"], fr["origin_name"]
+                    h["airline_icao"] = fr["airline_icao"]
+                    _m = _re.match(r"^(.+?)\s*\(", fr["detail"] or "")
+                    h["airline_name"] = _m.group(1).strip() if _m else ""
             for fr in frows:
                 try:
                     nt = _json.loads(fr["notif_types"] or "[]")
@@ -4764,6 +4775,11 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                 else:
                     e["arrival_ts"].append(fr["arrival_ts"])
                     e["cards"].append((fr["arrival_ts"], fr["registration"], nt, fr["extra_info"]))
+        for _fn, _e in roster.items():
+            _e["hist"] = hist.get(_fn) or {"ts": []}
+        for _fn in excluded_cards:                      # an excluded-only flight number still qualifies
+            if _fn not in roster:
+                roster[_fn] = {"arrival_ts": [], "cards": [], "hist": hist.get(_fn) or {"ts": []}}
         _board_roster_cache[key] = (time.time(), roster, excluded_cards)
         return roster, excluded_cards
 
@@ -4792,7 +4808,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         hidden = set(store_.get_board_hidden(_owner_id(user)))
         rows = [r for r in store_.get_board_rows(starts[-7], starts[4]) if r["flight_number"] in roster]
 
-        iatas = {r["origin_iata"] for r in rows if r["origin_iata"]}
+        iatas = {r["origin_iata"] for r in rows if r["origin_iata"]} |                 {e["hist"].get("origin_iata") for e in roster.values() if e.get("hist", {}).get("origin_iata")}
         cities: dict = {}
         countries: dict = {}
         if iatas:
@@ -4848,6 +4864,42 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                 "status": r["status_text"], "hidden": is_hidden, "kind": kind, "card_types": card_types,
                 "extra_info": extra_info,
             })
+        # "Expected" rows: a roster flight number with NO schedule row on today / tomorrow yet (FR24's board only
+        # reaches so far ahead) is listed at its usual time, taken from its history. It stays until the latest
+        # pull reaches PENDING_GRACE past that time without the flight showing up — then it's assumed not
+        # operating that day and drops off. If it appears later (real schedule row) it's simply a normal row.
+        PENDING_GRACE = 2 * 3600
+        def _usual_min(hist_ts, target_date):
+            def mins(ts):
+                dt = _dtm.datetime.fromtimestamp(ts, tz)
+                return dt.hour * 60 + dt.minute, dt.weekday()
+            samples = [mins(t) for t in hist_ts[-30:]]
+            same = [m for m, wd in samples if wd == target_date.weekday()]
+            pool = same if len(same) >= 2 else [m for m, _ in samples]
+            shifted = sorted((m - 180) % 1440 for m in pool)          # day boundary at 03:00 so 23:50 / 00:10 cluster
+            return (shifted[len(shifted) // 2] + 180) % 1440
+        for o in (0, 1):
+            have = {r["flight_number"] for r in by_off[o]["rows"]}
+            for fn, e in roster.items():
+                hh = e.get("hist") or {}
+                if fn in hidden or fn in have or not hh.get("ts"):
+                    continue
+                day_date = d0 + _dtm.timedelta(days=o)
+                exp_ts = int(tz.localize(_dtm.datetime.combine(day_date, _dtm.time.min)
+                                         + _dtm.timedelta(minutes=_usual_min(hh["ts"], day_date))).timestamp())
+                if through and through >= exp_ts + PENDING_GRACE:
+                    continue
+                by_off[o]["rows"].append({
+                    "flight_number": fn, "scheduled_ts": exp_ts, "estimated_ts": None, "eff_ts": exp_ts,
+                    "registration": None, "aircraft_type": None,
+                    "airline_name": hh.get("airline_name") or None, "airline_icao": hh.get("airline_icao"),
+                    "origin_iata": hh.get("origin_iata"), "origin_name": hh.get("origin_name"),
+                    "origin_city": cities.get(hh.get("origin_iata"), "") or "",
+                    "origin_country_code": countries.get(hh.get("origin_iata"), ""),
+                    "status": None, "hidden": False, "kind": None, "card_types": [], "extra_info": "",
+                    "pending": True,
+                })
+            by_off[o]["rows"].sort(key=lambda x: x["eff_ts"])
         days = []
         for o in _OFFSETS:
             day = by_off[o]
