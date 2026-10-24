@@ -229,6 +229,7 @@ const SETTINGS_I18N_ZH = {
   SPOT_MAX_GAP_HOURS:    { label: '拍机窗口间隔', desc: '航班之间的间隔超过此时长，将开启新的拍机窗口而非并入当前窗口。' },
   BOARD_MIN_APPEARANCES: { label: '常规航班门槛', desc: '一个航班号在本机场至少被记录到这么多次（且曾产生过动态卡片），才会出现在看板上。数值越高，看板越精简。' },
   BOARD_DROP_AFTER_DAYS: { label: '停飞后移除', desc: '仅影响“尚未上板”的占位行：某航班号在本机场超过这么多天未再出现，就不再显示占位行。出现在抓取数据中的航班始终会显示。0 表示永不移除。' },
+  BOARD_PENDING_GRACE_MINS: { label: '占位行宽限时间', desc: '“尚未上板”的行会一直保留，直到最新抓取的数据比该航班通常的时间晚了这么久仍未出现；之后将视为当天不运营，该行随之消失。' },
   SPOT_LULL_MINS:        { label: '空闲时段长度', desc: '拍机窗口内超过此时长的空闲时段会被特别标出，方便您安排休息。' },
   SPOT_MAX_LULLS:        { label: '显示空闲时段数量', desc: '每个拍机窗口最多列出的空闲时段数量，保持推荐内容简洁易读。' },
   SPOT_LIGHTING_GATE:    { label: '避开不佳光线', desc: '开启后，与日出、日落或正午强光时段重叠的拍机窗口将被跳过。' },
@@ -4177,6 +4178,7 @@ const SETTINGS_SCHEMA = [
   // Board
   { group: 'board', key: 'BOARD_MIN_APPEARANCES', label: 'Regular Flight Threshold', desc: 'A flight number appears on the Board once it has been seen at this airport at least this many times AND has produced a Feed card before. Higher = a tighter Board.', type: 'number', min: 1, max: 10, default: '2', unit: 'sightings' },
   { group: 'board', key: 'BOARD_DROP_AFTER_DAYS', label: 'Drop After', desc: 'Only affects the "Not on board yet" rows: a flight number that has not been seen at this airport for more than this many days no longer gets one. Flights that appear in the fetched board data always show. 0 = never drop.', type: 'number', min: 0, max: 365, default: '30', unit: 'days' },
+  { group: 'board', key: 'BOARD_PENDING_GRACE_MINS', label: 'Placeholder Grace', desc: 'A "Not on board yet" row stays until the latest fetch is this long past the flight's usual time without it appearing; after that it is assumed not to be operating that day and the row goes away.', type: 'number', min: 0, max: 1440, default: '120', unit: 'minutes' },
   // Monitoring — Departure
   { group: 'mon-departure', key: 'DEPARTURE_PATTERN_THRESHOLD', label: 'Departure Confidence',     desc: 'Minimum historical confidence required before showing a predicted departure time. 80% means the pattern must hold 4 out of 5 times.', type: 'number', min: 0, max: 100, step: 5, unit: '%', restart: true },
   // Monitoring — Cancellation / Diversion

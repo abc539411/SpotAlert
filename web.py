@@ -5253,7 +5253,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         # reaches so far ahead) is listed at its usual time, taken from its history. It stays until the latest
         # pull reaches PENDING_GRACE past that time without the flight showing up — then it's assumed not
         # operating that day and drops off. If it appears later (real schedule row) it's simply a normal row.
-        PENDING_GRACE = 2 * 3600
+        PENDING_GRACE = store_.board_pending_grace_mins() * 60      # Settings > Board > Placeholder Grace
         def _usual_min(hist_ts, target_date):
             def mins(ts):
                 dt = _dtm.datetime.fromtimestamp(ts, tz)
