@@ -3182,7 +3182,7 @@ function _bdDetailHtml(r) {
     if (ac.photo_url) {
       const full = ac.photo_url.replace('/640/', '/full/');
       photo = `<div class="bd-photo-wrap"><img class="bd-photo" src="${esc(full)}" loading="lazy" alt="${esc(r.registration)}" onerror="this.onerror=null;this.src='${esc(ac.photo_url)}'">` +
-        `${ac.photo_credit ? `<span class="bd-photo-credit">© ${esc(ac.photo_credit)}</span>` : ''}</div>`;
+        `</div>`;
     }
     const model = ac.model || r.aircraft_type || '';
     const typeCode = ac.type_code || r.aircraft_type || '';
