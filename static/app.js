@@ -3288,8 +3288,8 @@ function _bdRow(r, isMobile) {
   const sub = airline;     // departure airport lives in the expanded card
   const ac = r.registration
     ? `${_flag(_regoCountryCode(r.registration), { h: 11 })}<a href="${_fr24AircraftUrl(r.registration)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${esc(r.registration)}</a>` +
-      `${r.aircraft_type ? `<div class="ty">${esc(r.aircraft_type)}</div>` : ''}`
-    : `<span class="bd-na">${esc(tt('Not assigned yet'))}</span>${r.aircraft_type ? `<div class="ty">${esc(r.aircraft_type)}</div>` : ''}`;
+      `${r.aircraft_type ? `<div class="ty"><span class="fc-actype">${esc(r.aircraft_type)}</span></div>` : ''}`
+    : `<span class="bd-na">${esc(tt('Not assigned yet'))}</span>${r.aircraft_type ? `<div class="ty"><span class="fc-actype">${esc(r.aircraft_type)}</span></div>` : ''}`;
   const kindCls = r.kind === 'feed' ? ' bd-row-feed' : r.kind === 'excluded' ? ' bd-row-excl' : '';
   const kindTip = r.kind === 'feed' ? tt('Has a card in Feed') : r.kind === 'excluded' ? tt('Would have a Feed card, but the aircraft is on the Exclusion List') : '';
   const rgb = r.kind ? _bdAccentRgb(r.card_types) : '';
