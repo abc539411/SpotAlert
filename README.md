@@ -58,15 +58,18 @@ Installable as a home-screen app on iOS/Android, accessible from any browser on 
 
 - **Feed** — day-grouped cards for every match; route, live status, departure prediction, aircraft photo, and (if you've shot it before) your own history with that tail
 - **Spotting** — the day's recommended window, clustered by activity gaps, with lighting quality and weather
+- **Board** — an arrivals board for the flight numbers that regularly bring something interesting, showing the aircraft assigned *before* it lands. Each day is a card, today centred and scrolled to the current time; flights not yet on FR24's schedule appear as "No info yet" at their usual time. On a phone, pull the Feed all the way down to open it (or make it your home page under Settings → Board)
 - **Collection** — cross-references your Lightroom catalog against the feed; shows what's photographed, what's missing, and per-keyword session stats
 - **Fleet** — live full-fleet data per airline; pills show which tails you've captured and let you add unseen ones straight to your watchlist
 - **Search** — look up a registration's sighting history, browse route equipment by flight number, or browse your whole catalog
 - **Session photo preview** — tap any past session anywhere in the app to see the actual photo you took — Controller-only, read-only access to your photo library (see below)
+- **Older history** — Feed, Spotting and the Board all reach back through earlier weeks with an **Older** button and a month picker; Feed groups older weeks by year and week
+- **Take a tour** — a short guided walk through every tab, offered at each sign-in and whenever the app version changes (replayable from Settings → General), with notes on what a Passenger account does not include
 - **Settings** — every filter, watchlist, and monitoring setting lives here, gated by role
 
 ### Multi-User, Multi-Airport
 
-- **Roles**: Controller (full control), Pilot (own filters/watchlists, scoped to granted airports), Passenger (read-only, follows the Controller's filters)
+- **Roles**: Controller (full control), Pilot (own filters/watchlists, scoped to granted airports), Passenger (read-only, follows the Controller's filters; can still mute notifications for any aircraft)
 - A single deployment can **monitor multiple airports** at once — each with its own monitoring, filters, and data
 - **Push notifications** (Web Push/VAPID — no third-party service, no Telegram) are fanned out per subscriber, each in their own language, re-checked against their own filters and preferences
 
