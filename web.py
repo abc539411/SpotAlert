@@ -5184,7 +5184,11 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
             # Lightroom session count at this airport (per livery when the trigger was a Special Livery, else per
             # registration); over the limit → over_spotted. Cached per aircraft/livery for a few minutes.
             try:
-                _max_spot = int(store_.load_setting("SPOT_MAX_SPOTTED") or 0)
+                if user.role == "pilot":              # a Pilot's own limit, like their Spotting table
+                    with store_._connect() as _sc:
+                        _max_spot = int(_pilot_setting(_sc, user.user_id, "SPOT_MAX_SPOTTED", "0") or 0)
+                else:
+                    _max_spot = int(store_.load_setting("SPOT_MAX_SPOTTED") or 0)
             except (TypeError, ValueError):
                 _max_spot = 0
             _cat = app.state.get_user_catalog(user) if _max_spot > 0 else None
