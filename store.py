@@ -1182,6 +1182,21 @@ class SqliteStore:
                 (start_ts, end_ts),
             ).fetchall()]
 
+    def get_board_scheduled_since(self, flight_numbers, since_ts: int) -> dict:
+        """{flight_number: [scheduled_ts, ...newest first]} for stored Board rows scheduled at/after since_ts —
+        the timetable the flight actually ran on recently (used for the 'Not on board yet' usual time)."""
+        out: dict = {}
+        fns = list(flight_numbers)
+        with self._connect() as conn:
+            for i in range(0, len(fns), 400):
+                chunk = fns[i:i + 400]
+                for r in conn.execute(
+                        f"SELECT flight_number, scheduled_ts FROM board_flights WHERE scheduled_ts >= ? "
+                        f"AND flight_number IN ({','.join('?' * len(chunk))}) ORDER BY scheduled_ts DESC",
+                        (int(since_ts), *chunk)).fetchall():
+                    out.setdefault(r[0], []).append(r[1])
+        return out
+
     def get_board_row(self, flight_number: str, scheduled_ts: int) -> Optional[dict]:
         with self._connect() as conn:
             r = conn.execute("SELECT * FROM board_flights WHERE flight_number = ? AND scheduled_ts = ?",

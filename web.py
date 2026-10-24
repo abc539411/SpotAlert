@@ -5263,6 +5263,16 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
             pool = same if len(same) >= 2 else [m for m, _ in samples]
             shifted = sorted((m - 180) % 1440 for m in pool)          # day boundary at 03:00 so 23:50 / 00:10 cluster
             return (shifted[len(shifted) // 2] + 180) % 1440
+        # Usual time = what this flight was SCHEDULED for on the most recent same weekday (last Friday's QF1 for a
+        # Friday), straight from the stored Board rows — so a timetable change shows up a week later at most.
+        # Only when no such row exists (within 5 weeks) does it fall back to the median of the flight's history.
+        _wk_sched = store_.get_board_scheduled_since(roster.keys(), int(time.time()) - 35 * 86400)
+        def _usual_min_for(fn, hist_ts, day_date):
+            for sts in _wk_sched.get(fn, []):                      # newest first
+                sd = _dtm.datetime.fromtimestamp(sts, tz)
+                if sd.date() < day_date and sd.weekday() == day_date.weekday():
+                    return sd.hour * 60 + sd.minute
+            return _usual_min(hist_ts, day_date)
         _drop_days = store_.board_drop_after_days()
         _recent = store_.board_recently_seen_flight_numbers(cfg_.airport_iata, _drop_days) if _drop_days else None
         for o in (0, 1):
@@ -5277,7 +5287,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                     continue                    # silent for more than "Drop After" days: no placeholder (real schedule rows are unaffected)
                 day_date = d0 + _dtm.timedelta(days=o)
                 exp_ts = int(tz.localize(_dtm.datetime.combine(day_date, _dtm.time.min)
-                                         + _dtm.timedelta(minutes=_usual_min(hh["ts"], day_date))).timestamp())
+                                         + _dtm.timedelta(minutes=_usual_min_for(fn, hh["ts"], day_date))).timestamp())
                 if through and through >= exp_ts + PENDING_GRACE:
                     continue
                 by_off[o]["rows"].append({
