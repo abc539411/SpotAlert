@@ -3015,6 +3015,9 @@ function switchTab(name) {
   if (!TABS.includes(name)) return;
   activeTab = name;
   _hideRefreshPill();
+  if (name !== 'board' && _bdEdit) { _bdEdit = false; _bdSel.clear(); renderBoard(); }
+  const eb = $('btn-edit-board');
+  if (eb) { eb.classList.toggle('hidden', name !== 'board' || _appRole !== 'controller'); if (name === 'board') _bdSyncEditBar(); }
   TABS.forEach(t => {
     $('tab-' + t).classList.toggle('hidden', t !== name);
   });
@@ -3486,9 +3489,10 @@ function _bdHiddenCard() {
 }
 
 function _bdSyncEditBar() {
-  const btn = $('bd-edit-btn');
+  const btn = $('btn-edit-board');                 // lives in the nav bar, Board tab only
   btn.textContent = _bdEdit ? tt('Done') : tt('Edit');
   btn.classList.toggle('on', _bdEdit);
+  $('tab-board').classList.toggle('bd-edit-on', _bdEdit);
   $('bd-edit-bar').classList.toggle('show', _bdEdit);
   const hiddenSet = new Set((_bdData && _bdData.hidden) || []);
   const sel = [..._bdSel];

@@ -84,6 +84,7 @@
     .btn-refresh.btn-danger-armed { background: var(--danger); color: #fff; border-color: var(--danger); }
     .btn-refresh.btn-refresh-armed { background: var(--accent); color: #fff; border-color: var(--accent); }
     .btn-refresh.hidden { display: none; }
+    .btn-refresh.on { background: var(--accent); border-color: var(--accent); color: #fff; }
 
     /* ── Nav — desktop: top tabs ─────────────────────────────────────────── */
     .nav-tabs { display: flex; align-items: stretch; gap: 0; overflow-x: auto; flex-shrink: 0; }
@@ -498,6 +499,7 @@
     .refresh-pill.show { display: block; }
     @media (min-width: 768px) {
       #tab-board .bd-meta { display: none; }
+      #tab-board:not(.bd-edit-on) .bd-top { display: none; }
       #tab-board .bd-top { padding-top: 8px; }
     }
     @media (max-width: 767px) {
@@ -2060,6 +2062,7 @@
   <div style="margin-left:auto;display:flex;align-items:center;gap:8px;min-width:0">
     <div id="header-whoami" class="header-whoami"></div>
     <div id="rapid-badge" style="flex-shrink:0">RAPID</div>
+    <button class="btn-refresh hidden" id="btn-edit-board" onclick="bdToggleEdit()" style="flex-shrink:0"></button>
     <button class="btn-refresh" id="btn-switch-airport" onclick="showAirportPicker()" title="Switch airport" style="flex-shrink:0">
       <span>✈</span>
     </button>
@@ -2277,7 +2280,6 @@
         <button type="button" class="bd-eb" id="bd-eb-hide" onclick="bdBatch('hide')"></button>
         <button type="button" class="bd-eb" id="bd-eb-unhide" onclick="bdBatch('unhide')"></button>
       </div>
-      <button type="button" class="bd-hidden-btn" id="bd-edit-btn" onclick="bdToggleEdit()"></button>
     </div>
     <div class="bd-wrap" id="bd-wrap"></div>
   </div>
