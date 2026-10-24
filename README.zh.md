@@ -218,6 +218,8 @@ python main.py              # 网页服务器，并会启动/监管监控进程
 
 **adsb.fi 开放数据** — 军机数据来源于 [opendata.adsb.fi](https://opendata.adsb.fi)。该数据**仅供个人非商业用途使用**，完整使用条款见 [adsb.fi](https://adsb.fi)。
 
+**JetPhotos** — 当 FlightRadar24 没有某架飞机的照片时，SpotAlert 会到 [JetPhotos](https://www.jetphotos.com) 查找。照片版权归原摄影师所有，**仅供个人非商业浏览**。
+
 **AircraftMetadata Lightroom 插件** — 从 Lightroom 图库读取的飞机元数据字段（注册号、航空公司、机型、机场）可由 [aviationphoto](https://github.com/aviationphoto) 的 [AircraftMetadata Lightroom 插件](https://github.com/aviationphoto/AircraftMetadata-Lightroom-Plugin) 创建，也可由 SpotAlert Studio（本仓库 `studio/`）创建。
 
 **Logostream** — 航空公司尾翼 logo 通过 [Logostream](https://airline.logostream.dev/) API（免费额度）获取，在此感谢 Logostream 提供的 logo 数据——SpotAlert 仅在您自行配置 `LOGOSTREAM_API_KEY` 时才会调用该 API。

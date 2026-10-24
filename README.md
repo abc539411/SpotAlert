@@ -218,6 +218,8 @@ This project is released under the [MIT License](LICENSE).
 
 **adsb.fi open data** — Military traffic data comes from [opendata.adsb.fi](https://opendata.adsb.fi). This data is for **personal, non-commercial use only** — see [adsb.fi](https://adsb.fi) for full terms.
 
+**JetPhotos** — When FlightRadar24 has no photo for an aircraft, SpotAlert looks one up on [JetPhotos](https://www.jetphotos.com). Photos remain the property of their photographers and are shown for **personal, non-commercial viewing only**.
+
 **AircraftMetadata Lightroom Plugin** — Aircraft metadata fields (registration, airline, type, airport) read from your Lightroom catalog can be created by [aviationphoto](https://github.com/aviationphoto)'s [AircraftMetadata Lightroom Plugin](https://github.com/aviationphoto/AircraftMetadata-Lightroom-Plugin), or by SpotAlert Studio (`studio/` in this repo).
 
 **Logostream** — Airline tail logos are fetched via the [Logostream](https://airline.logostream.dev/) API (free tier). Thanks to Logostream for the logo data — SpotAlert only reaches out to this API if you supply your own `LOGOSTREAM_API_KEY`.

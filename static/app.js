@@ -169,6 +169,12 @@ const I18N = {
     'logs.refresh': '刷新',
     'logs.download': '下载',
 
+    'disclaimer.frapi': `
+      <strong>FlightRadarAPI</strong> — <code>flightradar24api/</code> 模块是
+      <a href="https://github.com/JeanExtreme002" target="_blank">JeanExtreme002</a> 的
+      <a href="https://github.com/JeanExtreme002/FlightRadarAPI/tree/main/python" target="_blank">FlightRadarAPI</a>
+      Python 库的修改版本，基于 MIT 许可证发布。
+    `,
     'disclaimer.fr24': `
       <strong>FlightRadar24 数据</strong> — 本项目使用 FlightRadar24 的非官方 API。
       FlightRadar24 的<a href="https://www.flightradar24.com/terms-and-conditions" target="_blank">服务条款</a>
@@ -180,6 +186,22 @@ const I18N = {
       <a href="https://opendata.adsb.fi" target="_blank">opendata.adsb.fi</a>。
       该数据<strong>仅限个人非商业用途</strong>使用。
       完整使用条款请参见 <a href="https://adsb.fi" target="_blank">adsb.fi</a>。
+    `,
+    'disclaimer.jetphotos': `
+      <strong>JetPhotos</strong> — 当 FlightRadar24 没有某架飞机的照片时，SpotAlert 会到
+      <a href="https://www.jetphotos.com" target="_blank">JetPhotos</a> 查找。照片版权归原摄影师所有，
+      <strong>仅供个人非商业浏览</strong>。
+    `,
+    'disclaimer.lrplugin': `
+      <strong>AircraftMetadata Lightroom 插件</strong> — 从 Lightroom 图库读取的飞机元数据字段（注册号、航空公司、机型、机场）可由
+      <a href="https://github.com/aviationphoto" target="_blank">aviationphoto</a> 的
+      <a href="https://github.com/aviationphoto/AircraftMetadata-Lightroom-Plugin" target="_blank">AircraftMetadata Lightroom 插件</a>
+      创建，也可由 SpotAlert Studio（本仓库 <code>studio/</code>）创建。
+    `,
+    'disclaimer.logostream': `
+      <strong>Logostream</strong> — 航空公司尾翼 logo 通过 <a href="https://airline.logostream.dev/" target="_blank">Logostream</a>
+      API（免费额度）获取，在此感谢 Logostream 提供的 logo 数据——SpotAlert 仅在您自行配置
+      <code>LOGOSTREAM_API_KEY</code> 时才会调用该 API。
     `,
   },
 };
