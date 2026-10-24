@@ -1178,7 +1178,7 @@ function _pickerAirportTime(tz, tzAbbr) {
     // and passed in — the browser's own Intl 'short' timeZoneName falls back
     // to a bare GMT+offset for most non-US zones, so it can't be trusted here.
     const time = new Intl.DateTimeFormat(_locale(), {
-      hour: 'numeric', minute: '2-digit', hour12: _lang !== 'zh', timeZone: tz,
+      ..._hourOpts(), minute: '2-digit', timeZone: tz,
     }).format(new Date());
     return tzAbbr ? `${time} ${tzAbbr}` : time;
   } catch (e) { return ''; }
@@ -1190,7 +1190,7 @@ function _airportClockText(tz) {
   if (!tz) return '';
   try {
     return new Intl.DateTimeFormat(_locale(), {
-      hour: 'numeric', minute: '2-digit', hour12: _lang !== 'zh', timeZone: tz,
+      ..._hourOpts(), minute: '2-digit', timeZone: tz,
     }).format(new Date()).replace(/\s?([AP])M$/i, (m, c) => c.toLowerCase() + 'm');
   } catch (e) { return ''; }
 }
@@ -1784,13 +1784,16 @@ let _appTz = '';
 // 11:21", "7月12日周日") with no further string-munging needed — the
 // existing ' AM'/' PM' cleanup below simply doesn't match anything in
 // Chinese output, so it stays harmless for both languages.
+// Hour part of every clock: 12-hour (3:05 PM) in English, 24-hour in Chinese. `hour12: false` makes some browsers print
+// midnight as "24:01" or "0:01", so the 24-hour form asks for the h23 cycle with a two-digit hour ("00:01").
+function _hourOpts() { return _lang === 'zh' ? { hour: '2-digit', hourCycle: 'h23' } : { hour: 'numeric', hour12: true }; }
 function _locale() { return _lang === 'zh' ? 'zh-CN' : 'en-US'; }
 
 function fmtTs(ts, opts = {}) {
   if (!ts) return '—';
   const d = new Date(ts * 1000);
   const s = d.toLocaleString(_locale(), {
-    hour: 'numeric', minute: '2-digit', hour12: _lang !== 'zh',
+    ..._hourOpts(), minute: '2-digit',
     ...(_appTz ? { timeZone: _appTz } : {}), ...opts,
   });
   return s.replace(' AM', 'am').replace(' PM', 'pm');
@@ -3668,6 +3671,8 @@ function _olderCutoffDate() {          // first date NOT in the default view (7 
 // currently has on them — so the Controller can eyeball what might trigger. Rows are written
 // server-side by the monitor every check (see docs/13-board.md); this just polls while the tab is open.
 function _bdCanEdit() { return _appRole === 'controller' || _appRole === 'pilot'; }   // Passengers only look (they follow the Controller's hidden list)
+let _bdLastTouch = 0;
+['touchstart', 'touchmove', 'wheel'].forEach(ev => document.addEventListener(ev, e => { if (e.target.closest && e.target.closest('#tab-board')) _bdLastTouch = Date.now(); }, { passive: true }));
 let _bdData = null;
 let _bdTimer = null;
 let _bdPositioned = false;
@@ -3743,6 +3748,7 @@ async function loadBoard() {
   clearTimeout(_bdTimer);
   try {
     _bdData = await api('/board?back=' + _bdBack);
+    while (Date.now() - _bdLastTouch < 1500 && activeTab === 'board') await new Promise(r => setTimeout(r, 400));   // never rebuild the cards under a finger mid-swipe
   } catch (e) {
     $('bd-wrap').innerHTML = `<div class="bd-empty" style="width:100%">${esc(tt('Could not load the Board.'))}</div>`;
     return;
@@ -4084,10 +4090,31 @@ function _bdInitThumbs() {
   }, { passive: false });
 })();
 
+// Same carousel behaviour as Spotting's day cards: on PC the cards drag with the mouse and, on release, glide and settle with
+// the nearest card centred; phones use CSS scroll-snap (see .bd-wrap), exactly like .rec-scroll.
+function initBoardScroll(wrap) {
+  if (wrap._scrollInit) return;
+  wrap._scrollInit = true;
+  _initDragScroll(wrap, () => {
+    const cards = [...wrap.querySelectorAll('.bd-card')];
+    const mid = wrap.getBoundingClientRect().left + wrap.clientWidth / 2;
+    let closest = null, minDist = Infinity;
+    for (const c of cards) {
+      const dist = Math.abs(c.getBoundingClientRect().left + c.offsetWidth / 2 - mid);
+      if (dist < minDist) { minDist = dist; closest = c; }
+    }
+    if (closest) {
+      const offset = closest.getBoundingClientRect().left - wrap.getBoundingClientRect().left;
+      wrap.scrollTo({ left: wrap.scrollLeft + offset - (wrap.clientWidth - closest.offsetWidth) / 2, behavior: 'smooth' });
+    }
+  });
+}
+
 function renderBoard() {
   const d = _bdData;
   if (!d) return;
   const wrap = $('bd-wrap');
+  initBoardScroll(wrap);
   const keepX = wrap.scrollLeft;
   const keepY = [...wrap.querySelectorAll('.bd-rows')].map(el => el.scrollTop);
   const isMobile = window.innerWidth < 768;
@@ -6409,7 +6436,7 @@ function _nowHM(tzName, d) {
   if (!tzName) return { h: d.getHours(), m: d.getMinutes() };
   try {
     const parts = new Intl.DateTimeFormat('en-GB', {
-      timeZone: tzName, hour: '2-digit', minute: '2-digit', hour12: false,
+      timeZone: tzName, hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
     }).formatToParts(d);
     return {
       h: parseInt(parts.find(p => p.type === 'hour').value, 10),

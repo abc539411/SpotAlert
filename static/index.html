@@ -717,7 +717,7 @@
     .bd-hidden-btn { flex-shrink: 0; background: none; border: 1px solid var(--border); color: var(--dim); font-size: 11px; padding: 4px 10px; border-radius: 12px; cursor: pointer; }
     .bd-hidden-btn:hover, .bd-hidden-btn.open { color: var(--text); border-color: var(--accent); }
     .bd-hidden-btn.hidden { display: none; }
-    .bd-wrap { flex: 1; min-height: 0; display: flex; gap: 12px; padding: 8px max(14px, calc(50% - 280px)) 8px; overflow-x: auto; scroll-snap-type: x mandatory; scroll-padding-inline: max(14px, calc(50% - 280px)); scrollbar-width: none; }
+    .bd-wrap { flex: 1; min-height: 0; display: flex; gap: 12px; padding: 8px max(14px, calc(50% - 280px)) 8px; overflow-x: auto; overflow-y: hidden; -webkit-overflow-scrolling: touch; scrollbar-width: none; }   /* like .rec-scroll: PC snaps by script (see initBoardScroll), phones by CSS below */
     .bd-wrap::-webkit-scrollbar { display: none; }
     /* Day cards are fixed-width and swipe/scroll sideways like the Spotting table; the header reuses its
        .rec-day-hdr / .rec-d-label / .rdc-* styles (label, count, weather). */
@@ -777,7 +777,7 @@
     .feed-week-hd:hover { border-color: var(--accent); }
     .feed-week-dates { color: var(--dim); font-weight: 400; margin-left: 8px; }
     .bd-card .rec-day-hdr { position: static; }
-    .bd-rows { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: none; position: relative; scrollbar-width: none; }
+    .bd-rows { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior-y: none; position: relative; scrollbar-width: none; }
     .bd-rows::-webkit-scrollbar { width: 0; }
     .bd-row { display: grid; grid-template-columns: 62px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 9px 12px; border-top: 1px solid var(--border); }
     .bd-row:first-child { border-top: none; }
@@ -872,7 +872,7 @@
       .bd-top { flex-wrap: wrap; }
       .bd-meta { order: 3; flex-basis: 100%; }
       .bd-hidden-btn { margin-left: auto; }
-      .bd-wrap { padding: 6px 6px 6px; gap: 12px; scroll-padding-inline: 6px; }
+      .bd-wrap { padding: 6px 6px 6px; gap: 12px; scroll-snap-type: x mandatory; scroll-padding-inline: 6px; }
       .bd-card { flex: 0 0 calc(100vw - 12px); scroll-snap-stop: always; }
       .bd-row { grid-template-columns: 62px minmax(0, 1fr) auto; gap: 8px; padding: 9px 10px; }
     }
