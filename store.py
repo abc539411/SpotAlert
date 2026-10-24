@@ -181,11 +181,17 @@ class SqliteStore:
             conn.execute("CREATE TABLE IF NOT EXISTS board_meta (key TEXT PRIMARY KEY, value TEXT)")
             # The Board's one-off flights were briefly tagged "Added" before being renamed "Manual" — carry any
             # such rows (and their cached timeline events) over so they keep working (and can be removed).
-            conn.execute("UPDATE flight_arrivals SET notif_types = REPLACE(notif_types, '\"Added\"', '\"Manual\"') "
-                         "WHERE notif_types LIKE '%\"Added\"%'")
-            conn.execute("UPDATE timeline_cache SET clusters_json = REPLACE(clusters_json, '\"Added\"', '\"Manual\"'), "
-                         "events_json = REPLACE(events_json, '\"Added\"', '\"Manual\"') "
-                         "WHERE clusters_json LIKE '%\"Added\"%' OR events_json LIKE '%\"Added\"%'")
+            # (Both tables may not exist yet on a brand-new database — nothing to carry over then.)
+            for _tbl in ("flight_arrivals", "timeline_cache"):
+                if not conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (_tbl,)).fetchone():
+                    continue
+                if _tbl == "flight_arrivals":
+                    conn.execute("UPDATE flight_arrivals SET notif_types = REPLACE(notif_types, '\"Added\"', '\"Manual\"') "
+                                 "WHERE notif_types LIKE '%\"Added\"%'")
+                else:
+                    conn.execute("UPDATE timeline_cache SET clusters_json = REPLACE(clusters_json, '\"Added\"', '\"Manual\"'), "
+                                 "events_json = REPLACE(events_json, '\"Added\"', '\"Manual\"') "
+                                 "WHERE clusters_json LIKE '%\"Added\"%' OR events_json LIKE '%\"Added\"%'")
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS livery_cooldowns (
                     registration TEXT PRIMARY KEY,
