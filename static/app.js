@@ -355,7 +355,7 @@ const UI_ZH = {
   'Refresh Board': '刷新看板', 'Checking FR24…': '正在检查 FR24…', 'Board updated': '看板已更新',
   "Waiting for this airport's first check — tap Refresh to run one now.": '正在等待该机场的首次检查——点击刷新立即检查。',
   'Could not load the Board.': '无法加载看板。',
-  'Not assigned yet': '尚未分配机号', 'Not on board yet': '尚未上板', 'Possible aircraft': '可能的飞机', 'No check yet': '尚未检查', 'Confirm Refresh?': '确认刷新？', 'Added by hand (one-off) — in Feed and Spotting': '手动添加（仅此一次）— 已在 Feed 和拍机时间线', 'Add to Feed + Spotting (one-off)': '加入 Feed 和拍机时间线（仅此一次）', 'Remove this one-off flight from Feed + Spotting': '从 Feed 和拍机时间线移除此航班', 'Click again to add it to Feed + Spotting': '再点一次确认加入', 'Click again to remove it': '再点一次确认移除', 'added to Feed + Spotting': '已加入 Feed 和拍机时间线', 'removed': '已移除', 'Already photographed': '已拍摄', 'today': '今天', 'Last triggered': '上次触发原因', 'Hidden from Feed by the Exclusion List': '已被排除名单隐藏', 'No regular flights to show.': '暂无需要关注的常规航班。', 'No Feed cards': '无 Feed 卡片', 'Aircraft not assigned yet': '尚未分配飞机', 'Could not load aircraft details.': '无法加载飞机信息。',
+  'Not assigned yet': '尚未分配机号', 'Not on board yet': '尚未上板', 'Possible aircraft': '可能的飞机', 'Edit': '编辑', 'Done': '完成', 'Hide': '隐藏', 'selected': '已选', 'Hidden flights': '已隐藏航班', 'Select flights to hide or unhide': '选择要隐藏或取消隐藏的航班', 'No check yet': '尚未检查', 'Confirm Refresh?': '确认刷新？', 'Added by hand (one-off) — in Feed and Spotting': '手动添加（仅此一次）— 已在 Feed 和拍机时间线', 'Add to Feed + Spotting (one-off)': '加入 Feed 和拍机时间线（仅此一次）', 'Remove this one-off flight from Feed + Spotting': '从 Feed 和拍机时间线移除此航班', 'Click again to add it to Feed + Spotting': '再点一次确认加入', 'Click again to remove it': '再点一次确认移除', 'added to Feed + Spotting': '已加入 Feed 和拍机时间线', 'removed': '已移除', 'Already photographed': '已拍摄', 'today': '今天', 'Last triggered': '上次触发原因', 'Hidden from Feed by the Exclusion List': '已被排除名单隐藏', 'No regular flights to show.': '暂无需要关注的常规航班。', 'No Feed cards': '无 Feed 卡片', 'Aircraft not assigned yet': '尚未分配飞机', 'Could not load aircraft details.': '无法加载飞机信息。',
   'No equipment history yet.': '暂无机型使用记录。', 'Registration': '注册号', 'Aircraft': '飞机', 'Manufacturer': '制造商', 'Operator': '运营商',
   'Owner': '所有者', 'Livery': '涂装', 'Country': '国家/地区', 'Mode S': 'Mode S', 'Serial No.': '序列号', 'Built': '出厂年份', 'Feed cards here': '本场 Feed 卡片数',
   'Feed card': '动态卡片', 'Excluded': '已排除', 'Has a card in Feed': '动态中已有卡片',
@@ -3393,16 +3393,14 @@ function _bdRow(r, isMobile) {
     : '';
   const key = _bdKey(r);
   const open = key === _bdOpenKey;
-  return `<div class="bd-row${kindCls}${open ? ' open' : ''}${r.pending ? ' bd-row-pending' : ''}" data-key="${esc(key)}"${r.pending ? '' : ' onclick="bdOpen(this)"'}${kindTip ? ` title="${esc(kindTip)}"` : ''}${rgb ? ` style="--bd-rgb:${rgb}"` : ''}>
+  return `<div class="bd-row${kindCls}${open ? ' open' : ''}${r.pending ? ' bd-row-pending' : ''}${_bdSel.has(r.flight_number) ? ' bd-row-sel' : ''}${r.hidden ? ' bd-row-hidden' : ''}" data-key="${esc(key)}" data-fn="${fn}" onclick="bdRowClick(this)"${kindTip ? ` title="${esc(kindTip)}"` : ''}${rgb ? ` style="--bd-rgb:${rgb}"` : ''}>
       <div class="bd-time">${time}</div>
       <div class="bd-main">
         <div class="bd-fnrow"><a class="bd-fn" href="${_fr24FlightUrl(r.flight_number)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${_srchLogoWithFallback(r.airline_icao, r.airline_name, 16, '')}${fn}</a>${chips}</div>
         <div class="bd-sub">${sub}</div>
       </div>
       <div class="bd-ac">${ac}</div>
-      <button type="button" class="bd-hide${r.hidden ? ' is-hidden' : ''}" data-fn="${fn}" data-hidden="${r.hidden ? 1 : 0}"
-              title="${esc(r.hidden ? tt('Unhide') : tt('Hide this flight number from the Board'))}"
-              onclick="event.stopPropagation(); bdToggle(this)">${r.hidden ? _BD_EYE : _BD_EYE_OFF}</button>
+      ${_bdEdit ? '<div class="bd-check">✓</div>' : ''}
     </div>${open ? _bdDetailHtml(r) : ''}`;
 }
 
@@ -3414,6 +3412,7 @@ function renderBoard() {
   const keepY = [...wrap.querySelectorAll('.bd-rows')].map(el => el.scrollTop);
   const isMobile = window.innerWidth < 768;
 
+  wrap.classList.toggle('bd-editing', _bdEdit);
   _bdRowsByKey = {};
   (d.days || []).forEach(day => day.rows.forEach(r => { _bdRowsByKey[_bdKey(r)] = r; }));
   if (_bdOpenKey && !_bdRowsByKey[_bdOpenKey]) _bdOpenKey = null;   // its row left the board
@@ -3423,6 +3422,7 @@ function renderBoard() {
   if (d.data_through_ts) bits.push(`${tt('Data through')} ${fmtTs(d.data_through_ts, { weekday: 'short' })}`);
   $('bd-meta').textContent = bits.join(' · ');
   renderBoardHidden();
+  _bdSyncEditBar();
 
   wrap.innerHTML = (d.days || []).map(day => {
     const empty = day.rows.length ? '' :
@@ -3460,28 +3460,64 @@ function renderBoard() {
   }
 }
 
+// ── Edit mode: tick flight numbers (rows or the hidden list), then Hide / Unhide them in one go ──────────────
+let _bdEdit = false;
+const _bdSel = new Set();      // flight numbers (hiding is per flight number, every day)
+
 function renderBoardHidden() {
   const fns = (_bdData && _bdData.hidden) || [];
-  const btn = $('bd-hidden-btn'), panel = $('bd-hidden-panel');
-  btn.classList.toggle('hidden', fns.length === 0);
-  btn.textContent = `${tt('Hidden')} (${fns.length})`;
-  if (!fns.length) { panel.classList.remove('open'); btn.classList.remove('open'); }
-  panel.innerHTML = `<div class="bd-hidden-note">${esc(tt('Hidden flights only disappear from the Board — their Feed cards and notifications are unaffected. A hidden flight still reappears on a day it gets a Feed card.'))}</div>` +
-    fns.map(fn => `<span class="bd-hidden-chip">${esc(fn)}<button type="button" data-fn="${esc(fn)}" onclick="bdUnhide(this.dataset.fn)">${esc(tt('Unhide'))}</button></span>`).join('');
+  const panel = $('bd-hidden-panel');
+  const show = _bdEdit && fns.length > 0;
+  panel.classList.toggle('open', show);
+  if (!show) { panel.innerHTML = ''; return; }
+  panel.innerHTML = `<div class="bd-hidden-note">${esc(tt('Hidden flights'))} (${fns.length}) — ${esc(tt('Hidden flights only disappear from the Board — their Feed cards and notifications are unaffected. A hidden flight still reappears on a day it gets a Feed card.'))}</div>` +
+    fns.map(fn => `<span class="bd-hidden-chip${_bdSel.has(fn) ? ' sel' : ''}" data-fn="${esc(fn)}" onclick="bdSelToggle(this.dataset.fn)" style="cursor:pointer">${esc(fn)}</span>`).join('');
 }
 
-function bdToggleHiddenPanel() {
-  const open = !$('bd-hidden-panel').classList.contains('open');
-  $('bd-hidden-panel').classList.toggle('open', open);
-  $('bd-hidden-btn').classList.toggle('open', open);
+function _bdSyncEditBar() {
+  const btn = $('bd-edit-btn');
+  btn.textContent = _bdEdit ? tt('Done') : tt('Edit');
+  btn.classList.toggle('on', _bdEdit);
+  $('bd-edit-bar').classList.toggle('show', _bdEdit);
+  const hiddenSet = new Set((_bdData && _bdData.hidden) || []);
+  const sel = [..._bdSel];
+  const nHide = sel.filter(fn => !hiddenSet.has(fn)).length, nUnhide = sel.length - nHide;
+  $('bd-sel-count').textContent = sel.length ? `${sel.length} ${tt('selected')}` : tt('Select flights to hide or unhide');
+  const h = $('bd-eb-hide'), u = $('bd-eb-unhide');
+  h.textContent = `${tt('Hide')}${nHide ? ` (${nHide})` : ''}`; h.disabled = !nHide;
+  u.textContent = `${tt('Unhide')}${nUnhide ? ` (${nUnhide})` : ''}`; u.disabled = !nUnhide;
 }
 
-async function bdToggle(btn) {
-  const fn = btn.dataset.fn;
-  if (btn.dataset.hidden === '1') return bdUnhide(fn);
+function bdToggleEdit() {
+  _bdEdit = !_bdEdit;
+  _bdSel.clear();
+  _bdOpenKey = null;
+  renderBoard();
+}
+
+function bdSelToggle(fn) {
+  if (_bdSel.has(fn)) _bdSel.delete(fn); else _bdSel.add(fn);
+  renderBoard();
+}
+
+// Row tap: edit mode selects the flight number; otherwise expands the card (Expected / not-on-board rows don't expand).
+function bdRowClick(el) {
+  if (_bdEdit) return bdSelToggle(el.dataset.fn);
+  const r = _bdRowsByKey[el.dataset.key];
+  if (r && r.pending) return;
+  bdOpen(el);
+}
+
+async function bdBatch(kind) {
+  const hiddenSet = new Set((_bdData && _bdData.hidden) || []);
+  const sel = [..._bdSel];
+  const body = kind === 'hide' ? { hide: sel.filter(fn => !hiddenSet.has(fn)) } : { unhide: sel.filter(fn => hiddenSet.has(fn)) };
+  const n = (body.hide || body.unhide).length;
+  if (!n) return;
   try {
-    await api('/board/hidden', { method: 'POST', body: JSON.stringify({ flight_number: fn }) });
-    toast(`${fn} ${tt('hidden')}`);
+    await api('/board/hidden/batch', { method: 'POST', body: JSON.stringify(body) });
+    toast(`${n} ${kind === 'hide' ? tt('hidden') : tt('unhidden')}`);
+    _bdSel.clear();
     await loadBoard();
   } catch (e) { toast('Error: ' + e.message); }
 }
@@ -3504,14 +3540,6 @@ async function bdPinToggle(btn) {
         renderBoard();
       } catch (e) { toast('Error: ' + e.message); }
     });
-}
-
-async function bdUnhide(fn) {
-  try {
-    await api('/board/hidden/' + encodeURIComponent(fn), { method: 'DELETE' });
-    toast(`${fn} ${tt('unhidden')}`);
-    await loadBoard();
-  } catch (e) { toast('Error: ' + e.message); }
 }
 
 

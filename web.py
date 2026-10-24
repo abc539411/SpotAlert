@@ -5312,6 +5312,20 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         _cfg_for_user(user).store.add_board_hidden(fn, _owner_for(user))
         return JSONResponse({"ok": True})
 
+    @app.post("/api/board/hidden/batch")
+    async def batch_board_hidden(request: Request, user=Depends(_auth_require_role("controller"))):
+        """Board edit mode: hide and/or unhide many flight numbers in one call."""
+        body = await request.json()
+        store_ = _cfg_for_user(user).store
+        owner = _owner_for(user)
+        hide = [str(x).strip() for x in (body.get("hide") or []) if str(x).strip()]
+        unhide = [str(x).strip() for x in (body.get("unhide") or []) if str(x).strip()]
+        for fn in hide:
+            store_.add_board_hidden(fn, owner)
+        for fn in unhide:
+            store_.remove_board_hidden(fn, owner)
+        return JSONResponse({"ok": True, "hidden": len(hide), "unhidden": len(unhide)})
+
     @app.delete("/api/board/hidden/{flight_number}")
     async def remove_board_hidden(flight_number: str, user=Depends(_auth_require_role("controller"))):
         _cfg_for_user(user).store.remove_board_hidden(flight_number, _owner_for(user))
