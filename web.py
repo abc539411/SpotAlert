@@ -1978,7 +1978,8 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
             })
 
         return JSONResponse({"days": days_result, "airport_iata": airport_iata_, "timezone": tz_name,
-                             "available_months": store_.get_timeline_months()})
+                             "available_months": store_.get_timeline_months(),
+                             "has_older": store_.has_timeline_before((today_local - _dt2.timedelta(days=7)).isoformat())})
 
     # ── Collection tab — Lightroom catalog statistics ──────────────────────────
 
@@ -5120,6 +5121,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                                    "origin_city": cities.get(hh_.get("origin_iata"), "") or ""})
         return {
             "hidden_flights": hidden_flights, "available_months": store_.get_board_months(),
+            "has_older": store_.has_board_before(starts.get(-7) or starts[min(starts)]),
             "airport_iata": cfg_.airport_iata, "timezone": tz_name, "now_ts": now_ts,
             "updated_ts": int(meta["updated_ts"]) if meta.get("updated_ts") else None,
             "data_through_ts": through, "hidden": sorted(hidden), "roster_size": len(roster), "days": days,

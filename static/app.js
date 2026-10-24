@@ -3597,7 +3597,7 @@ function renderBoard() {
       </div>
       <div class="bd-rows">${day.rows.map(r => _bdRow(r, isMobile)).join('')}${empty}</div>
     </div>${day.is_today ? _bdHiddenCard() : ''}`;
-  }).join('') + (_bdOlderView ? '' : `<div class="bd-older"><button type="button" class="older-btn" onclick="bdLoadOlder(this)">${esc(tt('Older'))} ›</button></div>`);
+  }).join('') + (_bdOlderView || !d.has_older ? '' : `<div class="bd-older"><button type="button" class="older-btn" onclick="bdLoadOlder(this)">${esc(tt('Older'))} ›</button></div>`);
   if (!_bdPositioned && wrap.firstElementChild) {
     // First render: land on today's card (future days sit to its left, past days to its right).
     const today = wrap.querySelector('.bd-today');
@@ -5797,7 +5797,9 @@ function _renderRecommendation(data) {
   const render = d => _renderDayCard(d, tz);
   const cards = data.days.filter(d => d.clusters && d.clusters.length > 0 || d.is_today);
   if (!cards.length) return '<div class="rec-scroll">' + data.days.slice(0,3).map(render).join('') + '</div>';
-  return `<div class="rec-scroll">${data.days.map(render).join('')}<div class="rec-older"><button type="button" class="older-btn" onclick="recLoadOlder(this)">${esc(tt('Older'))} ›</button></div></div>`;
+  // the Older slot only exists when there is something older than the default view to show
+  const olderSlot = data.has_older ? `<div class="rec-older"><button type="button" class="older-btn" onclick="recLoadOlder(this)">${esc(tt('Older'))} ›</button></div>` : '';
+  return `<div class="rec-scroll">${data.days.map(render).join('')}${olderSlot}</div>`;
 }
 
 // Wall-clock hour/minute of a given instant (default: now) AT THE AIRPORT's own

@@ -1204,6 +1204,17 @@ class SqliteStore:
                 "SELECT DISTINCT substr(date, 1, 7) AS m FROM timeline_cache "
                 "WHERE clusters_json IS NOT NULL AND clusters_json NOT IN ('', '[]') ORDER BY m DESC").fetchall()]
 
+    def has_timeline_before(self, date_str: str) -> bool:
+        """Any cached Spotting day with flights older than date_str (YYYY-MM-DD)?"""
+        with self._connect() as conn:
+            return conn.execute("SELECT 1 FROM timeline_cache WHERE date < ? AND clusters_json IS NOT NULL "
+                                "AND clusters_json NOT IN ('', '[]') LIMIT 1", (date_str,)).fetchone() is not None
+
+    def has_board_before(self, ts: int) -> bool:
+        with self._connect() as conn:
+            return conn.execute("SELECT 1 FROM board_flights WHERE COALESCE(estimated_ts, scheduled_ts) < ? LIMIT 1",
+                                (int(ts),)).fetchone() is not None
+
     def get_board_months(self) -> list:
         """YYYY-MM months (newest first) that have Board rows."""
         with self._connect() as conn:
