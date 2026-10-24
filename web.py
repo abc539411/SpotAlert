@@ -4861,19 +4861,18 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
             hh = roster[fn].get("hist") or {}
             if not reg and hh.get("airline_icao"):
                 al_name, al_icao = hh.get("airline_name") or al_name, hh["airline_icao"]
-            # No aircraft yet → list the "possibilities": every registration that triggered a card on this
+            # Every row: list the "possibilities": every registration that triggered a card on this
             # flight number across the full history (3 years; visible Feed cards + ones hidden by the Exclusion List, flagged),
             # one line per aircraft with its most recent trigger and how many times.
             past = []
-            if not reg:
-                allc = [(c, False) for c in roster[fn]["cards"]] + [(c, True) for c in excluded_cards.get(fn, [])]
-                by_reg: dict = {}
-                for c, ex in sorted(allc, key=lambda x: x[0][0], reverse=True):      # newest first
-                    e_ = by_reg.setdefault(c[1], {"ts": c[0], "registration": c[1], "card_types": c[2],
-                                                  "extra_info": c[3] or "", "aircraft_type": c[4] or "",
-                                                  "excluded": ex, "count": 0})
-                    e_["count"] += 1
-                past = list(by_reg.values())
+            allc = [(c, False) for c in roster[fn]["cards"]] + [(c, True) for c in excluded_cards.get(fn, [])]
+            by_reg: dict = {}
+            for c, ex in sorted(allc, key=lambda x: x[0][0], reverse=True):      # newest first
+                e_ = by_reg.setdefault(c[1], {"ts": c[0], "registration": c[1], "card_types": c[2],
+                                              "extra_info": c[3] or "", "aircraft_type": c[4] or "",
+                                              "excluded": ex, "count": 0})
+                e_["count"] += 1
+            past = list(by_reg.values())
             by_off[off]["rows"].append({
                 "past_triggers": past,
                 "flight_number": fn, "scheduled_ts": r["scheduled_ts"], "estimated_ts": r["estimated_ts"],

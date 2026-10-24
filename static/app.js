@@ -3269,9 +3269,9 @@ function _bdDetailHtml(r) {
     }).join('');
   }
 
-  // Not-assigned flights only: why this flight number earned its place — its last (up to 5) triggers.
+  // Every aircraft that has triggered a card on this flight number (3-year history) — the "possibilities".
   let triggers = '';
-  if (!r.registration && (r.past_triggers || []).length) {
+  if ((r.past_triggers || []).length) {
     triggers = `<div class="bd-sec-t" style="border-top:1px solid var(--border);padding-top:12px">${esc(tt('Possible aircraft'))}</div>` +
       `<div class="bd-trig">${r.past_triggers.map(t => {
         const chips = (t.card_types || []).map(c => `<span class="chip ${chipClass(c)}">${esc(chipLabel(c))}</span>`).join('');
@@ -3281,7 +3281,7 @@ function _bdDetailHtml(r) {
           ? `<span class="bd-trig-lv">${esc(t.aircraft_type)}</span>` : '';   // plain italic text, same style as the livery name
         const days = Math.max(0, Math.floor((Date.now() / 1000 - t.ts) / 86400));
         const ago = days === 0 ? tt('today') : (_lang === 'zh' ? `${days} 天` : `${days} day${days === 1 ? '' : 's'}`);
-        return `<div class="bd-trig-row${t.excluded ? ' is-excl' : ''}" title="${t.excluded ? esc(tt('Hidden from Feed by the Exclusion List')) : ''}">` +
+        return `<div class="bd-trig-row${t.excluded ? ' is-excl' : ''}${t.registration === r.registration ? ' is-current' : ''}" title="${t.excluded ? esc(tt('Hidden from Feed by the Exclusion List')) : ''}">` +
           `<span class="bd-trig-d">${esc(ago)}</span>` +
           `<a href="${_fr24AircraftUrl(t.registration)}" target="_blank" rel="noopener" class="bd-trig-reg">${_flag(_regoCountryCode(t.registration), { h: 10 })}${esc(t.registration)}</a>` +
           `<span class="bd-trig-n">${t.count}x</span>` +
@@ -3295,8 +3295,8 @@ function _bdDetailHtml(r) {
     ${facts.trim() ? `<div class="bd-facts" style="margin-top:10px">${facts}</div>` : ''}
     <div class="bd-sec-t" style="border-top:1px solid var(--border);padding-top:12px">${esc(tt('Equipment History'))}</div>
     <div class="srch-fl-rows" style="margin-top:0">${hist}</div>
-    ${triggers}
     ${lastSeen || spotted ? `<div class="detail-cards">${lastSeen ? `<div class="dc"><span class="lbl">${esc(tt('Last Seen'))}</span><span class="val">${esc(lastSeen)}</span></div>` : ''}${spotted}</div>` : ''}
+    ${triggers}
   </div>`;
 }
 
