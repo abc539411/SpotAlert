@@ -745,6 +745,8 @@
     .bd-detail .dc { background: var(--surface); }
     .bd-trig { display: flex; flex-direction: column; gap: 6px; }
     .bd-trig-row { display: flex; align-items: center; gap: 10px; font-size: 12px; padding: 4px 8px; background: var(--surface); border: 1px solid var(--border); border-radius: 4px; }
+    .bd-trig-row { cursor: pointer; }
+    .bd-trig-row:hover { border-color: var(--accent); }
     .bd-trig-row.is-excl { border: 1.5px dashed rgba(255,255,255,0.4); }
     .bd-trig-row.is-shot > * { opacity: .35; filter: grayscale(1); }   /* photographed more than SPOT_MAX_SPOTTED times — same gate as Spotting */
     .bd-trig-row.is-current { box-shadow: inset 3px 0 0 var(--accent); }   /* the aircraft assigned to this flight now */

@@ -3254,6 +3254,43 @@ async function bdOpen(rowEl) {
   if (jobs.length) { await Promise.all(jobs); if (_bdOpenKey === key) { renderBoard(); _bdRefreshSheet(); } }
 }
 
+// Tap a Possible-aircraft row -> the same photo overlay the Spotted pills open (_spOpenPhotos), but showing the
+// aircraft's JetPhotos picture (airframes.photo_url — the one Feed / Spotting use), with its registration, type,
+// operator, livery and when it was last seen at the airport.
+async function bdPossiblePreview(el) {
+  const reg = el.dataset.reg;
+  if (!reg) return;
+  const overlay = _spPhotosOverlay();
+  const body = $('sp-photos-body');
+  body.innerHTML = `<div class="sp-photos-loading">${tt('Loading…')}</div><span class="sp-photo-close" onclick="_spClosePhotos()"></span>`;
+  overlay.classList.add('open');
+  if (!_bdAc[reg]) {
+    try { _bdAc[reg] = await api('/board/aircraft/' + encodeURIComponent(reg)); } catch (e) { _bdAc[reg] = 'err'; }
+  }
+  const ac = _bdAc[reg];
+  if (!ac || ac === 'err' || !ac.photo_url) {
+    body.innerHTML = `<div class="sp-photos-empty">${tt('No photos found.')}</div><span class="sp-photo-close" onclick="_spClosePhotos()"></span>`;
+    return;
+  }
+  const flag = _flag(_regoCountryCode(reg), { h: 13 });
+  const badge = ac.manufacturer ? mfrBadge(ac.manufacturer) : '';
+  const type = el.dataset.type || ac.type_code || '';
+  const operator = ac.operator ? tExternalName(ac.operator) : '';
+  const metaLine = [type, operator].filter(Boolean).join(' · ');
+  const livery = el.dataset.livery || ac.livery || '';
+  const notesHtml = livery ? `<span class="sp-photo-notes">${esc(tLiveryName(livery))}</span>` : '';
+  const last = Number(el.dataset.last) || 0;
+  const dateHtml = last
+    ? `<span class="sp-photo-date"><span>${esc((_bdData && _bdData.airport_iata) || '')} · ${esc(_colShortDate(new Date(last * 1000).toISOString().slice(0, 10)))}</span></span>` : '';
+  const row1Html = (metaLine || badge) ? `<div class="sp-photo-row1"><div class="sp-photo-row1-left">${badge}<span>${esc(metaLine)}</span></div>${dateHtml}</div>` : '';
+  const row2Html = notesHtml ? `<div class="sp-photo-row2"><div class="sp-photo-row2-left">${notesHtml}</div></div>` : '';
+  body.innerHTML = `
+    <img class="sp-photo-img" src="${esc(ac.photo_url)}" alt="" oncontextmenu="return false">
+    <span class="sp-photo-close" onclick="_spClosePhotos()"></span>
+    <div class="sp-photo-top"><span class="sp-photo-rego">${flag}${esc(reg)}</span></div>
+    <div class="sp-photo-bottom">${row1Html}${row2Html}</div>`;
+}
+
 function _bdDetailHtml(r) {
   const ac = r.registration ? _bdAc[r.registration] : null;
   const eq = _bdEq[r.flight_number];
@@ -3372,7 +3409,7 @@ function _bdDetailHtml(r) {
           ? `<span class="bd-trig-lv">${esc(t.aircraft_type)}</span>` : '';   // plain italic text, same style as the livery name
         const days = Math.max(0, Math.floor((Date.now() / 1000 - (t.last_seen_ts || t.ts)) / 86400));   // since last seen at the airport
         const ago = days === 0 ? tt('today') : (_lang === 'zh' ? `${days} 天` : `${days} day${days === 1 ? '' : 's'}`);
-        return `<div class="bd-trig-row${t.excluded ? ' is-excl' : ''}${t.registration === r.registration ? ' is-current' : ''}${t.over_spotted ? ' is-shot' : ''}" title="${esc([t.excluded ? tt('Hidden from Feed by the Exclusion List') : '', t.over_spotted ? `${tt('Already photographed')} ${t.spotted}×` : ''].filter(Boolean).join(' · '))}">` +
+        return `<div class="bd-trig-row${t.excluded ? ' is-excl' : ''}${t.registration === r.registration ? ' is-current' : ''}${t.over_spotted ? ' is-shot' : ''}" data-reg="${esc(t.registration)}" data-last="${t.last_seen_ts || t.ts || 0}" data-type="${esc(t.aircraft_type || '')}" data-livery="${esc(((t.card_types || []).includes('Special Livery') && t.extra_info) ? t.extra_info : '')}" onclick="bdPossiblePreview(this)" title="${esc([t.excluded ? tt('Hidden from Feed by the Exclusion List') : '', t.over_spotted ? `${tt('Already photographed')} ${t.spotted}×` : ''].filter(Boolean).join(' · '))}">` +
           `<span class="bd-trig-d">${esc(ago)}</span>` +
           `<a href="${_fr24AircraftUrl(t.registration)}" target="_blank" rel="noopener" class="bd-trig-reg">${_flag(_regoCountryCode(t.registration), { h: 10 })}${esc(t.registration)}</a>` +
           `<span class="bd-trig-n">${t.count}x</span>` +
