@@ -4907,11 +4907,38 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                             f"AND COALESCE(current_status,'') NOT IN ('Cancelled','Swapped') GROUP BY registration",
                             tuple(ch)).fetchall():
                         _visits[rr[0]] = rr[1]
+            # "Shot too many times" — the Spotting table's own gate: the Controller's SPOT_MAX_SPOTTED against the
+            # Lightroom session count at this airport (per livery when the trigger was a Special Livery, else per
+            # registration); over the limit → over_spotted. Cached per aircraft/livery for a few minutes.
+            try:
+                _max_spot = int(store_.load_setting("SPOT_MAX_SPOTTED") or 0)
+            except (TypeError, ValueError):
+                _max_spot = 0
+            _cat = app.state.get_user_catalog(user) if _max_spot > 0 else None
+            def _spotted_n(reg_, livery_):
+                if not _cat:
+                    return 0
+                k = (cfg_.airport_iata, _owner_id(user), reg_, (livery_ or "").strip().lower())
+                hit_ = _board_spot_cache.get(k)
+                if hit_ and time.time() - hit_[0] < 300:
+                    return hit_[1]
+                try:
+                    n_ = (_cat.get_livery_session_count_at_airport(reg_, cfg_.airport_iata, livery_) if k[3]
+                          else _cat.get_session_count_at_airport(reg_, cfg_.airport_iata)) or 0
+                except Exception:
+                    n_ = 0
+                _board_spot_cache[k] = (time.time(), n_)
+                return n_
             for o in by_off.values():
                 for row in o["rows"]:
                     for t in row.get("past_triggers", []):
                         t["last_seen_ts"] = _seen.get(t["registration"]) or t["ts"]
                         t["count"] = max(_visits.get(t["registration"], 0), t["count"])
+                        liv_ = t["extra_info"] if "Special Livery" in (t["card_types"] or []) else ""
+                        t["spotted"] = _spotted_n(t["registration"], liv_)
+                        t["over_spotted"] = _max_spot > 0 and t["spotted"] > _max_spot
+                    # List order = the days shown: most recently seen at the airport first.
+                    row["past_triggers"].sort(key=lambda t: t["last_seen_ts"], reverse=True)
         # "Expected" rows: a roster flight number with NO schedule row on today / tomorrow yet (FR24's board only
         # reaches so far ahead) is listed at its usual time, taken from its history. It stays until the latest
         # pull reaches PENDING_GRACE past that time without the flight showing up — then it's assumed not
@@ -4971,6 +4998,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
     # (and these aircraft usually never triggered a card, so nothing is cached in airframes yet) — cache the
     # answer per registration for an hour so re-opening / the 60 s refresh never re-hits FR24.
     _board_ac_cache: dict = {}
+    _board_spot_cache: dict = {}      # (airport, owner, reg, livery) -> (ts, Lightroom session count)
 
     def _board_aircraft_info(cfg_, registration: str) -> dict:
         import re as _re3

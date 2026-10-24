@@ -355,7 +355,7 @@ const UI_ZH = {
   'Refresh Board': '刷新看板', 'Checking FR24…': '正在检查 FR24…', 'Board updated': '看板已更新',
   "Waiting for this airport's first check — tap Refresh to run one now.": '正在等待该机场的首次检查——点击刷新立即检查。',
   'Could not load the Board.': '无法加载看板。',
-  'Not assigned yet': '尚未分配机号', 'Not on board yet': '尚未上板', 'Possible aircraft': '可能的飞机', 'today': '今天', 'Last triggered': '上次触发原因', 'Hidden from Feed by the Exclusion List': '已被排除名单隐藏', 'No regular flights to show.': '暂无需要关注的常规航班。', 'No Feed cards': '无 Feed 卡片', 'Aircraft not assigned yet': '尚未分配飞机', 'Could not load aircraft details.': '无法加载飞机信息。',
+  'Not assigned yet': '尚未分配机号', 'Not on board yet': '尚未上板', 'Possible aircraft': '可能的飞机', 'Already photographed': '已拍摄', 'today': '今天', 'Last triggered': '上次触发原因', 'Hidden from Feed by the Exclusion List': '已被排除名单隐藏', 'No regular flights to show.': '暂无需要关注的常规航班。', 'No Feed cards': '无 Feed 卡片', 'Aircraft not assigned yet': '尚未分配飞机', 'Could not load aircraft details.': '无法加载飞机信息。',
   'No equipment history yet.': '暂无机型使用记录。', 'Registration': '注册号', 'Aircraft': '飞机', 'Manufacturer': '制造商', 'Operator': '运营商',
   'Owner': '所有者', 'Livery': '涂装', 'Country': '国家/地区', 'Mode S': 'Mode S', 'Serial No.': '序列号', 'Built': '出厂年份', 'Feed cards here': '本场 Feed 卡片数',
   'Feed card': '动态卡片', 'Excluded': '已排除', 'Has a card in Feed': '动态中已有卡片',
@@ -3281,7 +3281,7 @@ function _bdDetailHtml(r) {
           ? `<span class="bd-trig-lv">${esc(t.aircraft_type)}</span>` : '';   // plain italic text, same style as the livery name
         const days = Math.max(0, Math.floor((Date.now() / 1000 - (t.last_seen_ts || t.ts)) / 86400));   // since last seen at the airport
         const ago = days === 0 ? tt('today') : (_lang === 'zh' ? `${days} 天` : `${days} day${days === 1 ? '' : 's'}`);
-        return `<div class="bd-trig-row${t.excluded ? ' is-excl' : ''}${t.registration === r.registration ? ' is-current' : ''}" title="${t.excluded ? esc(tt('Hidden from Feed by the Exclusion List')) : ''}">` +
+        return `<div class="bd-trig-row${t.excluded ? ' is-excl' : ''}${t.registration === r.registration ? ' is-current' : ''}${t.over_spotted ? ' is-shot' : ''}" title="${esc([t.excluded ? tt('Hidden from Feed by the Exclusion List') : '', t.over_spotted ? `${tt('Already photographed')} ${t.spotted}×` : ''].filter(Boolean).join(' · '))}">` +
           `<span class="bd-trig-d">${esc(ago)}</span>` +
           `<a href="${_fr24AircraftUrl(t.registration)}" target="_blank" rel="noopener" class="bd-trig-reg">${_flag(_regoCountryCode(t.registration), { h: 10 })}${esc(t.registration)}</a>` +
           `<span class="bd-trig-n">${t.count}x</span>` +
