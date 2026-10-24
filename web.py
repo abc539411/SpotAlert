@@ -5263,6 +5263,8 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
             pool = same if len(same) >= 2 else [m for m, _ in samples]
             shifted = sorted((m - 180) % 1440 for m in pool)          # day boundary at 03:00 so 23:50 / 00:10 cluster
             return (shifted[len(shifted) // 2] + 180) % 1440
+        _drop_days = store_.board_drop_after_days()
+        _recent = store_.board_recently_seen_flight_numbers(cfg_.airport_iata, _drop_days) if _drop_days else None
         for o in (0, 1):
             if o not in by_off:
                 continue
@@ -5271,6 +5273,8 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                 hh = e.get("hist") or {}
                 if fn in hidden or fn in have or not hh.get("ts"):
                     continue
+                if _recent is not None and fn not in _recent:
+                    continue                    # silent for more than "Drop After" days: no placeholder (real schedule rows are unaffected)
                 day_date = d0 + _dtm.timedelta(days=o)
                 exp_ts = int(tz.localize(_dtm.datetime.combine(day_date, _dtm.time.min)
                                          + _dtm.timedelta(minutes=_usual_min(hh["ts"], day_date))).timestamp())

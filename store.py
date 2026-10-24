@@ -1073,40 +1073,43 @@ class SqliteStore:
             return BOARD_MIN_APPEARANCES
 
     def board_drop_after_days(self) -> int:
-        """Settings > Board > Drop After (BOARD_DROP_AFTER_DAYS): 0 = never drop; default 30."""
+        """Settings > Board > Drop After (BOARD_DROP_AFTER_DAYS): only the "Not on board yet" placeholder rows use it;
+        0 = never drop; default 30."""
         try:
             return max(0, min(int(self.load_setting("BOARD_DROP_AFTER_DAYS") or 30), 365))
         except (TypeError, ValueError):
             return 30
 
+    def board_recently_seen_flight_numbers(self, airport_iata: str, days: int) -> set:
+        """Flight numbers last recorded at this airport within `days` days (the tracker's last sighting)."""
+        cutoff = int(__import__("time").time()) - int(days) * 86400
+        with self._connect() as conn:
+            return {r[0] for r in conn.execute(
+                "SELECT flight_number FROM route_type_tracker WHERE airport_iata = ? "
+                "GROUP BY flight_number HAVING MAX(last_seen_ts) >= ?", (airport_iata, cutoff)).fetchall()}
+
     def board_candidate_flight_numbers(self, airport_iata: str,
-                                        min_appearances: int = BOARD_MIN_APPEARANCES,
-                                        drop_after_days: int = None) -> set:
+                                        min_appearances: int = BOARD_MIN_APPEARANCES) -> set:
         """Flight numbers worth tracking on the Board: seen as an ARRIVAL at this airport on at
         least `min_appearances` separate occasions (route_type_tracker.count already de-dupes
         sightings < 4 h apart; origin_iata IS NOT NULL keeps departure-only numbers out) AND
         having produced at least one Feed card (flight_arrivals row with tags, not Cancelled/
         Swapped). A viewer-agnostic SUPERSET: web.py's /api/board re-applies the Controller's
-        own exclusion/keyword/watchlist stripping before a number actually shows.
-        A flight number not seen at this airport for more than `drop_after_days` days (default: the
-        BOARD_DROP_AFTER_DAYS setting, 30; 0 = never) is dropped as a candidate — it has gone quiet."""
-        if drop_after_days is None:
-            drop_after_days = self.board_drop_after_days()
-        cutoff = int(__import__("time").time()) - int(drop_after_days) * 86400 if drop_after_days else 0
+        own exclusion/keyword/watchlist stripping before a number actually shows."""
         with self._connect() as conn:
             rows = conn.execute(
                 """
                 SELECT r.flight_number FROM route_type_tracker r
                 WHERE r.airport_iata = ? AND r.origin_iata IS NOT NULL AND r.origin_iata != ''
                 GROUP BY r.flight_number
-                HAVING SUM(r.count) >= ? AND MAX(r.last_seen_ts) >= ?
+                HAVING SUM(r.count) >= ?
                    AND r.flight_number IN (
                        SELECT flight_number FROM flight_arrivals
                        WHERE notif_types IS NOT NULL AND notif_types NOT IN ('', '[]')
                          AND COALESCE(current_status, '') NOT IN ('Cancelled', 'Swapped')
                    )
                 """,
-                (airport_iata, int(min_appearances), cutoff),
+                (airport_iata, int(min_appearances)),
             ).fetchall()
         return {r[0] for r in rows}
 
