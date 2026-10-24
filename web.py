@@ -4885,10 +4885,12 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                 "extra_info": extra_info,
             })
         # Possible-aircraft lines show "days since this aircraft was last seen at the airport" (any flight, from
-        # rego_sightings), not "since it last operated this flight number" — display only; list/order/counts unchanged.
+        # rego_sightings) and total appearances (flight_arrivals, any flight number), not "since it last operated this
+        # flight number" — display only; which aircraft are listed (and their order) is still per flight number.
         _regs = {t["registration"] for o in by_off.values() for row in o["rows"]
                  for t in row.get("past_triggers", []) if t.get("registration")}
         _seen: dict = {}
+        _visits: dict = {}
         if _regs:
             _rl = sorted(_regs)
             with store_._connect() as conn:
@@ -4898,10 +4900,18 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                             f"SELECT registration, last_seen_ts FROM rego_sightings WHERE registration IN ({','.join('?' * len(ch))})",
                             tuple(ch)).fetchall():
                         _seen[rr[0]] = rr[1]
+                    # Overall appearances at this airport (any flight number) — the "Nx" pill. The airport only
+                    # records a visit when it produced a card, so that is the closest thing to a visit count.
+                    for rr in conn.execute(
+                            f"SELECT registration, COUNT(*) FROM flight_arrivals WHERE registration IN ({','.join('?' * len(ch))}) "
+                            f"AND COALESCE(current_status,'') NOT IN ('Cancelled','Swapped') GROUP BY registration",
+                            tuple(ch)).fetchall():
+                        _visits[rr[0]] = rr[1]
             for o in by_off.values():
                 for row in o["rows"]:
                     for t in row.get("past_triggers", []):
                         t["last_seen_ts"] = _seen.get(t["registration"]) or t["ts"]
+                        t["count"] = max(_visits.get(t["registration"], 0), t["count"])
         # "Expected" rows: a roster flight number with NO schedule row on today / tomorrow yet (FR24's board only
         # reaches so far ahead) is listed at its usual time, taken from its history. It stays until the latest
         # pull reaches PENDING_GRACE past that time without the flight showing up — then it's assumed not
