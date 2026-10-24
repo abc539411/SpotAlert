@@ -491,6 +491,9 @@
     .header-whoami-airport .hdr-clock-time { font-weight: 500; color: var(--dim); font-variant-numeric: tabular-nums; }
     .header-whoami-airport .hdr-clock-abbr { font-weight: 500; color: var(--dim); font-size: 11px; }
     .header-clock { display: none; }
+    /* Board: the "Updated … · Data through …" text now lives in the Refresh button's pill (all screen sizes); the strip under the nav bar only exists while editing. */
+    #tab-board .bd-meta { display: none; }
+    #tab-board:not(.bd-edit-on) .bd-top { display: none; }
     /* "Updated N min ago · Data through …" pill shown by the first click on Refresh Feed / Refresh Board; the second
        click actually refreshes. position:fixed popover => display:none as its base state. */
     .refresh-pill { display: none; position: fixed; z-index: 1500; padding: 7px 14px; border-radius: 999px; background: var(--surface2);
@@ -498,8 +501,6 @@
                     overflow: hidden; text-overflow: ellipsis; box-shadow: 0 6px 20px rgba(0,0,0,.45); }
     .refresh-pill.show { display: block; }
     @media (min-width: 768px) {
-      #tab-board .bd-meta { display: none; }
-      #tab-board:not(.bd-edit-on) .bd-top { display: none; }
       #tab-board .bd-top { padding-top: 8px; }
     }
     @media (max-width: 767px) {

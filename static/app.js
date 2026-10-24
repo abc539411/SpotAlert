@@ -3516,7 +3516,9 @@ function _bdHiddenCard() {
 
 function _bdSyncEditBar() {
   const btn = $('btn-edit-board');                 // lives in the nav bar, Board tab only
-  btn.textContent = _bdEdit ? tt('Done') : tt('Edit');
+  // Phone: icon-only so it fits beside the centred logo and the other two buttons; desktop keeps the word.
+  btn.textContent = window.innerWidth < 768 ? (_bdEdit ? '✓' : '✎') : (_bdEdit ? tt('Done') : tt('Edit'));
+  btn.title = _bdEdit ? tt('Done') : tt('Edit');
   btn.classList.toggle('on', _bdEdit);
   $('tab-board').classList.toggle('bd-edit-on', _bdEdit);
   $('bd-edit-bar').classList.toggle('show', _bdEdit);
@@ -7528,3 +7530,4 @@ document.addEventListener('click', e => {
   if (!_gridDetailEl) return;
   if (!e.target.closest('.gd-inner') && !e.target.closest('.sq')) collapseGridDetail();
 });
+window.addEventListener('resize', () => { if (typeof _bdSyncEditBar === 'function' && $('btn-edit-board')) _bdSyncEditBar(); });
