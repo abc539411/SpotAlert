@@ -355,7 +355,7 @@ const UI_ZH = {
   'Refresh Board': '刷新看板', 'Checking FR24…': '正在检查 FR24…', 'Board updated': '看板已更新',
   "Waiting for this airport's first check — tap Refresh to run one now.": '正在等待该机场的首次检查——点击刷新立即检查。',
   'Could not load the Board.': '无法加载看板。',
-  'Not assigned yet': '尚未分配机号', 'Not on board yet': '尚未上板', 'Possible aircraft': '可能的飞机', 'Back': '返回', 'Month': '月份', 'Older': '更早', 'Older than 7 days': '7 天前的记录', 'No older days.': '没有更早的记录。', 'No activity in the last 7 days.': '最近 7 天没有活动。', 'Since': '始于', 'Tap to select, then Unhide': '点选后再点“取消隐藏”', 'Edit': '编辑', 'Done': '完成', 'Hide': '隐藏', 'selected': '已选', 'Hidden flights': '已隐藏航班', 'Select flights to hide or unhide': '选择要隐藏或取消隐藏的航班', 'No check yet': '尚未检查', 'Confirm Refresh?': '确认刷新？', 'Added by hand (one-off) — in Feed and Spotting': '手动添加（仅此一次）— 已在 Feed 和拍机时间线', 'Add to Feed + Spotting (one-off)': '加入 Feed 和拍机时间线（仅此一次）', 'Remove this one-off flight from Feed + Spotting': '从 Feed 和拍机时间线移除此航班', 'Click again to add it to Feed + Spotting': '再点一次确认加入', 'Click again to remove it': '再点一次确认移除', 'added to Feed + Spotting': '已加入 Feed 和拍机时间线', 'removed': '已移除', 'Already photographed': '已拍摄', 'today': '今天', 'Last triggered': '上次触发原因', 'Hidden from Feed by the Exclusion List': '已被排除名单隐藏', 'No regular flights to show.': '暂无需要关注的常规航班。', 'No Feed cards': '无 Feed 卡片', 'Aircraft not assigned yet': '尚未分配飞机', 'Could not load aircraft details.': '无法加载飞机信息。',
+  'Not assigned yet': '尚未分配机号', 'Not on board yet': '尚未上板', 'Possible aircraft': '可能的飞机', 'Look through older days': '查看更早的记录', 'Back': '返回', 'Month': '月份', 'Older': '更早', 'Older than 7 days': '7 天前的记录', 'No older days.': '没有更早的记录。', 'No activity in the last 7 days.': '最近 7 天没有活动。', 'Since': '始于', 'Tap to select, then Unhide': '点选后再点“取消隐藏”', 'Edit': '编辑', 'Done': '完成', 'Hide': '隐藏', 'selected': '已选', 'Hidden flights': '已隐藏航班', 'Select flights to hide or unhide': '选择要隐藏或取消隐藏的航班', 'No check yet': '尚未检查', 'Confirm Refresh?': '确认刷新？', 'Added by hand (one-off) — in Feed and Spotting': '手动添加（仅此一次）— 已在 Feed 和拍机时间线', 'Add to Feed + Spotting (one-off)': '加入 Feed 和拍机时间线（仅此一次）', 'Remove this one-off flight from Feed + Spotting': '从 Feed 和拍机时间线移除此航班', 'Click again to add it to Feed + Spotting': '再点一次确认加入', 'Click again to remove it': '再点一次确认移除', 'added to Feed + Spotting': '已加入 Feed 和拍机时间线', 'removed': '已移除', 'Already photographed': '已拍摄', 'today': '今天', 'Last triggered': '上次触发原因', 'Hidden from Feed by the Exclusion List': '已被排除名单隐藏', 'No regular flights to show.': '暂无需要关注的常规航班。', 'No Feed cards': '无 Feed 卡片', 'Aircraft not assigned yet': '尚未分配飞机', 'Could not load aircraft details.': '无法加载飞机信息。',
   'No equipment history yet.': '暂无机型使用记录。', 'Registration': '注册号', 'Aircraft': '飞机', 'Manufacturer': '制造商', 'Operator': '运营商',
   'Owner': '所有者', 'Livery': '涂装', 'Country': '国家/地区', 'Mode S': 'Mode S', 'Serial No.': '序列号', 'Built': '出厂年份', 'Feed cards here': '本场 Feed 卡片数',
   'Feed card': '动态卡片', 'Excluded': '已排除', 'Has a card in Feed': '动态中已有卡片',
@@ -3597,7 +3597,7 @@ function renderBoard() {
       </div>
       <div class="bd-rows">${day.rows.map(r => _bdRow(r, isMobile)).join('')}${empty}</div>
     </div>${day.is_today ? _bdHiddenCard() : ''}`;
-  }).join('') + (_bdOlderView || !d.has_older ? '' : `<div class="bd-older"><button type="button" class="older-btn" onclick="bdLoadOlder(this)">${esc(tt('Older'))} ›</button></div>`);
+  }).join('') + (_bdOlderView || !d.has_older ? '' : `<div class="bd-older"><button type="button" class="older-btn" onclick="bdLoadOlder(this)">${esc(tt('Older'))} ›</button><span class="older-cap">${esc(tt('Look through older days'))}</span></div>`);
   if (!_bdPositioned && wrap.firstElementChild) {
     // First render: land on today's card (future days sit to its left, past days to its right).
     const today = wrap.querySelector('.bd-today');
@@ -3606,7 +3606,11 @@ function renderBoard() {
   } else wrap.scrollLeft = keepX;
   _bdInitThumbs();
   _bdRefreshSheet();
-  if (_bdFocusExtra) { _bdFocusExtra = false; wrap.scrollLeft = 0; }
+  if (_bdFocusExtra) {
+    _bdFocusExtra = false;
+    const fc = wrap.querySelector('.bd-card');
+    wrap.scrollLeft = (isMobile && fc) ? fc.offsetLeft - 6 : 0;     // phone: land on the first older card, controls page is to its left
+  }
   wrap.querySelectorAll('.bd-rows').forEach((el, i) => { el.scrollTop = keepY[i] || 0; });
   if (_lang === 'zh') {
     const open = _bdRowsByKey[_bdOpenKey];
@@ -5765,7 +5769,8 @@ async function _recLoadMonth(ym, slot) {
     _initDragScrollY(card);
     card.style.overflowY = card.scrollHeight > card.clientHeight ? 'auto' : 'hidden';
   });
-  strip.scrollLeft = 0;
+  const firstCard = strip.querySelector('.rec-extra');
+  strip.scrollLeft = (window.innerWidth < 768 && firstCard) ? firstCard.offsetLeft - 6 : 0;
   if (!extra.length) toast(`${_olderMonthLabel(ym)}: ${tt('No older days.')}`);
 }
 async function recLoadOlder(btn) {           // "Older ›": the current month's earlier days, in a view of their own
@@ -5784,7 +5789,7 @@ function recOlderBack() {                    // back to the default (+3/-7) view
   strip.querySelectorAll('.rec-extra').forEach(c => c.remove());
   strip.classList.remove('rec-older-view');
   slot.classList.remove('left');
-  slot.innerHTML = `<button type="button" class="older-btn" onclick="recLoadOlder(this)">${esc(tt('Older'))} ›</button>`;
+  slot.innerHTML = `<button type="button" class="older-btn" onclick="recLoadOlder(this)">${esc(tt('Older'))} ›</button><span class="older-cap">${esc(tt('Look through older days'))}</span>`;
   strip.appendChild(slot);
   strip.querySelectorAll('.rec-day').forEach(c => { c.style.overflowY = c.scrollHeight > c.clientHeight ? 'auto' : 'hidden'; });
   requestAnimationFrame(() => _recCenterToday(strip));
@@ -5798,7 +5803,7 @@ function _renderRecommendation(data) {
   const cards = data.days.filter(d => d.clusters && d.clusters.length > 0 || d.is_today);
   if (!cards.length) return '<div class="rec-scroll">' + data.days.slice(0,3).map(render).join('') + '</div>';
   // the Older slot only exists when there is something older than the default view to show
-  const olderSlot = data.has_older ? `<div class="rec-older"><button type="button" class="older-btn" onclick="recLoadOlder(this)">${esc(tt('Older'))} ›</button></div>` : '';
+  const olderSlot = data.has_older ? `<div class="rec-older"><button type="button" class="older-btn" onclick="recLoadOlder(this)">${esc(tt('Older'))} ›</button><span class="older-cap">${esc(tt('Look through older days'))}</span></div>` : '';
   return `<div class="rec-scroll">${data.days.map(render).join('')}${olderSlot}</div>`;
 }
 

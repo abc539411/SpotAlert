@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 log = logging.getLogger(__name__)
 
 # How long cached Spotting days are kept (the Spotting / Board month picker reaches back this far).
-TIMELINE_CACHE_RETENTION_DAYS = 365
+TIMELINE_CACHE_RETENTION_DAYS = 3 * 365
 # How long flight_arrivals rows (Feed cards) are kept. Feed only reads the last 30 days; the
 # long tail exists so the Board can tell whether a flight number has EVER triggered a card.
 FLIGHT_ARRIVALS_RETENTION_DAYS = 3 * 365
