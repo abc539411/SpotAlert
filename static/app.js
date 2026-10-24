@@ -3187,7 +3187,7 @@ function logoTap() {
 // Phones: the Board has no tab in the bottom bar. The Controller gets there by pulling the Feed all the way down from
 // its top — a cue ("Pull down for Board") follows the finger and the Board opens on release past the threshold.
 (function initPullForBoard() {
-  const lockAt = () => Math.round(window.innerHeight * 0.5);   // pull distance (half the screen) at which the Board locks open by itself
+  const lockAt = () => Math.round(window.innerHeight / 3);   // pull distance (a third of the screen) at which the Board locks open by itself
   let startY = null, startX = 0, pull = 0, locked = false, busy = false, H = 0;
   const feed = () => document.getElementById('tab-history');
   const board = () => document.getElementById('tab-board');
