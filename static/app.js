@@ -3333,8 +3333,9 @@ function _tourBuildSteps() {
                           `乘客可以更改语言、通知和大屏视图；编辑筛选、拍机设置和图库属于飞行员功能。`) : null },
     { tab: 'history', target: null,
       title: z('You are all set', '一切就绪'),
-      body: z(`Tap the SpotAlert logo any time to jump back to today. Retake this tour from Settings, General.`,
-              `随时点按 SpotAlert 标志即可回到今天。您可以在“设置 > 通用”中重新观看本导览。`) },
+      body: z(`Tap the SpotAlert logo any time to jump back to today. Retake this tour from Settings, General. For detailed manuals and documentation, visit our GitHub page.`,
+              `随时点按 SpotAlert 标志即可回到今天。您可以在“设置 > 通用”中重新观看本导览。更详细的使用手册和文档，请访问我们的 GitHub 页面。`),
+      link: 'https://github.com/abc539411/SpotAlert' },
   ];
   if (_tourNoAirport) return steps.slice(0, 1);             // no airport yet: just this page; the full tour continues after they pick one
   if (_tourSkipPicker) steps.shift();                        // already shown before the reload that picking an airport causes
@@ -3395,7 +3396,7 @@ async function _tourRender() {
   $('tour-layer').innerHTML =
     `<div class="tour-scrim${r ? ' off' : ''}"></div>` +
     `<div class="tour-spot${r ? '' : ' none'}" style="${r ? `left:${r.left - 4}px;top:${r.top - 4}px;width:${r.width + 8}px;height:${r.height + 8}px` : 'display:none'}"></div>` +
-    `<div class="tour-card" id="tour-card"><h3>${esc(st.title)}</h3><p>${esc(st.body)}</p>${st.note ? `<div class="tour-note">${esc(st.note)}</div>` : ''}` +
+    `<div class="tour-card" id="tour-card"><h3>${esc(st.title)}</h3><p>${esc(st.body)}</p>${st.link ? `<a class="tour-link" href="${esc(st.link)}" target="_blank" rel="noopener">github.com/abc539411/SpotAlert ↗</a>` : ''}${st.note ? `<div class="tour-note">${esc(st.note)}</div>` : ''}` +
     `<div class="tour-dots">${_tourSteps.map((_, i) => `<i class="${i === _tourStep ? 'on' : ''}"></i>`).join('')}</div>` +
     `<div class="tour-btns">${last && !st.noNext ? '' : `<button class="tour-skip" onclick="_tourEnd()">${esc(z('Skip', '跳过'))}</button>`}` +
     `${_tourStep > 0 ? `<button class="tour-b" onclick="_tourGo(-1)">${esc(z('Back', '上一步'))}</button>` : ''}` +
