@@ -4933,7 +4933,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         if hit and time.time() - hit[0] < _BOARD_ROSTER_TTL:
             return hit[1], hit[2]
         store_ = cfg_.store
-        cand = sorted(store_.board_candidate_flight_numbers(cfg_.airport_iata))
+        cand = sorted(store_.board_candidate_flight_numbers(cfg_.airport_iata, store_.board_min_appearances()))
         roster: dict = {}
         excluded_cards: dict = {}
         excl_regs: set = set()

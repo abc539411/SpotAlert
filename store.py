@@ -1065,6 +1065,13 @@ class SqliteStore:
     # Board (Controller-only tab) — see monitor.run_check "Step 6b" and web.py /api/board
     # ------------------------------------------------------------------
 
+    def board_min_appearances(self) -> int:
+        """Settings > Board > Regular Flight Threshold (BOARD_MIN_APPEARANCES); falls back to the default."""
+        try:
+            return max(1, min(int(self.load_setting("BOARD_MIN_APPEARANCES") or BOARD_MIN_APPEARANCES), 10))
+        except (TypeError, ValueError):
+            return BOARD_MIN_APPEARANCES
+
     def board_candidate_flight_numbers(self, airport_iata: str,
                                         min_appearances: int = BOARD_MIN_APPEARANCES) -> set:
         """Flight numbers worth tracking on the Board: seen as an ARRIVAL at this airport on at

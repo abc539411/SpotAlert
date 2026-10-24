@@ -1835,7 +1835,7 @@ async def run_check(context: ContextTypes.DEFAULT_TYPE) -> None:
                 return
             _now_dt = datetime.now(_tz_obj)
             _rows, _window, _through = _board_rows_from_entries(
-                board_arrivals + board_hist, cfg.store.board_candidate_flight_numbers(cfg.airport_iata),
+                board_arrivals + board_hist, cfg.store.board_candidate_flight_numbers(cfg.airport_iata, cfg.store.board_min_appearances()),
                 _tz_obj, _now_dt)
             _midnight = _tz_obj.localize(datetime(_now_dt.year, _now_dt.month, _now_dt.day))
             cfg.store.replace_board_rows(

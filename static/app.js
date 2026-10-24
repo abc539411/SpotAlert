@@ -34,6 +34,8 @@ const I18N = {
     'settings.tab.general': '常规',
     'settings.tab.spotting': '拍机',
     'settings.tab.feed': '动态',
+    'settings.tab.board': '看板',
+    'config.board.heading': '看板',
     'settings.tab.filters': '筛选',
     'settings.tab.collection': '收藏',
     'settings.tab.notification': '通知',
@@ -225,6 +227,7 @@ const SETTINGS_I18N_ZH = {
   MILITARY_MAX_ALT_FT:             { label: '最高高度', desc: '忽略高空过境飞机 — 仅提醒可能适合拍摄的低空活动。' },
   MILITARY_RENOTIFY_HOURS:         { label: '重复提醒冷却时间', desc: '某军机注册号提醒后，此时长内不再重复提醒。' },
   SPOT_MAX_GAP_HOURS:    { label: '拍机窗口间隔', desc: '航班之间的间隔超过此时长，将开启新的拍机窗口而非并入当前窗口。' },
+  BOARD_MIN_APPEARANCES: { label: '常规航班门槛', desc: '一个航班号在本机场至少被记录到这么多次（且曾产生过动态卡片），才会出现在看板上。数值越高，看板越精简。' },
   SPOT_LULL_MINS:        { label: '空闲时段长度', desc: '拍机窗口内超过此时长的空闲时段会被特别标出，方便您安排休息。' },
   SPOT_MAX_LULLS:        { label: '显示空闲时段数量', desc: '每个拍机窗口最多列出的空闲时段数量，保持推荐内容简洁易读。' },
   SPOT_LIGHTING_GATE:    { label: '避开不佳光线', desc: '开启后，与日出、日落或正午强光时段重叠的拍机窗口将被跳过。' },
@@ -4154,6 +4157,8 @@ const SETTINGS_SCHEMA = [
   // Monitoring — Polling
   { group: 'mon-polling',   key: 'CHECK_INTERVAL_MINUTES',      label: 'Check Frequency',          desc: 'How often to poll FR24 for new arrivals. Lower = more responsive, higher = more API load.',                      type: 'number', min: 1,  max: 120,  unit: 'minutes', restart: true },
   { group: 'mon-polling',   key: 'FETCH_PAGES',                 label: 'Pages to Fetch',           desc: 'Each page covers around 100 recent arrivals. Increase if busy airports miss flights at the end of the list.',  type: 'number', min: 1,  max: 10,   unit: 'pages', restart: true },
+  // Board
+  { group: 'board', key: 'BOARD_MIN_APPEARANCES', label: 'Regular Flight Threshold', desc: 'A flight number appears on the Board once it has been seen at this airport at least this many times AND has produced a Feed card before. Higher = a tighter Board.', type: 'number', min: 1, max: 10, default: '2', unit: 'sightings' },
   // Monitoring — Departure
   { group: 'mon-departure', key: 'DEPARTURE_PATTERN_THRESHOLD', label: 'Departure Confidence',     desc: 'Minimum historical confidence required before showing a predicted departure time. 80% means the pattern must hold 4 out of 5 times.', type: 'number', min: 0, max: 100, step: 5, unit: '%', restart: true },
   // Monitoring — Cancellation / Diversion
@@ -4367,7 +4372,7 @@ async function loadSettings() {
       if (!el) return;
       el.innerHTML = SETTINGS_SCHEMA.filter(x => x.group === g)
         .filter(x => !(_appRole !== 'controller' && CONTROLLER_ONLY_SETTINGS.has(x.key)))
-        .map(item => _settingRow(item, s[item.key] ?? '')).join('');
+        .map(item => _settingRow(item, s[item.key] ?? item.default ?? '')).join('');
       if (!editable(g)) {
         el.querySelectorAll('.setting-row, .setting-row-full').forEach(r => r.classList.add('setting-readonly'));
       }
