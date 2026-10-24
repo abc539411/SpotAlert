@@ -3240,8 +3240,8 @@ function logoTap() {
   const lockOpen = () => {                  // far enough: finish the slide ourselves and land on the Board
     locked = busy = true;
     hidePill();
-    setY(0, 240);
-    setTimeout(() => { cleanup(); switchTab('board'); busy = false; startY = null; pull = 0; locked = false; }, 260);
+    setY(0, 560);                            // the lock-in glide is deliberately slow and soft
+    setTimeout(() => { cleanup(); switchTab('board'); busy = false; startY = null; pull = 0; locked = false; }, 580);
   };
   const springBack = () => {                // let go too early: the Board rides back up and disappears
     busy = true;
