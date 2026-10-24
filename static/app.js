@@ -3407,6 +3407,31 @@ function _bdRow(r, isMobile) {
     </div>${open ? _bdDetailHtml(r) : ''}`;
 }
 
+// Same overlay scrollbar as the Spotting day cards: the native bar is hidden and a slim thumb fades in while a
+// card's list scrolls (the thumb lives inside the scroller, so its top = scrollTop + position within the track).
+function _bdInitThumbs() {
+  document.querySelectorAll('#bd-wrap .bd-rows').forEach(el => {
+    const thumb = document.createElement('div');
+    thumb.className = 'rec-scroll-thumb';
+    el.appendChild(thumb);
+    let fade = null;
+    el.addEventListener('scroll', () => {
+      const ratio = el.clientHeight / el.scrollHeight;
+      if (ratio >= 1) return;
+      const trackH = el.clientHeight;
+      const thumbH = Math.min(80, Math.max(28, trackH * ratio));
+      const maxScroll = el.scrollHeight - el.clientHeight;
+      const top = el.scrollTop + (maxScroll > 0 ? el.scrollTop / maxScroll : 0) * (trackH - thumbH);
+      thumb.style.height = thumbH + 'px';
+      thumb.style.top = top + 'px';
+      thumb.style.transition = 'none';
+      thumb.style.opacity = '1';
+      clearTimeout(fade);
+      fade = setTimeout(() => { thumb.style.transition = 'opacity 0.8s ease'; thumb.style.opacity = '0'; }, 800);
+    }, { passive: true });
+  });
+}
+
 function renderBoard() {
   const d = _bdData;
   if (!d) return;
@@ -3454,6 +3479,7 @@ function renderBoard() {
     if (today) wrap.scrollLeft += today.getBoundingClientRect().left - wrap.getBoundingClientRect().left - (isMobile ? 6 : (wrap.clientWidth - today.offsetWidth) / 2);
     _bdPositioned = true;
   } else wrap.scrollLeft = keepX;
+  _bdInitThumbs();
   wrap.querySelectorAll('.bd-rows').forEach((el, i) => { el.scrollTop = keepY[i] || 0; });
   if (_lang === 'zh') {
     const open = _bdRowsByKey[_bdOpenKey];
