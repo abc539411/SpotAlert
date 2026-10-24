@@ -3279,10 +3279,7 @@ async function bdPossiblePreview(el) {
   const metaLine = [type, operator].filter(Boolean).join(' · ');
   const livery = el.dataset.livery || ac.livery || '';
   const notesHtml = livery ? `<span class="sp-photo-notes">${esc(tLiveryName(livery))}</span>` : '';
-  const last = Number(el.dataset.last) || 0;
-  const dateHtml = last
-    ? `<span class="sp-photo-date"><span>${esc((_bdData && _bdData.airport_iata) || '')} · ${esc(_colShortDate(new Date(last * 1000).toISOString().slice(0, 10)))}</span></span>` : '';
-  const row1Html = (metaLine || badge) ? `<div class="sp-photo-row1"><div class="sp-photo-row1-left">${badge}<span>${esc(metaLine)}</span></div>${dateHtml}</div>` : '';
+  const row1Html = (metaLine || badge) ? `<div class="sp-photo-row1"><div class="sp-photo-row1-left">${badge}<span>${esc(metaLine)}</span></div></div>` : '';
   const row2Html = notesHtml ? `<div class="sp-photo-row2"><div class="sp-photo-row2-left">${notesHtml}</div></div>` : '';
   body.innerHTML = `
     <img class="sp-photo-img" src="${esc(ac.photo_url)}" alt="" oncontextmenu="return false">
