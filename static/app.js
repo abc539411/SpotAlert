@@ -355,7 +355,7 @@ const UI_ZH = {
   'Refresh Board': '刷新看板', 'Checking FR24…': '正在检查 FR24…', 'Board updated': '看板已更新',
   "Waiting for this airport's first check — tap Refresh to run one now.": '正在等待该机场的首次检查——点击刷新立即检查。',
   'Could not load the Board.': '无法加载看板。',
-  'Not assigned yet': '尚未分配机号', 'Not on board yet': '尚未上板', 'Possible aircraft': '可能的飞机', 'No cards this week.': '本周没有卡片。', 'Look through older days': '查看更早的记录', 'Back': '返回', 'Month': '月份', 'Older': '更早', 'Older than 7 days': '7 天前的记录', 'No older days.': '没有更早的记录。', 'No activity in the last 7 days.': '最近 7 天没有活动。', 'Since': '始于', 'Tap to select, then Unhide': '点选后再点“取消隐藏”', 'Edit': '编辑', 'Done': '完成', 'Hide': '隐藏', 'selected': '已选', 'Hidden flights': '已隐藏航班', 'Select flights to hide or unhide': '选择要隐藏或取消隐藏的航班', 'No check yet': '尚未检查', 'Confirm Refresh?': '确认刷新？', 'Added by hand (one-off) — in Feed and Spotting': '手动添加（仅此一次）— 已在 Feed 和拍机时间线', 'Add to Feed + Spotting (one-off)': '加入 Feed 和拍机时间线（仅此一次）', 'Remove this one-off flight from Feed + Spotting': '从 Feed 和拍机时间线移除此航班', 'Click again to add it to Feed + Spotting': '再点一次确认加入', 'Click again to remove it': '再点一次确认移除', 'added to Feed + Spotting': '已加入 Feed 和拍机时间线', 'removed': '已移除', 'Already photographed': '已拍摄', 'today': '今天', 'Last triggered': '上次触发原因', 'Hidden from Feed by the Exclusion List': '已被排除名单隐藏', 'No regular flights to show.': '暂无需要关注的常规航班。', 'No Feed cards': '无 Feed 卡片', 'Aircraft not assigned yet': '尚未分配飞机', 'Could not load aircraft details.': '无法加载飞机信息。',
+  'Not assigned yet': '尚未分配机号', 'Not on board yet': '尚未上板', 'Possible aircraft': '可能的飞机', 'You photographed here on this day': '这天你在这里拍过照', 'No cards this week.': '本周没有卡片。', 'Look through older days': '查看更早的记录', 'Back': '返回', 'Month': '月份', 'Older': '更早', 'Older than 7 days': '7 天前的记录', 'No older days.': '没有更早的记录。', 'No activity in the last 7 days.': '最近 7 天没有活动。', 'Since': '始于', 'Tap to select, then Unhide': '点选后再点“取消隐藏”', 'Edit': '编辑', 'Done': '完成', 'Hide': '隐藏', 'selected': '已选', 'Hidden flights': '已隐藏航班', 'Select flights to hide or unhide': '选择要隐藏或取消隐藏的航班', 'No check yet': '尚未检查', 'Confirm Refresh?': '确认刷新？', 'Added by hand (one-off) — in Feed and Spotting': '手动添加（仅此一次）— 已在 Feed 和拍机时间线', 'Add to Feed + Spotting (one-off)': '加入 Feed 和拍机时间线（仅此一次）', 'Remove this one-off flight from Feed + Spotting': '从 Feed 和拍机时间线移除此航班', 'Click again to add it to Feed + Spotting': '再点一次确认加入', 'Click again to remove it': '再点一次确认移除', 'added to Feed + Spotting': '已加入 Feed 和拍机时间线', 'removed': '已移除', 'Already photographed': '已拍摄', 'today': '今天', 'Last triggered': '上次触发原因', 'Hidden from Feed by the Exclusion List': '已被排除名单隐藏', 'No regular flights to show.': '暂无需要关注的常规航班。', 'No Feed cards': '无 Feed 卡片', 'Aircraft not assigned yet': '尚未分配飞机', 'Could not load aircraft details.': '无法加载飞机信息。',
   'No equipment history yet.': '暂无机型使用记录。', 'Registration': '注册号', 'Aircraft': '飞机', 'Manufacturer': '制造商', 'Operator': '运营商',
   'Owner': '所有者', 'Livery': '涂装', 'Country': '国家/地区', 'Mode S': 'Mode S', 'Serial No.': '序列号', 'Built': '出厂年份', 'Feed cards here': '本场 Feed 卡片数',
   'Feed card': '动态卡片', 'Excluded': '已排除', 'Has a card in Feed': '动态中已有卡片',
@@ -3696,7 +3696,7 @@ function renderBoard() {
     const sub = nFeed
       ? `<span class="rdc-window">${_lang === 'zh' ? `Feed 卡片 ${nFeed}` : `${nFeed} in Feed`}</span>`
       : `<span class="rdc-window" style="color:var(--dim);font-weight:400">${tt('No Feed cards')}</span>`;
-    return `<div class="bd-card${day.is_today ? ' bd-today' : ''}">
+    return `<div class="bd-card${day.is_today ? ' bd-today' : ''}${day.spotted ? ' day-spotted' : ''}"${day.spotted ? ` title="${esc(tt('You photographed here on this day'))}"` : ''}>
       <div class="rec-day-hdr">
         <div><div class="rec-d-label">${esc(tRecDayLabel(day.date, day.label))}</div>${sub}</div>
         <div style="text-align:right">${wx}</div>
@@ -6219,7 +6219,7 @@ function _renderDayCard(day, tzName) {
   </div>`;
 
   if (!clusters.length) {
-    return `<div class="rec-day${todayCls}${tomorrowCls}">${hdr}<div class="rec-empty">No activity</div></div>`;
+    return `<div class="rec-day${todayCls}${tomorrowCls}${day.spotted ? ' day-spotted' : ''}"${day.spotted ? ` title="${esc(tt('You photographed here on this day'))}"` : ''}>${hdr}<div class="rec-empty">No activity</div></div>`;
   }
 
   // Build compressed layout from all event times
@@ -6499,7 +6499,7 @@ function _renderDayCard(day, tzName) {
     </div>
   </div>`;
 
-  return `<div class="rec-day${todayCls}${tomorrowCls}">${hdr}${colLabels}${body}</div>`;
+  return `<div class="rec-day${todayCls}${tomorrowCls}${day.spotted ? ' day-spotted' : ''}"${day.spotted ? ` title="${esc(tt('You photographed here on this day'))}"` : ''}>${hdr}${colLabels}${body}</div>`;
 }
 
 // Helper: convert unix timestamp to minutes-from-midnight IN THE AIRPORT'S OWN

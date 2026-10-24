@@ -277,6 +277,26 @@ class LightroomCatalog:
             log.warning("Catalog stats query failed: %s", exc)
             return {}
 
+    def get_spotted_dates(self, airport_iata: str) -> set:
+        """Every calendar date (YYYY-MM-DD, capture time) on which at least one photo was taken at this airport."""
+        if self._apt_spec_id is None:
+            return set()
+        try:
+            with self._connect() as conn:
+                rows = conn.execute(
+                    """
+                    SELECT DISTINCT substr(img.captureTime, 1, 10)
+                    FROM AgSearchablePhotoProperty apt
+                    JOIN Adobe_images img ON img.id_local = apt.photo
+                    WHERE apt.propertySpec = ? AND UPPER(TRIM(apt.internalValue)) = ?
+                    """,
+                    (self._apt_spec_id, airport_iata.strip().upper()),
+                ).fetchall()
+            return {r[0] for r in rows if r[0]}
+        except Exception as exc:
+            log.warning("Spotted-dates query failed for %s: %s", airport_iata, exc)
+            return set()
+
     def get_session_count_at_airport(self, registration: str, airport_iata: str) -> int:
         """Count spotting sessions for this registration at a specific airport."""
         if self._reg_spec_id is None or self._apt_spec_id is None:
@@ -476,6 +496,17 @@ class LightroomCleanedDB:
         except Exception as exc:
             log.warning("CleanedDB.get_aircraft_info failed for %s: %s", registration, exc)
         return "", ""
+
+    def get_spotted_dates(self, airport_iata: str) -> set:
+        try:
+            with self._connect() as conn:
+                rows = conn.execute(
+                    "SELECT DISTINCT substr(capture_time, 1, 10) FROM photo_metadata WHERE UPPER(TRIM(airport_iata)) = ?",
+                    (airport_iata.strip().upper(),)).fetchall()
+            return {r[0] for r in rows if r[0]}
+        except Exception as exc:
+            log.warning("CleanedDB.get_spotted_dates failed for %s: %s", airport_iata, exc)
+            return set()
 
     def get_session_count_at_airport(self, registration: str, airport_iata: str) -> int:
         try:

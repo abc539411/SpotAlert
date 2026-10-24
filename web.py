@@ -1932,6 +1932,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         # nothing is excluded for them even if the Controller has excluded that
         # registration.
         _viewer_catalog = app.state.get_user_catalog(user) if user.role in ("controller", "pilot") else None
+        spotted_days_ = _spotted_dates(user, cfg_)
 
         days_result = []
         for date_str, label, is_today, i in day_meta:
@@ -1942,6 +1943,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                     continue
                 days_result.append({
                     "date": date_str, "label": label, "is_today": is_today, "is_tomorrow": i == -1,
+                    "spotted": date_str in spotted_days_,
                     "event_count": 0, "total_regs": 0,
                     "weather_code": 0, "weather_severe": False,
                     "temp_max": None, "temp_min": None,
@@ -1998,6 +2000,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
             q_regs = {f["registration"] for c in clusters for f in c.get("flights", []) if f.get("qualifying")}
             days_result.append({
                 "date": date_str, "label": label, "is_today": is_today, "is_tomorrow": i == -1,
+                "spotted":        date_str in spotted_days_,
                 "event_count":    len(q_regs),
                 "total_regs":     len(q_regs),
                 "weather_code":   sw.get("weather_code", 0),
@@ -4890,6 +4893,22 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         _board_roster_cache[key] = (time.time(), roster, excluded_cards)
         return roster, excluded_cards
 
+    # Days on which this viewer photographed at the airport (their own Lightroom catalog) — used to tint the Spotting
+    # and Board day cards. Empty for viewers without a catalog. Cached briefly: it is one DISTINCT query per catalog.
+    _spotted_days_cache: dict = {}
+
+    def _spotted_dates(user, cfg_) -> set:
+        cat = app.state.get_user_catalog(user) if user.role in ("controller", "pilot") else None
+        if not cat or not hasattr(cat, "get_spotted_dates"):
+            return set()
+        key = (_owner_id(user), cfg_.airport_iata)
+        hit = _spotted_days_cache.get(key)
+        if hit and time.time() - hit[0] < 300:
+            return hit[1]
+        dates = cat.get_spotted_dates(cfg_.airport_iata)
+        _spotted_days_cache[key] = (time.time(), dates)
+        return dates
+
     # FR24 gives a not-yet-assigned flight its planned equipment as an IATA code ("789", "73H"), while history and
     # assigned aircraft use ICAO ("B789", "B738"). Good enough to tell "same type" apart for the common cases.
     _IATA_TO_ICAO = {"73H": "B738", "73W": "B737", "73G": "B737", "7M8": "B38M", "7M9": "B39M", "77W": "B77W",
@@ -4940,6 +4959,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         through = int(meta["data_through_ts"]) if meta.get("data_through_ts") else None
 
         roster, excluded_cards = _board_roster(cfg_, user)
+        spotted_days = _spotted_dates(user, cfg_)
         hidden = set(store_.get_board_hidden(_owner_id(user)))
         pinned_cards = store_.get_pinned_cards((d0 + _dtm.timedelta(days=_lo_o - 1)).isoformat())
         rows = [r for r in store_.get_board_rows(starts[_lo_o], starts[_hi_o + 1]) if r["flight_number"] in roster]
@@ -5139,6 +5159,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         days = []
         for o in _OFFSETS:
             day = by_off[o]
+            day["spotted"] = day["date"] in spotted_days
             if o != 0 and not day["rows"]:
                 continue                                    # like Spotting: empty future / past days are skipped
             w = wx.get(day["date"], {})
