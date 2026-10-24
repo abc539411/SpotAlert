@@ -3186,7 +3186,7 @@ function renderBoard() {
     return `<div class="bd-card${day.is_today ? ' bd-today' : ''}">
       <div class="rec-day-hdr">
         <div><div class="rec-d-label">${esc(tRecDayLabel(day.date, day.label))}</div>${sub}</div>
-        <div style="text-align:right"><div class="rec-d-count">${_lang === 'zh' ? `${day.rows.length} 个航班` : `${day.rows.length} flight${day.rows.length === 1 ? '' : 's'}`}</div>${wx}</div>
+        <div style="text-align:right">${wx}</div>
       </div>
       <div class="bd-rows">${day.rows.map(r => _bdRow(r, isMobile)).join('')}${empty}</div>
     </div>`;
