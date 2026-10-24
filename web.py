@@ -5226,6 +5226,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                 "origin_city": cities.get(r["origin_iata"], "") or "",
                 "origin_country_code": countries.get(r["origin_iata"], ""),
                 "status": r["status_text"], "hidden": is_hidden, "fleet_missing": bool(rg_) and rg_ in fleet_missing,
+                "excluded_rego": bool(rg_) and rg_ in excl_row_regs,
                 "kind": kind, "card_types": card_types,
                 "extra_info": extra_info,
             })

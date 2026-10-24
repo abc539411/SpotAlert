@@ -4290,7 +4290,7 @@ function bdRowClick(el) {
 
 // Hiding updates the screen at once (the server confirms in the background); the full Board reload that used to follow
 // every change waited on a cold roster cache and could take seconds on the NAS. Rows of a hidden flight number vanish,
-// except flights that have a Feed card that day (the server keeps those, flagged hidden). Unhiding still reloads, because
+// except flights that have a Feed card that day, a Fleet-missing aircraft or an Exclusion-List aircraft (the server keeps those, flagged hidden). Unhiding still reloads, because
 // the rows it brings back are not in the browser.
 function _bdApplyHideLocally(fns) {
   const d = _bdData;
@@ -4301,7 +4301,7 @@ function _bdApplyHideLocally(fns) {
   (d.days || []).forEach(day => {
     day.rows = day.rows.filter(r => {
       if (!set.has(r.flight_number)) return true;
-      if (r.kind === 'feed') { r.hidden = true; return true; }
+      if (r.kind === 'feed' || r.fleet_missing || r.excluded_rego) { r.hidden = true; return true; }   // same exceptions as the server: a Feed card, a Fleet-missing aircraft, an Exclusion-List aircraft
       if (!hf.some(h => h.flight_number === r.flight_number)) {
         hf.push({ flight_number: r.flight_number, airline_name: r.airline_name || '', airline_icao: r.airline_icao || '',
                   origin_iata: r.origin_iata || '', origin_city: r.origin_city || '' });
