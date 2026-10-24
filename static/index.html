@@ -724,6 +724,11 @@
     /* Board card inside the bottom sheet: the sheet supplies the panel look */
     .detail-sheet-scroll .bd-detail { background: none; border: none; padding: 0; }
     @media (max-width: 767px) {
+      /* Possible aircraft on phones: the pill stays on the row, the (long) livery / type text drops underneath it,
+         right-aligned, and the row grows to fit. */
+      .bd-trig-row { padding: 7px 8px; align-items: center; }
+      .bd-trig-right { flex-direction: column-reverse; align-items: flex-end; gap: 3px; max-width: 52%; }
+      .bd-trig-right .bd-trig-lv { text-align: right; white-space: normal; line-height: 1.25; }
       /* keep the registration on one line; the "Arr. From … / status" group wraps underneath if it must */
       .bd-detail .detail-header { flex-wrap: wrap; gap: 6px 8px; }
       .bd-detail .detail-header .rego { white-space: nowrap; }
