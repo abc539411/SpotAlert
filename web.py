@@ -4827,9 +4827,21 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
             by_off[o] = {"date": d.isoformat(), "label": label, "is_today": o == 0, "is_tomorrow": o == 1,
                          "rows": []}
         wx = {}
-        for dstr, trow in store_.get_timeline_cache([v["date"] for v in by_off.values()]).items():
+        # Spotting's own verdict is baked into the cached clusters (a flight with reason "spotted_N" is greyed in
+        # the Spotting table). Reuse it so the Board greys exactly what Spotting greys — even where this process
+        # has no Lightroom catalog of its own — keyed by (registration, livery).
+        _spot_flag: dict = {}
+        for dstr, trow in sorted(store_.get_timeline_cache([v["date"] for v in by_off.values()]).items()):
             try:
                 wx[dstr] = _json.loads(trow["weather_json"] or "{}")
+            except Exception:
+                pass
+            try:
+                for cl_ in _json.loads(trow["clusters_json"] or "[]"):
+                    for f_ in cl_.get("flights", []):
+                        rs_ = f_.get("reason") or ""
+                        if rs_.startswith("spotted_"):
+                            _spot_flag[(f_.get("registration", ""), (f_.get("extra_info") or "").strip().lower())] = int(rs_.split("_")[1] or 0)
             except Exception:
                 pass
         for r in rows:
@@ -4936,7 +4948,10 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                         t["count"] = max(_visits.get(t["registration"], 0), t["count"])
                         liv_ = t["extra_info"] if "Special Livery" in (t["card_types"] or []) else ""
                         t["spotted"] = _spotted_n(t["registration"], liv_)
-                        t["over_spotted"] = _max_spot > 0 and t["spotted"] > _max_spot
+                        flag_ = _spot_flag.get((t["registration"], (liv_ or "").strip().lower()))
+                        if flag_ is not None:
+                            t["spotted"] = max(t["spotted"], flag_)
+                        t["over_spotted"] = flag_ is not None or (_max_spot > 0 and t["spotted"] > _max_spot)
                     # List order = the days shown: most recently seen at the airport first.
                     row["past_triggers"].sort(key=lambda t: t["last_seen_ts"], reverse=True)
         # "Expected" rows: a roster flight number with NO schedule row on today / tomorrow yet (FR24's board only
