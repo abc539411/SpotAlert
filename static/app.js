@@ -2241,10 +2241,10 @@ function _detailQuickFilterBtns(registration, extra = '') {
             onclick="event.stopPropagation(); quickFilterToggle(this)">${svg}</button>`;
   };
   return `<div style="display:flex;gap:6px;flex-shrink:0">
+    ${extra}
     ${btn('mute', '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/><line x1="3" y1="3" x2="21" y2="21"/></svg>')}
     ${btn('exclude', '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><line x1="6.5" y1="6.5" x2="17.5" y2="17.5"/></svg>')}
     ${btn('watch', '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12z"/><circle cx="12" cy="12" r="2.6"/></svg>')}
-    ${extra}
   </div>`;
 }
 
