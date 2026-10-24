@@ -1799,7 +1799,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                        fe.registration, fe.flight_number, fe.arrival_ts, fe.first_seen_ts,
                        fe.notif_types, fe.detail, fe.extra_info, fe.origin_iata, fe.origin_name,
                        fe.current_status, fe.arr_label, fe.airline_icao, fe.photo_url AS fe_photo_url,
-                       fe.aircraft_type, fe.rare_absence_days,
+                       fe.aircraft_type, fe.rare_absence_days, fe.prev_equipment,
                        fd.dep_flight, fd.dep_ts, fd.dep_dest_iata, fd.dep_dest_name,
                        fd.is_prediction, fd.dep_label, fd.dep_confidence,
                        a.photo_url AS af_photo_url, a.manufacturer,
@@ -1861,8 +1861,13 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
             if not notif_types:
                 continue
 
+            # Rare Plane cards show what this flight number flew before (grey text where a livery name would be). Frozen on the
+            # row when it was created; older rows fall back to the tracker.
+            prev_eq = row["prev_equipment"] or (
+                store_.get_prev_equipment(fn, row["aircraft_type"]) if "Rare Plane/Airline" in notif_types and row["aircraft_type"] else None)
             events.append({
                 "registration":         row["registration"],
+                "prev_equipment":       prev_eq or "",
                 # Prefer the snapshot frozen onto the flight row at enrichment time (avoids
                 # re-deriving it from airframes on every request); fall back to the airframes
                 # cache for older rows recorded before this column existed.
@@ -1910,6 +1915,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                     "detail":               ev["detail"],
                     "airline_icao":         ev["airline_icao"],
                     "extra_info":           ev["extra_info"],
+                    "prev_equipment":       ev.get("prev_equipment", ""),
                     "airport_last_seen_ts": ev["airport_last_seen_ts"],
                     "notif_types":          [],
                     "flights":              [],

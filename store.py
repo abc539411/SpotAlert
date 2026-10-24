@@ -367,6 +367,7 @@ class SqliteStore:
                 ("photo_url",      "TEXT"),
                 ("aircraft_type",     "TEXT"),
                 ("rare_absence_days", "REAL"),
+                ("prev_equipment",    "TEXT"),   # equipment type this flight number flew before (frozen when the card is created)
             ]:
                 if _col not in fe_cols:
                     conn.execute(f"ALTER TABLE flight_arrivals ADD COLUMN {_col} {_typ} DEFAULT NULL")
@@ -1816,18 +1817,35 @@ class SqliteStore:
                     conn.execute(f"UPDATE flight_arrivals SET {', '.join(set_cols)} WHERE id = ?", params)
                 return existing["id"], False
             else:
+                prev_eq = None
+                if aircraft_type:
+                    pr = conn.execute(
+                        "SELECT aircraft_type FROM route_type_tracker WHERE flight_number = ? AND aircraft_type != ? "
+                        "ORDER BY last_seen_ts DESC LIMIT 1", (flight_number, aircraft_type)).fetchone()
+                    prev_eq = pr[0] if pr else None
                 cursor = conn.execute(
                     """INSERT OR IGNORE INTO flight_arrivals
                        (registration, flight_number, arrival_ts, first_seen_ts,
                         notif_types, detail, extra_info, origin_iata, origin_name,
-                        arrival_date, airline_icao, photo_url, aircraft_type, rare_absence_days)
-                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                        arrival_date, airline_icao, photo_url, aircraft_type, rare_absence_days, prev_equipment)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                     (registration.strip(), flight_number, arrival_ts, first_seen_ts,
                      json.dumps(notif_types), detail, extra_info, origin_iata, origin_name,
                      arrival_date, airline_icao or None, photo_url or None,
-                     aircraft_type or None, rare_absence_days),
+                     aircraft_type or None, rare_absence_days, prev_eq),
                 )
                 return cursor.lastrowid, cursor.rowcount > 0
+
+    def get_prev_equipment(self, flight_number: str, aircraft_type: str) -> Optional[str]:
+        """The equipment type this flight number was most recently seen with OTHER than `aircraft_type` (None if it has
+        only ever flown that type). Same tracker the Board / Search "Route Equipment" read."""
+        if not flight_number or not aircraft_type:
+            return None
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT aircraft_type FROM route_type_tracker WHERE flight_number = ? AND aircraft_type != ? "
+                "ORDER BY last_seen_ts DESC LIMIT 1", (flight_number, aircraft_type)).fetchone()
+        return row[0] if row else None
 
     def cleanup_arrived_flights(self, now_ts: int) -> None:
         """Prune complete days past retention â€” never cuts through a partial day.
