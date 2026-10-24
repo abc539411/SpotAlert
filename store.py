@@ -177,27 +177,6 @@ class SqliteStore:
                 )
             """)
             conn.execute("CREATE TABLE IF NOT EXISTS board_meta (key TEXT PRIMARY KEY, value TEXT)")
-            # One-off "add to the Spotting timeline" pins from the Board: a flight with an aircraft assigned that
-            # never triggered a Feed card. A snapshot of the board row (so it survives the row leaving the board);
-            # the timeline rebuild turns each pin into an arrival (+ predicted departure) event for its day.
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS spotting_pins (
-                    registration  TEXT NOT NULL,
-                    flight_number TEXT NOT NULL,
-                    scheduled_ts  INTEGER NOT NULL,
-                    arrival_ts    INTEGER NOT NULL,
-                    arrival_date  TEXT NOT NULL,
-                    aircraft_type TEXT,
-                    airline_name  TEXT,
-                    airline_icao  TEXT,
-                    origin_iata   TEXT,
-                    status_text   TEXT,
-                    photo_url     TEXT,
-                    manufacturer  TEXT,
-                    added_ts      INTEGER NOT NULL,
-                    PRIMARY KEY (flight_number, scheduled_ts)
-                )
-            """)
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS livery_cooldowns (
                     registration TEXT PRIMARY KEY,
@@ -1169,50 +1148,45 @@ class SqliteStore:
                              (flight_number, int(scheduled_ts))).fetchone()
         return dict(r) if r else None
 
-    def add_spotting_pin(self, pin: dict) -> None:
-        with self._connect() as conn:
-            conn.execute(
-                """
-                INSERT INTO spotting_pins (registration, flight_number, scheduled_ts, arrival_ts, arrival_date,
-                    aircraft_type, airline_name, airline_icao, origin_iata, status_text, photo_url, manufacturer, added_ts)
-                VALUES (:registration, :flight_number, :scheduled_ts, :arrival_ts, :arrival_date,
-                    :aircraft_type, :airline_name, :airline_icao, :origin_iata, :status_text, :photo_url, :manufacturer, :added_ts)
-                ON CONFLICT(flight_number, scheduled_ts) DO UPDATE SET
-                    registration = excluded.registration, arrival_ts = excluded.arrival_ts,
-                    arrival_date = excluded.arrival_date, aircraft_type = excluded.aircraft_type,
-                    status_text = excluded.status_text, photo_url = excluded.photo_url,
-                    manufacturer = excluded.manufacturer
-                """, pin)
+    # --- Board one-off "Added" cards -------------------------------------------------------------------
+    # A flight added from the Board is a normal flight_arrivals row whose only tag is "Added" (plus a predicted
+    # flight_departures row), so Feed, Spotting, status updates and departure pairing all treat it like any
+    # other flight. It is NOT a filter: only that single flight is added, never future ones.
+    def add_pin_card(self, registration, flight_number, arrival_ts, arrival_date, detail, origin_iata,
+                     origin_name, airline_icao, photo_url, aircraft_type, now_ts):
+        """Insert (or tag) the one-off card; returns its flight_arrivals id."""
+        arrival_id, _ = self.record_filter_match_ex(
+            registration, flight_number, ["Added"], arrival_ts, now_ts, detail=detail, extra_info="",
+            origin_iata=origin_iata, origin_name=origin_name, arrival_date=arrival_date,
+            airline_icao=airline_icao, photo_url=photo_url, aircraft_type=aircraft_type)
+        return arrival_id
 
-    def remove_spotting_pin(self, flight_number: str, scheduled_ts: int) -> Optional[dict]:
-        """Delete a pin; returns the deleted row (so the caller knows which days to rebuild)."""
+    def get_pinned_cards(self, since_date: str = "") -> list:
         with self._connect() as conn:
-            r = conn.execute("SELECT * FROM spotting_pins WHERE flight_number = ? AND scheduled_ts = ?",
-                             (flight_number, int(scheduled_ts))).fetchone()
-            conn.execute("DELETE FROM spotting_pins WHERE flight_number = ? AND scheduled_ts = ?",
-                         (flight_number, int(scheduled_ts)))
-        return dict(r) if r else None
-
-    def get_spotting_pins(self, since_date: str = "") -> list:
-        """Pins whose arrival_date >= since_date (YYYY-MM-DD; '' = all). First re-syncs each pin with its live
-        board row (delay -> new arrival time, aircraft swap -> new registration), as long as the row still exists."""
-        with self._connect() as conn:
-            conn.execute(
-                """
-                UPDATE spotting_pins SET
-                  arrival_ts = COALESCE((SELECT COALESCE(b.estimated_ts, b.scheduled_ts) FROM board_flights b
-                                         WHERE b.flight_number = spotting_pins.flight_number
-                                           AND b.scheduled_ts = spotting_pins.scheduled_ts), arrival_ts),
-                  registration = COALESCE((SELECT b.registration FROM board_flights b
-                                           WHERE b.flight_number = spotting_pins.flight_number
-                                             AND b.scheduled_ts = spotting_pins.scheduled_ts
-                                             AND b.registration IS NOT NULL), registration),
-                  status_text = COALESCE((SELECT b.status_text FROM board_flights b
-                                          WHERE b.flight_number = spotting_pins.flight_number
-                                            AND b.scheduled_ts = spotting_pins.scheduled_ts), status_text)
-                """)
             return [dict(r) for r in conn.execute(
-                "SELECT * FROM spotting_pins WHERE arrival_date >= ? ORDER BY arrival_ts", (since_date,)).fetchall()]
+                "SELECT id, registration, flight_number, arrival_ts, arrival_date, notif_types FROM flight_arrivals "
+                "WHERE notif_types LIKE '%\"Added\"%' AND COALESCE(arrival_date, '') >= ?", (since_date,)).fetchall()]
+
+    def remove_pin_card(self, arrival_id: int) -> Optional[dict]:
+        """Take the 'Added' tag off; delete the row (and its departure) when that was its only tag.
+        Returns the row's arrival_ts / arrival_date / departure ts so the caller can refresh those days."""
+        with self._connect() as conn:
+            r = conn.execute(
+                "SELECT fe.id, fe.arrival_ts, fe.arrival_date, fe.notif_types, fd.dep_ts FROM flight_arrivals fe "
+                "LEFT JOIN flight_departures fd ON fd.arrival_id = fe.id WHERE fe.id = ?", (arrival_id,)).fetchone()
+            if not r:
+                return None
+            try:
+                types = json.loads(r["notif_types"] or "[]")
+            except Exception:
+                types = []
+            rest = [t for t in types if t != "Added"]
+            if rest:
+                conn.execute("UPDATE flight_arrivals SET notif_types = ? WHERE id = ?", (json.dumps(rest), arrival_id))
+            else:
+                conn.execute("DELETE FROM flight_departures WHERE arrival_id = ?", (arrival_id,))
+                conn.execute("DELETE FROM flight_arrivals WHERE id = ?", (arrival_id,))
+            return {"arrival_ts": r["arrival_ts"], "arrival_date": r["arrival_date"], "dep_ts": r["dep_ts"]}
 
     def get_board_meta(self) -> dict:
         with self._connect() as conn:
@@ -1803,7 +1777,6 @@ class SqliteStore:
                 "DELETE FROM timeline_cache WHERE date < ?",
                 (cache_cutoff_date,),
             )
-            conn.execute("DELETE FROM spotting_pins WHERE arrival_date < ?", (cache_cutoff_date,))
 
     # ------------------------------------------------------------------
     # Sighting history (every registration seen in arrivals feed)
