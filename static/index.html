@@ -691,8 +691,12 @@
         scroll-snap-align: start; scroll-snap-stop: always;
       }
       .older-cap { display: block; }
-      .bd-older.left, .rec-older.left { justify-content: flex-start; align-items: stretch; padding: 28px 20px; gap: 16px; width: calc(100vw - 12px); border-style: solid; }
-      .bd-older.left .older-sel-wrap, .rec-older.left .older-sel-wrap { width: 100%; }
+      /* (prefixed with the strip's class so these out-rank the desktop .left rule that is defined further down) */
+      .bd-wrap .bd-older.left, .rec-scroll .rec-older.left { justify-content: flex-start; align-items: stretch; padding: 28px 20px; gap: 22px; width: calc(100vw - 12px); border-style: solid; }
+      .bd-wrap .bd-older.left .older-sel-wrap, .rec-scroll .rec-older.left .older-sel-wrap { width: 100%; gap: 8px; }
+      .bd-older.left .older-btn, .rec-older.left .older-btn { padding: 14px 18px; font-size: 16px; }
+      .bd-older.left .older-sel, .rec-older.left .older-sel { font-size: 16px; padding: 14px 12px; }   /* 16px also stops iOS zooming on focus */
+      .bd-older.left .older-sel-lbl, .rec-older.left .older-sel-lbl { font-size: 12px; }
     }
     /* after "Older": a month picker takes the button's place at the right end of the strip */
     /* Older view: the strip shows ONLY older days; the control column sits at the LEFT (Back, then the month picker) */
