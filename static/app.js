@@ -1004,6 +1004,9 @@ async function _authBoot() {
     // matches — resync now, every boot, until it actually lands.
     api('/me/language', { method: 'PUT', body: JSON.stringify({ language: _lang }) }).catch(() => {});
   }
+  _appRole = me.user.role || '';                             // the tour (below) can start before the rest of the boot sets it
+  _tourNoAirport = !me.airport;
+  if (me.user.tour_due) setTimeout(() => startTour({ auto: true }), 1500);      // every sign-in, and after an app version change
   if (!me.airport) {
     _renderAirportPicker(me.airports || [], me.user.role, me.user.username);
     _showAuthView('view-airport-picker');
@@ -1038,7 +1041,6 @@ async function _authBoot() {
   _applyRoleUI(me.user.role);
   _boardDefault = !!me.user.board_default;
   _applyBoardDefault();
-  if (me.user.tour_due) setTimeout(startTour, 1500);                 // every sign-in, and after an app version change
   if (_boardDefault) switchTab('board');                  // home page (deep links below still win)
   // The cards' mute/exclude/watch buttons light up from the filter lists, which otherwise
   // only load when the Settings tab is opened — so fetch them at boot (Controller/Pilot only,
@@ -3250,53 +3252,103 @@ function logoTap() {
 // Offered to every account on each sign-in and whenever the app version changes (the server decides: tour_due), and any time from
 // Settings > Tour. Each step switches to a tab, rings its button in the bar and explains it. English / Chinese inline.
 let _tourStep = 0, _tourSteps = [], _tourAirport = null, _tourPrevTz = '', _tourReload = false;
+let _tourNoAirport = false, _tourSkipPicker = false;     // no airport chosen yet / the airport page was already shown before a reload
+const _TOUR_PICKER_KEY = 'spotalert-tour-picker';
 function _tourBuildSteps() {
-  const phone = window.innerWidth < 768, role = _appRole;
+  const phone = window.innerWidth < 768, role = _appRole, collector = role === 'controller' || role === 'pilot';
   const z = (en, zh) => (_lang === 'zh' ? zh : en);
+  const settingsSub = k => `#tab-settings .srch-subtab[data-subtab="${k}"]`;
   const steps = [
-    { tab: 'history', target: null,
+    { picker: true, sel: '.airport-pick-card', pos: 'bottom', noNext: _tourNoAirport,
       title: z('Welcome to SpotAlert', '欢迎使用 SpotAlert'),
-      body: z('A quick tour of where everything is. It takes about a minute, and you can skip it any time.',
-              '快速了解各项功能的位置，大约一分钟，随时可以跳过。') +
-            (_tourReload ? z(` The examples use ${_tourAirport.iata} data (${_tourAirport.name}).`, ` 示例数据来自 ${_tourAirport.iata}（${tExternalName(_tourAirport.name)}）。`) : '') },
+      body: z(`SpotAlert watches an airport for the aircraft worth going out for, and tells you what is coming. This tour covers every tab and the main controls, in about two minutes. You can skip it at any time. We start here, on the airport page: each card is an airport you can watch, with the local time there. Tap one to open it.`,
+              `SpotAlert 会盯着一座机场，告诉您哪些飞机值得去拍、什么时候来。本导览会介绍每个标签页和主要操作，约两分钟，随时可以跳过。我们从机场页面开始：每张卡片是一座可以关注的机场，并显示当地时间，点按即可进入。`) +
+            (role === 'controller' ? z(` The icons above add, reorder and delete airports, and Manage Users gives people access.`, ` 上方的图标可添加、排序和删除机场，“用户管理”可为他人授权。`) : '') +
+            (_tourNoAirport ? z(` Tap an airport to carry on; the tour picks up there.`, ` 请先点选一座机场，导览会在那里继续。`) :
+             _tourReload ? z(` The examples use ${_tourAirport.iata} data (${_tourAirport.name}).`, ` 示例数据来自 ${_tourAirport.iata}（${tExternalName(_tourAirport.name)}）。`) : '') },
+    { tab: 'history', sel: '#btn-switch-airport',
+      title: z('Your airport', '您的机场'),
+      body: z(`This button switches the airport you are looking at. Every time on screen is that airport's local time, and each airport keeps its own Feed, Spotting windows and history.`,
+              `这个按钮用于切换当前查看的机场。屏幕上所有时间都是该机场的当地时间，每个机场各有自己的动态、拍机时段和历史记录。`) },
+    { tab: 'history', sel: '#btn-refresh',
+      title: z('The refresh button', '刷新按钮'),
+      body: z(`It changes with the tab you are on (Refresh Feed, Refresh Spotting, Refresh Collection...). Tap once and a pill shows when the data was last updated; tap again to confirm.`,
+              `它会随当前标签页变化（刷新动态、刷新拍机、刷新收藏等）。点一次会弹出提示，显示数据上次更新的时间；再点一次确认刷新。`) },
     { tab: 'recommendation', target: 'recommendation',
-      title: z('Spotting', '拍机'),
-      body: z('The best windows to be at the airport each day, built from what is flying and the light. Swipe sideways between days.',
-              '每天最佳的到场时段，根据航班情况与光线生成。左右滑动切换日期。') },
+      title: z('Spotting: the days', '拍机：每日时段'),
+      body: z(`One card per day, today in the middle: swipe sideways for the days ahead and behind. Each card lists the windows worth being at the airport, built from what is flying and the light.`,
+              `每天一张卡片，今天居中，左右滑动可查看之后与之前的日子。每张卡片列出值得到场的时段，依据当天的航班和光线生成。`) },
+    { tab: 'recommendation', target: 'recommendation',
+      title: z('Spotting: reading a window', '拍机：如何看时段'),
+      body: z(`A line marks the current time. Flights are grouped by arrival with the predicted departure next to them; tap any flight for its details. ` + (collector ? `Aircraft you have already shot enough times are greyed out, using your own catalog.` : `Tap the top-left of a card to see the day's weather.`),
+              `有一条线标出当前时间。航班按到达时间分组，旁边显示预测的起飞时间；点按任意航班可查看详情。` + (collector ? `已拍过足够次数的飞机会按您自己的图库变灰。` : ``)) },
     { tab: 'history', target: _boardDefault && phone ? null : 'history',
-      title: z('Feed', '动态'),
-      body: z('Every flight that matched your filters, as photo cards. Tap a card for its details; Older reaches back through past weeks.',
-              '所有符合筛选条件的航班，以图片卡片展示。点按卡片查看详情，“更早”可回看过去几周。') },
+      title: z('Feed: the cards', '动态：卡片'),
+      body: z(`Every flight that matched your filters, newest first, as photo cards. The coloured tags say why it matched: Special Livery, Rare Plane, Military, or your own watchlists.`,
+              `所有符合筛选条件的航班，最新的在前，以图片卡片展示。彩色标签说明它为何入选：特殊涂装、稀有机型、军机，或您自己的关注列表。`) },
+    { tab: 'history', target: _boardDefault && phone ? null : 'history',
+      title: z('Feed: details and history', '动态：详情与历史'),
+      body: z(`Tap a card for the aircraft's details, its route history and predicted departure. ` + (collector ? `Buttons there mute its notifications, exclude it, or add it to a watchlist. ` : `A bell button there mutes its notifications for you. `) + `Older reaches back through earlier weeks.`,
+              `点按卡片可查看飞机详情、航线历史和预测起飞时间。` + (collector ? `卡片里的按钮可以静音通知、排除该飞机或加入关注列表。` : `卡片里的铃铛按钮可为您静音该飞机的通知。`) + `“更早”可回看之前的几周。`) },
     { tab: 'board', target: phone && !_boardDefault ? null : 'board',
       title: z('Board', '大屏'),
       body: phone && !_boardDefault
-        ? z('The arrivals board for the regular flight numbers, with the aircraft assigned before it lands. Pull the Feed all the way down from the top to open it.',
-            '常规航班号的到达大屏，可在飞机落地前看到已分配的机型和注册号。在动态页面顶部一直向下拉即可打开。')
-        : z('The arrivals board for the regular flight numbers, with the aircraft assigned before it lands. Today is centred at the current time.',
-            '常规航班号的到达大屏，可在飞机落地前看到已分配的机型和注册号。今天一栏会定位到当前时间。') },
+        ? z(`The arrivals board for regular flight numbers, showing the aircraft assigned before it lands. On a phone, pull the Feed all the way down from its top to open it.`,
+            `常规航班号的到达大屏，在飞机落地前就能看到已分配的飞机。在手机上，从动态顶部一直向下拉即可打开。`)
+        : z(`The arrivals board for regular flight numbers, showing the aircraft assigned before it lands.`,
+            `常规航班号的到达大屏，在飞机落地前就能看到已分配的飞机。`) },
   ];
-  if (role === 'controller' || role === 'pilot') {
+  if (collector) {
     steps.push({ tab: 'collection', target: 'collection',
       title: z('Collection', '收藏'),
-      body: z('Your Lightroom catalog: what you have photographed, what is missing, and your Fleet cards.',
-              '您的 Lightroom 图库：已拍摄的、缺少的，以及机队卡片。') });
+      body: z(`Built from your Lightroom catalog: totals for photos, aircraft, airlines and airports, plus the sessions you have shot. Upload your catalog under Settings, Collection.`,
+              `基于您的 Lightroom 图库：照片、飞机、航空公司和机场的统计，以及您的拍摄记录。在“设置 > 收藏”中上传图库。`) });
+    steps.push({ tab: 'collection', target: 'collection',
+      title: z('Fleet', '机队'),
+      body: z(`Fleet shows aircraft types as cards, so you can see which airframes you have and which you are still missing.`,
+              `“机队”以卡片形式展示各机型，方便查看您已拍到哪些飞机、还缺哪些。`) });
   }
   steps.push({ tab: 'search', target: 'search',
     title: z('Search', '搜索'),
-    body: z('Look up an aircraft, a route or a flight number: when it was last here, and which types fly it.',
-            '查询飞机、航线或航班号：上次来访时间，以及执飞的机型。') });
-  steps.push({ tab: 'settings', target: 'settings',
-    title: z('Settings', '设置'),
-    body: z('Language, notifications and filters live here. Under Board you can open on the Board instead of the Feed.',
-            '语言、通知和筛选都在这里。在“大屏”中可以选择以大屏而非动态作为首页。') });
+    body: z(`Last Seen finds an aircraft by registration, airline or type. Route Equipment shows which aircraft types fly a flight number, and how often.` + (collector ? ` Catalogue searches your own photos.` : ``),
+            `“最近出现”可按注册号、航空公司或机型查找飞机。“航线机型”显示某航班号由哪些机型执飞及频率。` + (collector ? `“图库”可搜索您自己的照片。` : ``)) });
+  steps.push({ tab: 'settings', sel: settingsSub('info'), sub: 'info',
+    title: z('Settings: General', '设置：通用'),
+    body: z(`Language, the airport you are monitoring, this tour (you can retake it here) and the disclaimer.`,
+            `语言、当前监控的机场、本导览（可在此重新观看）以及免责声明。`) });
+  steps.push({ tab: 'settings', sel: settingsSub('notification'), sub: 'notification',
+    title: z('Settings: Notification', '设置：通知'),
+    body: z(`Turn push notifications on for this device and choose which types you want: special liveries, rare planes, military and more.`,
+            `为本设备开启推送通知，并选择想收到的类型：特殊涂装、稀有机型、军机等。`) });
+  steps.push({ tab: 'settings', sel: settingsSub('filters'), sub: 'filters',
+    title: z('Settings: Filters', '设置：筛选'),
+    body: z(collector ? `Decide what reaches your Feed: watchlists by registration, type or airline, an exclusion list, and a mute list that silences notifications without hiding the flight.`
+                      : `The filters that decide what reaches the Feed. You see them read-only, and you can mute individual aircraft from their card.`,
+            collector ? `决定哪些航班进入您的动态：按注册号、机型或航空公司的关注列表，排除列表，以及只静音通知而不隐藏航班的静音列表。`
+                      : `这些筛选条件决定哪些航班进入动态。您只能查看，也可以在卡片里静音单架飞机。`) });
+  if (collector) {
+    steps.push({ tab: 'settings', sel: settingsSub('recommendation'), sub: 'recommendation',
+      title: z('Settings: Spotting', '设置：拍机'),
+      body: z(`Tune how Spotting builds its windows: the gap that splits a window, quiet periods, the light buffer and how many times you have to have shot an aircraft before it is greyed out.`,
+              `调整拍机时段的生成方式：拆分时段的间隔、空闲时段、光线缓冲，以及拍过多少次后飞机会变灰。`) });
+  }
+  steps.push({ tab: 'settings', sel: settingsSub('board'), sub: 'board',
+    title: z('Settings: Board', '设置：大屏'),
+    body: z(`Your view options for the Board, including opening the app on the Board instead of the Feed.`,
+            `大屏的视图选项，包括以大屏而不是动态作为首页。`) });
   steps.push({ tab: 'history', target: null,
     title: z('You are all set', '一切就绪'),
-    body: z('Retake this tour any time from Settings, General, Take a tour.', '您可以随时在“设置 > 通用 > 开始导览”中重新观看。') });
+    body: z(`Tap the SpotAlert logo any time to jump back to today. Retake this tour from Settings, General.`,
+            `随时点按 SpotAlert 标志即可回到今天。您可以在“设置 > 通用”中重新观看本导览。`) });
+  if (_tourNoAirport) return steps.slice(0, 1);             // no airport yet: just this page; the full tour continues after they pick one
+  if (_tourSkipPicker) steps.shift();                        // already shown before the reload that picking an airport causes
   return steps;
 }
-async function startTour() {
+async function startTour(opts) {
+  const auto = !!(opts && opts.auto);                       // the sign-in / version-change offer (not the Settings button)
+  try { _tourSkipPicker = auto && sessionStorage.getItem(_TOUR_PICKER_KEY) === '1'; if (!auto) sessionStorage.removeItem(_TOUR_PICKER_KEY); } catch (e) { _tourSkipPicker = false; }
   try { _tourAirport = await api('/tour/airport'); } catch (e) { _tourAirport = null; }
-  _tourReload = !!(_tourAirport && _tourAirport.iata && !_tourAirport.same);
+  _tourReload = !_tourNoAirport && !!(_tourAirport && _tourAirport.iata && !_tourAirport.same);
   if (_tourReload) {                                        // show the example airport: its times, and fresh data on every tab
     _tourOn = true;
     _tourPrevTz = _appTz;
@@ -3311,8 +3363,11 @@ async function startTour() {
 }
 function _tourEnd(markSeen = true) {
   if (markSeen) api('/me/tour-seen', { method: 'PUT', body: JSON.stringify({ seen: true }) }).catch(() => {});
-  $('tour-layer').classList.remove('show');
+  $('tour-layer').classList.remove('show', 'tour-passthrough');
   $('tour-layer').innerHTML = '';
+  try { sessionStorage.removeItem(_TOUR_PICKER_KEY); } catch (e) {}
+  if (_tourNoAirport) return;                               // still on the airport page: nothing else to restore
+  if (!$('view-airport-picker').classList.contains('hidden')) _hideAuthViews();
   if (_tourReload) {                                        // back to the user's own airport: same clean slate as switching airports
     _tourOn = false;
     _appTz = _tourPrevTz;
@@ -3326,10 +3381,17 @@ function _tourGo(delta) {
   if (_tourStep >= _tourSteps.length) { _tourEnd(); return; }
   _tourRender();
 }
-function _tourRender() {
+async function _tourRender() {
   const st = _tourSteps[_tourStep], z = (en, zh) => (_lang === 'zh' ? zh : en);
+  const pickerUp = () => !$('view-airport-picker').classList.contains('hidden');
+  if (st.picker) {                                          // the airport selection page itself
+    try { sessionStorage.setItem(_TOUR_PICKER_KEY, '1'); } catch (e) {}
+    if (!pickerUp()) await showAirportPicker();
+  } else if (pickerUp()) _hideAuthViews();
+  $('tour-layer').classList.toggle('tour-passthrough', !!st.picker);
   if (st.tab) switchTab(st.tab);
-  const btn = st.target ? document.querySelector(`.nav-tab[data-tab="${st.target}"]`) : null;
+  if (st.sub) switchSubtab(st.sub);
+  const btn = st.sel ? document.querySelector(st.sel) : st.target ? document.querySelector(`.nav-tab[data-tab="${st.target}"]`) : null;
   const r = btn && btn.offsetParent ? btn.getBoundingClientRect() : null;
   const last = _tourStep === _tourSteps.length - 1;
   $('tour-layer').innerHTML =
@@ -3337,11 +3399,12 @@ function _tourRender() {
     `<div class="tour-spot${r ? '' : ' none'}" style="${r ? `left:${r.left - 4}px;top:${r.top - 4}px;width:${r.width + 8}px;height:${r.height + 8}px` : 'display:none'}"></div>` +
     `<div class="tour-card" id="tour-card"><h3>${esc(st.title)}</h3><p>${esc(st.body)}</p>` +
     `<div class="tour-dots">${_tourSteps.map((_, i) => `<i class="${i === _tourStep ? 'on' : ''}"></i>`).join('')}</div>` +
-    `<div class="tour-btns">${last ? '' : `<button class="tour-skip" onclick="_tourEnd()">${esc(z('Skip', '跳过'))}</button>`}` +
+    `<div class="tour-btns">${last && !st.noNext ? '' : `<button class="tour-skip" onclick="_tourEnd()">${esc(z('Skip', '跳过'))}</button>`}` +
     `${_tourStep > 0 ? `<button class="tour-b" onclick="_tourGo(-1)">${esc(z('Back', '上一步'))}</button>` : ''}` +
-    `<button class="tour-b primary" onclick="_tourGo(1)">${esc(last ? z('Done', '完成') : (_tourStep === 0 ? z('Start tour', '开始导览') : z('Next', '下一步')))}</button></div></div>`;
+    `${st.noNext ? '' : `<button class="tour-b primary" onclick="_tourGo(1)">${esc(last ? z('Done', '完成') : (_tourStep === 0 ? z('Start tour', '开始导览') : z('Next', '下一步')))}</button>`}</div></div>`;
   const card = $('tour-card');
-  if (r && r.top > innerHeight / 2) card.style.bottom = (innerHeight - r.top + 14) + 'px';        // target in the bottom bar: card above it
+  if (st.pos === 'bottom') card.style.bottom = '16px';                                             // airport page: leave the cards free
+  else if (r && r.top > innerHeight / 2) card.style.bottom = (innerHeight - r.top + 14) + 'px';        // target in the bottom bar: card above it
   else if (r) card.style.top = (r.bottom + 14) + 'px';                                             // target in the top bar: card below it
   else card.style.top = Math.max(24, (innerHeight - card.offsetHeight) / 2) + 'px';
 }
