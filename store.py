@@ -1198,11 +1198,11 @@ class SqliteStore:
             return {"arrival_ts": r["arrival_ts"], "arrival_date": r["arrival_date"], "dep_ts": r["dep_ts"]}
 
     def get_timeline_months(self) -> list:
-        """YYYY-MM months (newest first) that have at least one cached Spotting day with flights."""
+        """YYYY-MM months (newest first) that have cached Spotting days. Deliberately reads only the date column
+        (a covering index scan) — filtering on the JSON blobs would drag every cached day off disk on each page load."""
         with self._connect() as conn:
             return [r[0] for r in conn.execute(
-                "SELECT DISTINCT substr(date, 1, 7) AS m FROM timeline_cache "
-                "WHERE clusters_json IS NOT NULL AND clusters_json NOT IN ('', '[]') ORDER BY m DESC").fetchall()]
+                "SELECT DISTINCT substr(date, 1, 7) AS m FROM timeline_cache ORDER BY m DESC").fetchall()]
 
     def has_timeline_before(self, date_str: str) -> bool:
         """Any cached Spotting day with flights older than date_str (YYYY-MM-DD)?"""
