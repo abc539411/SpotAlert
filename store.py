@@ -10,6 +10,8 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 log = logging.getLogger(__name__)
 
+# How long cached Spotting days are kept (the Spotting / Board month picker reaches back this far).
+TIMELINE_CACHE_RETENTION_DAYS = 365
 # How long flight_arrivals rows (Feed cards) are kept. Feed only reads the last 30 days; the
 # long tail exists so the Board can tell whether a flight number has EVER triggered a card.
 FLIGHT_ARRIVALS_RETENTION_DAYS = 3 * 365
@@ -1195,6 +1197,20 @@ class SqliteStore:
                 conn.execute("DELETE FROM flight_arrivals WHERE id = ?", (arrival_id,))
             return {"arrival_ts": r["arrival_ts"], "arrival_date": r["arrival_date"], "dep_ts": r["dep_ts"]}
 
+    def get_timeline_months(self) -> list:
+        """YYYY-MM months (newest first) that have at least one cached Spotting day with flights."""
+        with self._connect() as conn:
+            return [r[0] for r in conn.execute(
+                "SELECT DISTINCT substr(date, 1, 7) AS m FROM timeline_cache "
+                "WHERE clusters_json IS NOT NULL AND clusters_json NOT IN ('', '[]') ORDER BY m DESC").fetchall()]
+
+    def get_board_months(self) -> list:
+        """YYYY-MM months (newest first) that have Board rows."""
+        with self._connect() as conn:
+            return [r[0] for r in conn.execute(
+                "SELECT DISTINCT strftime('%Y-%m', COALESCE(estimated_ts, scheduled_ts), 'unixepoch') AS m "
+                "FROM board_flights ORDER BY m DESC").fetchall()]
+
     def get_board_meta(self) -> dict:
         with self._connect() as conn:
             return {r["key"]: r["value"] for r in conn.execute("SELECT key, value FROM board_meta").fetchall()}
@@ -1772,7 +1788,7 @@ class SqliteStore:
         today = _dt.date.fromtimestamp(now_ts)
         cutoff_date = (today - _dt.timedelta(days=FLIGHT_ARRIVALS_RETENTION_DAYS)).isoformat()
         cutoff_ts   = now_ts - FLIGHT_ARRIVALS_RETENTION_DAYS * 86400
-        cache_cutoff_date = (today - _dt.timedelta(days=30)).isoformat()
+        cache_cutoff_date = (today - _dt.timedelta(days=TIMELINE_CACHE_RETENTION_DAYS)).isoformat()
         with self._connect() as conn:
             conn.execute(
                 "DELETE FROM flight_arrivals WHERE "

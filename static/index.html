@@ -680,6 +680,11 @@
     .older-btn { writing-mode: vertical-rl; background: var(--surface); border: 1px solid var(--border); color: var(--dim); font-size: 12px; font-weight: 600; letter-spacing: .06em; padding: 18px 9px; border-radius: 999px; cursor: pointer; }
     .older-btn:hover { color: var(--text); border-color: var(--accent); }
     .older-btn:disabled { opacity: .5; cursor: default; }
+    /* after "Older": a month picker takes the button's place at the right end of the strip */
+    .older-sel-wrap { display: flex; flex-direction: column; gap: 6px; align-items: stretch; width: 150px; }
+    .older-sel-lbl { font-size: 10px; color: var(--dim); text-transform: uppercase; letter-spacing: .06em; }
+    .older-sel { background: var(--surface); border: 1px solid var(--border); color: var(--text); font-size: 13px; padding: 9px 10px; border-radius: var(--r); cursor: pointer; width: 100%; }
+    .older-sel:hover, .older-sel:focus { border-color: var(--accent); outline: none; }
     /* Feed: everything past 7 days is collapsed until opened */
     .feed-older-btn { display: block; width: 100%; margin: 14px 0 6px; background: var(--surface); border: 1px solid var(--border); color: var(--dim); font-size: 12px; font-weight: 600; padding: 9px 12px; border-radius: var(--r); cursor: pointer; text-align: left; }
     .feed-older-btn:hover { color: var(--text); border-color: var(--accent); }

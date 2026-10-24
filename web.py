@@ -1846,7 +1846,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         return JSONResponse({"days": days_result, "airport_iata": airport_iata_, "airport_name": airport_name_, "timezone": tz_name})
 
     @app.get("/api/recommendation")
-    async def get_recommendation(back: int = 7, user=Depends(_auth_current_user)):
+    async def get_recommendation(back: int = 7, month: str = "", user=Depends(_auth_current_user)):
         import datetime as _dt2, json as _json, pytz
         back = max(7, min(int(back), 30))      # default window -7 .. +3 days; the "Older" button asks for up to 30 back
 
@@ -1865,7 +1865,18 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         today_local = _dt2.datetime.now(tz).date()
         cache_dates = []
         day_meta = []  # (date_str, label, is_today, i)
-        for i in range(-3, back + 1):
+        # Default window = 3 ahead .. `back` days back. ?month=YYYY-MM instead returns every cached day of that month
+        # (the Older / month picker); days with no cached flights are skipped.
+        import re as _re_m, calendar as _cal
+        month_mode = bool(_re_m.match(r"^\d{4}-\d{2}$", month or ""))
+        if month_mode:
+            _y, _m = int(month[:4]), int(month[5:7])
+            _first = _dt2.date(_y, _m, 1)
+            _last = _dt2.date(_y, _m, _cal.monthrange(_y, _m)[1])
+            _rng = range((today_local - _last).days, (today_local - _first).days + 1)
+        else:
+            _rng = range(-3, back + 1)
+        for i in _rng:
             d        = today_local - _dt2.timedelta(days=i)
             date_str = d.strftime("%Y-%m-%d")
             date_label = f"{d.strftime('%a')}, {d.day} {d.strftime('%b')}"
@@ -1895,7 +1906,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
             row = cached.get(date_str)
             if not row:
                 # No cache yet (first startup or no flights) — skip future days, show empty past
-                if i < 0:
+                if i < 0 or month_mode:
                     continue
                 days_result.append({
                     "date": date_str, "label": label, "is_today": is_today, "is_tomorrow": i == -1,
@@ -1918,8 +1929,8 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
             except Exception:
                 pass
 
-            # Future days with no flights: skip
-            if i < 0 and not clusters:
+            # Future days with no flights: skip (month view: any day with no flights)
+            if (i < 0 or month_mode) and not clusters:
                 continue
 
             if user.role == "pilot":
@@ -1966,7 +1977,8 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                 "clusters":       clusters,
             })
 
-        return JSONResponse({"days": days_result, "airport_iata": airport_iata_, "timezone": tz_name})
+        return JSONResponse({"days": days_result, "airport_iata": airport_iata_, "timezone": tz_name,
+                             "available_months": store_.get_timeline_months()})
 
     # ── Collection tab — Lightroom catalog statistics ──────────────────────────
 
@@ -4864,7 +4876,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
             return out
         return bool(cands(a) & cands(b))
 
-    def _build_board_payload(cfg_, user, back: int = 7) -> dict:
+    def _build_board_payload(cfg_, user, back: int = 7, month: str = "") -> dict:
         """Day cards (same window as Spotting: up to 3 days ahead, today, 7 days back; airport-local; empty ones
         skipped except today) of the schedule rows of every roster flight number
         (regular + has triggered a card before, minus the ones the Controller hid). Rows stay on their card
@@ -4879,17 +4891,25 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         d0 = _dtm.datetime.fromtimestamp(now_ts, tz).date()
         # Same window as Spotting's /api/recommendation: up to 3 days ahead, today, 7 days back. Offsets are
         # "days from today" (positive = future); newest first, so the cards read like the Spotting table.
+        import re as _re_m, calendar as _cal
         back = max(7, min(int(back), 30))
-        _OFFSETS = list(range(3, -back - 1, -1))
+        if _re_m.match(r"^\d{4}-\d{2}$", month or ""):           # ?month=YYYY-MM: every Board day of that month
+            _y, _m = int(month[:4]), int(month[5:7])
+            _lo = (_dtm.date(_y, _m, 1) - d0).days
+            _hi = (_dtm.date(_y, _m, _cal.monthrange(_y, _m)[1]) - d0).days
+            _OFFSETS = list(range(_hi, _lo - 1, -1))
+        else:
+            _OFFSETS = list(range(3, -back - 1, -1))
+        _lo_o, _hi_o = min(_OFFSETS), max(_OFFSETS)
         starts = {o: int(tz.localize(_dtm.datetime.combine(d0 + _dtm.timedelta(days=o), _dtm.time.min)).timestamp())
-                  for o in range(-back, 5)}
+                  for o in range(_lo_o, _hi_o + 2)}
         meta = store_.get_board_meta()
         through = int(meta["data_through_ts"]) if meta.get("data_through_ts") else None
 
         roster, excluded_cards = _board_roster(cfg_, user)
         hidden = set(store_.get_board_hidden(_owner_id(user)))
-        pinned_cards = store_.get_pinned_cards((d0 - _dtm.timedelta(days=back + 1)).isoformat())
-        rows = [r for r in store_.get_board_rows(starts[-back], starts[4]) if r["flight_number"] in roster]
+        pinned_cards = store_.get_pinned_cards((d0 + _dtm.timedelta(days=_lo_o - 1)).isoformat())
+        rows = [r for r in store_.get_board_rows(starts[_lo_o], starts[_hi_o + 1]) if r["flight_number"] in roster]
 
         iatas = {r["origin_iata"] for r in rows if r["origin_iata"]} |                 {e["hist"].get("origin_iata") for e in roster.values() if e.get("hist", {}).get("origin_iata")}
         cities: dict = {}
@@ -5060,6 +5080,8 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
             shifted = sorted((m - 180) % 1440 for m in pool)          # day boundary at 03:00 so 23:50 / 00:10 cluster
             return (shifted[len(shifted) // 2] + 180) % 1440
         for o in (0, 1):
+            if o not in by_off:
+                continue
             have = {r["flight_number"] for r in by_off[o]["rows"]}
             for fn, e in roster.items():
                 hh = e.get("hist") or {}
@@ -5097,15 +5119,15 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                                    "airline_icao": hh_.get("airline_icao") or "", "origin_iata": hh_.get("origin_iata") or "",
                                    "origin_city": cities.get(hh_.get("origin_iata"), "") or ""})
         return {
-            "hidden_flights": hidden_flights,
+            "hidden_flights": hidden_flights, "available_months": store_.get_board_months(),
             "airport_iata": cfg_.airport_iata, "timezone": tz_name, "now_ts": now_ts,
             "updated_ts": int(meta["updated_ts"]) if meta.get("updated_ts") else None,
             "data_through_ts": through, "hidden": sorted(hidden), "roster_size": len(roster), "days": days,
         }
 
     @app.get("/api/board")
-    async def get_board(back: int = 7, user=Depends(_auth_require_role("controller"))):
-        return JSONResponse(await asyncio.to_thread(_build_board_payload, _cfg_for_user(user), user, back))
+    async def get_board(back: int = 7, month: str = "", user=Depends(_auth_require_role("controller"))):
+        return JSONResponse(await asyncio.to_thread(_build_board_payload, _cfg_for_user(user), user, back, month))
 
     # Expanded Board row: photo + aircraft facts for ONE registration. FR24's aircraft lookup is a live call
     # (and these aircraft usually never triggered a card, so nothing is cached in airframes yet) — cache the
