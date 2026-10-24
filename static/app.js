@@ -1517,7 +1517,9 @@ async function loadUserManagement() {
     const { users } = await api('/controller/users');
     _pickerUsersCache = users;
     listEl.innerHTML = users.map(u => {
-      const airportsTxt = u.role === 'controller' ? tt('All airports') : (u.airport_iatas.join(', ') || tt('No airports assigned'));
+      // A Pilot / Passenger who has been given EVERY watched airport reads "All airports", not a long list.
+      const hasAll = _pickerAirports.length > 0 && _pickerAirports.every(a => (u.airport_iatas || []).includes(a.iata));
+      const airportsTxt = (u.role === 'controller' || hasAll) ? tt('All airports') : (u.airport_iatas.join(', ') || tt('No airports assigned'));
       const lastSeenTxt = u.last_seen_ts ? fmtTs(u.last_seen_ts, { month: 'short', day: 'numeric', year: 'numeric' }) : tt('Never');
       return `<div class="user-mgmt-row">
         <div class="user-mgmt-row-hdr">
