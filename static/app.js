@@ -2812,7 +2812,15 @@ function openRecDetail(el) {
     if (_openRecCard === el) { closeDetail(); _openRecCard = null; return; }
     _openRecCard = el;
     const sheet = $('detail-modal').querySelector('.detail-sheet-scroll');
-    sheet.innerHTML = _buildRecDetail(el);
+    const _rf = JSON.parse(el.dataset.f);
+    const liveryRow = _rf.extra_info
+      ? `<div class="rfc-panel-body">
+           <div class="rfc-remarks-label">${tt('LIVERY')}</div>
+           <div style="font-size:12px;color:var(--text);margin-top:4px">${esc(tLiveryName(_rf.extra_info))}</div>
+         </div>` : '';
+    sheet.innerHTML = `
+      <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:10px">${esc(_rf.registration || '')}</div>
+      ${_buildRecDetail(el)}${liveryRow}`;
     $('detail-modal').classList.remove('hidden');
     return;
   }
@@ -2832,7 +2840,7 @@ function openRecDetail(el) {
   document.body.appendChild(panel);
   _openRecPanel = panel;
 
-  const panelH = Math.min(520, panel.scrollHeight || 520);
+  const panelH = Math.min(320, panel.scrollHeight || 320);
   if (rect.bottom + panelH > window.innerHeight - 8) {
     panel.style.top    = '';
     panel.style.bottom = (window.innerHeight - rect.top) + 'px';
@@ -2907,39 +2915,23 @@ function _buildRecDetail(el) {
   }
   const sortedReasons = [...reasons.filter(r => r.dq), ...reasons.filter(r => !r.dq)];
   const reasonsHtml = sortedReasons.length ? `
-    <div class="bd-sec-t" style="border-top:1px solid var(--border);padding-top:12px">${tt('REMARKS')}</div>
-    <div class="rfc-remarks-pills">${sortedReasons.map(r => `<span class="rfc-remark-pill${r.dq ? ' rfc-remark-dq' : ''}">${esc(r.text)}</span>`).join('')}</div>` : '';
+    <div class="rfc-panel-body">
+      <div class="rfc-remarks-label">${tt('REMARKS')}</div>
+      <div class="rfc-remarks-pills">${sortedReasons.map(r => `<span class="rfc-remark-pill${r.dq ? ' rfc-remark-dq' : ''}">${esc(r.text)}</span>`).join('')}</div>
+    </div>` : '';
 
-  // Same layout as the Board's expanded row: photo, then registration + flag + status, badges, airline / flight, livery, sections
-  const nowTs = Math.floor(Date.now() / 1000);
-  let st = isArr ? _barStatus(f, nowTs) : (ts > nowTs ? (f.dep_label || 'Scheduled') : 'Departed');
-  if (st === 'N/A') st = null;
-  let statusPill = '';
-  if (st) {
-    const [bg, fg] = _STATUS_STYLE[st] || _STATUS_STYLE['N/A'];
-    statusPill = `<span style="font-size:11px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;padding:3px 9px;border-radius:20px;background:${bg};color:${fg}">${esc(tLabel(st))}</span>`;
-  }
-  const { acType } = _parseDetail(f.detail || '');
-  const chips = (f.notif_types || []).map(t => `<span class="chip ${chipClass(t)}">${chipLabel(t)}</span>`).join('');
-  const photoHtml = f.photo_url ? `<div class="bd-photo-wrap"><img class="bd-photo" src="${esc(f.photo_url)}" loading="lazy" alt="${esc(f.registration || '')}"></div>` : '';
-  const flightLink = flightNum && flightNum !== '—'
-    ? `<a href="${_fr24FlightUrl(flightNum)}" target="_blank" rel="noopener" style="color:var(--text);font-weight:600;text-decoration:none">${esc(flightNum)}</a>` : '';
-  const airlineLine = (airline || flightLink)
-    ? `<div style="font-size:12px;color:var(--dim)">${airline ? `<span data-ext-name="${esc(airline)}">${esc(tExternalName(airline))}</span>` : ''}${airline && flightLink ? ' · ' : ''}${flightLink}</div>` : '';
-  const liveryLine = f.extra_info ? `<div style="margin-top:6px;font-size:12px;color:var(--dim);font-style:italic;line-height:1.4">${esc(tLiveryName(f.extra_info))}</div>` : '';
-
-  return `<div class="rfc-detail">${photoHtml}
-    <div class="detail-header">
-      <div style="display:flex;align-items:center;gap:8px">
-        <a class="rego" style="font-size:20px;font-weight:700;color:var(--text);text-decoration:none;letter-spacing:.01em" href="${_fr24AircraftUrl(f.registration)}" target="_blank" rel="noopener">${esc(f.registration || '')}</a>
-        ${_flag(_regoCountryCode(f.registration), { h: 26, vab: -13 })}
+  const photoHtml = f.photo_url ? `
+    <div class="rfc-panel-photo-wrap">
+      <img class="rfc-panel-photo" src="${esc(f.photo_url)}" loading="lazy" alt="">
+      <div class="rfc-panel-photo-overlay">
+        ${airline ? `<div class="rfc-panel-airline" data-ext-name="${esc(airline)}">${esc(tExternalName(airline))}</div>` : ''}
+        <div class="rfc-panel-flight">${flightNum && flightNum !== '—' ? `<a href="${_fr24FlightUrl(flightNum)}" target="_blank" style="color:inherit;text-decoration:none">${esc(flightNum)}</a>` : esc(flightNum)}</div>
       </div>
-      <div style="display:flex;align-items:center;gap:10px">${statusPill}</div>
-    </div>
-    <div class="detail-badges" style="margin-top:9px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">${chips}${acType ? `<span class="fc-actype">${esc(acType)}</span>` : ''}</div>
-    <div style="margin-top:4px">${airlineLine}${liveryLine}</div>
-    ${reasonsHtml}
-  </div>`;
+    </div>` : '';
+
+  const bodyHtml = reasonsHtml;
+
+  return `${photoHtml}${bodyHtml}`;
 }
 
 // Lightroom "Spotted" session pills (airport · date · photo count) — shared by the Feed card and the Board row.
