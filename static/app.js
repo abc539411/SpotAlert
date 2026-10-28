@@ -1027,13 +1027,12 @@ async function _authBoot() {
   const _curAirport = (me.airports || []).find(a => a.iata === me.airport);
   const _clockTz = (_curAirport && _curAirport.tz) || _appTz;
   const _airportHtml = _curAirport ? `
-    <span class="header-whoami-airport">${_flag(_curAirport.country_code, { h: 14 })}${esc(_curAirport.iata)}${_clockTz ? `<span class="hdr-clock-time"></span><span class="hdr-clock-abbr">${esc(_curAirport.tz_abbr || '')}</span>` : ''}</span>
+    <span class="header-whoami-airport"><span class="hw-top">${_flag(_curAirport.country_code, { h: 14 })}${esc(_curAirport.iata)}</span>${_clockTz ? `<span class="hw-sub"><span class="hdr-clock-time"></span><span class="hdr-clock-abbr">${esc(_curAirport.tz_abbr || '')}</span></span>` : ''}</span>
     <span class="header-whoami-divider"></span>
   ` : '';
   $('header-whoami').innerHTML = me.user.username ? `
     ${_airportHtml}
-    <span class="header-whoami-user">${tt('Logged in as:')} ${esc(me.user.username)}</span>
-    <span class="picker-role-pill role-${esc(_role)}">${esc(tRole(_role))}</span>
+    <span class="header-whoami-who"><span class="hw-top hw-label">${tt('Logged in as:')}</span><span class="hw-sub"><span class="header-whoami-user">${esc(me.user.username)}</span><span class="picker-role-pill role-${esc(_role)}">${esc(tRole(_role))}</span></span></span>
   ` : '';
   // Mobile counterpart of the desktop time above (that block is display:none under 768px):
   // a compact flag + IATA + time chip on the header's free left side.

@@ -528,9 +528,14 @@
        the divider visually equal (padding-right + border vs. margin-right +
        parent's 8px gap). */
     .header-whoami { display: flex; align-items: center; gap: 8px; margin-right: 10px; padding-right: 17px; border-right: 1px solid var(--border); min-width: 0; flex-shrink: 1; }
-    .header-whoami-user { font-size: 12px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+    .header-whoami-user { font-size: 12px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
     .header-whoami .picker-role-pill { font-size: 9px; padding: 1px 8px; }
-    .header-whoami-airport { display: flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 600; color: var(--text); flex-shrink: 0; white-space: nowrap; }
+    /* PC header: each block is two lines, like the phone's airport chip — airport over its time, "Logged in as" over the name + role */
+    .header-whoami-airport { display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 1px; line-height: 1.25; font-size: 12px; font-weight: 600; color: var(--text); flex-shrink: 0; white-space: nowrap; }
+    .header-whoami-who { display: flex; flex-direction: column; justify-content: center; gap: 1px; line-height: 1.25; min-width: 0; }
+    .header-whoami .hw-top { display: flex; align-items: center; gap: 5px; }
+    .header-whoami .hw-sub { display: flex; align-items: center; gap: 6px; min-width: 0; }
+    .header-whoami .hw-label { font-size: 10px; color: var(--dim); font-weight: 500; }
     .header-whoami-divider { width: 1px; align-self: stretch; background: var(--border); flex-shrink: 0; margin: 0 9px; }
     /* Live airport-local clock: desktop shows it inside .header-whoami-airport (after the IATA);
        mobile hides that whole block, so it gets its own chip on the otherwise-empty left of the
