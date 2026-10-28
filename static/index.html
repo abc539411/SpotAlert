@@ -1801,6 +1801,12 @@
     .fl-form h3 { margin: 0; font-size: 16px; }
     .fl-form label { display: flex; flex-direction: column; gap: 3px; font-size: 11px; color: var(--dim); font-weight: 600; min-width: 0; }
     .fl-form input { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; color: var(--text); padding: 8px 10px; font-size: 16px; width: 100%; min-width: 0; box-sizing: border-box; }
+    /* iOS Safari draws <input type=date> with its own intrinsic width and height and centres the text, so it overran its column and
+       sat taller than the other fields: reset it to behave like them */
+    .fl-form input { height: 38px; }
+    .fl-form input[type="date"] { -webkit-appearance: none; appearance: none; display: block; width: 100%; min-width: 0; max-width: 100%; text-align: left; }
+    .fl-form input[type="date"]::-webkit-date-and-time-value { text-align: left; margin: 0; min-height: 1.2em; }
+    .fl-form input[type="date"]::-webkit-datetime-edit { padding: 0; }
     .fl-form .fl-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; }
     .fl-form .fl-err { color: var(--danger); font-size: 12px; min-height: 0; }
     .fl-form .fl-wide { grid-column: 1 / -1; }
