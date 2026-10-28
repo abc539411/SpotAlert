@@ -3871,6 +3871,22 @@ async function bdOpen(rowEl) {
 // Tap a Possible-aircraft row -> the same photo overlay the Spotted pills open (_spOpenPhotos), but showing the
 // aircraft's JetPhotos picture (airframes.photo_url — the one Feed / Spotting use), with its registration, type,
 // operator, livery and when it was last seen at the airport.
+// What every photo popup puts on the picture (your own session photos and the Board's JetPhotos preview):
+//   top left      [flag  registration]
+//                 [manufacturer] [type pill]
+//   bottom left   airline tail logo + [airline name pill]
+//   bottom right  [Livery pill] livery name          <- only when the aircraft has a livery
+//                 [flag  place · date pill]          <- own photos only; without it the livery line sits at the bottom
+function _spPhotoInfoHtml(o) {
+  const typeLine = (o.mfr || o.type) ? `<div class="sp-photo-line">${o.mfr || ''}${o.type ? `<span class="sp-photo-pill">${esc(o.type)}</span>` : ''}</div>` : '';
+  const top = `<div class="sp-photo-top"><span class="sp-photo-rego">${o.flag || ''}${esc(o.reg)}</span>${typeLine}</div>`;
+  const left = o.airline
+    ? `<div class="sp-photo-left">${_srchLogoWithFallback(o.icao || '', o.airline, window.innerWidth < 768 ? 18 : 28, '')}<span class="sp-photo-pill">${esc(o.airline)}</span></div>` : '';
+  const livLine = (o.pills || o.livery) ? `<div class="sp-photo-line">${o.pills || ''}${o.livery ? `<span class="sp-photo-notes">${esc(tLiveryName(o.livery))}</span>` : ''}</div>` : '';
+  const right = (livLine || o.loc) ? `<div class="sp-photo-right">${livLine}${o.loc || ''}</div>` : '';
+  return `${top}<div class="sp-photo-bottom">${left}${right}</div>`;
+}
+
 async function bdPossiblePreview(el) {
   const reg = el.dataset.reg;
   if (!reg) return;
@@ -3889,17 +3905,13 @@ async function bdPossiblePreview(el) {
   const flag = _flag(_regoCountryCode(reg), { h: 13 });
   const badge = ac.manufacturer ? mfrBadge(ac.manufacturer) : '';
   const type = el.dataset.type || ac.type_code || '';
-  const operator = ac.operator ? tExternalName(ac.operator) : '';
-  const metaLine = [type, operator].filter(Boolean).join(' · ');
+  const operator = tExternalName(ac.operator || el.dataset.airline || '');      // the aircraft's operator, else the airline of the flight this row sits under
   const livery = el.dataset.livery || ac.livery || '';
-  const notesHtml = livery ? `<span class="sp-photo-notes">${esc(tLiveryName(livery))}</span>` : '';
-  const row1Html = (metaLine || badge) ? `<div class="sp-photo-row1"><div class="sp-photo-row1-left">${badge}<span>${esc(metaLine)}</span></div></div>` : '';
-  const row2Html = notesHtml ? `<div class="sp-photo-row2"><div class="sp-photo-row2-left">${notesHtml}</div></div>` : '';
+  const livPill = livery ? `<span class="col-sp-tag col-sp-tag-special-livery">${esc(chipLabel('Special Livery'))}</span>` : '';
   body.innerHTML = `
     <img class="sp-photo-img" src="${esc(ac.photo_url)}" alt="" oncontextmenu="return false">
     <span class="sp-photo-close" onclick="_spClosePhotos()"></span>
-    <div class="sp-photo-top"><span class="sp-photo-rego">${flag}${esc(reg)}</span></div>
-    <div class="sp-photo-bottom">${row1Html}${row2Html}</div>`;
+    ${_spPhotoInfoHtml({ flag, reg, mfr: badge, type, airline: operator, icao: el.dataset.icao || '', pills: livPill, livery })}`;
 }
 
 function _bdDetailHtml(r) {
@@ -4030,7 +4042,7 @@ function _bdDetailHtml(r) {
           ? `<span class="bd-trig-lv">${esc(t.aircraft_type)}</span>` : '';   // plain italic text, same style as the livery name
         const days = Math.max(0, Math.floor((Date.now() / 1000 - (t.last_seen_ts || t.ts)) / 86400));   // since last seen at the airport
         const ago = days === 0 ? tt('today') : (_lang === 'zh' ? `${days} 天` : `${days} day${days === 1 ? '' : 's'}`);
-        return `<div class="bd-trig-row${t.excluded ? ' is-excl' : ''}${t.registration === r.registration ? ' is-current' : ''}${t.over_spotted ? ' is-shot' : ''}" data-reg="${esc(t.registration)}" data-last="${t.last_seen_ts || t.ts || 0}" data-type="${esc(t.aircraft_type || '')}" data-livery="${esc(((t.card_types || []).includes('Special Livery') && t.extra_info) ? t.extra_info : '')}" onclick="bdPossiblePreview(this)" title="${esc([t.excluded ? tt('Hidden from Feed by the Exclusion List') : '', t.over_spotted ? `${tt('Already photographed')} ${t.spotted}×` : ''].filter(Boolean).join(' · '))}">` +
+        return `<div class="bd-trig-row${t.excluded ? ' is-excl' : ''}${t.registration === r.registration ? ' is-current' : ''}${t.over_spotted ? ' is-shot' : ''}" data-reg="${esc(t.registration)}" data-last="${t.last_seen_ts || t.ts || 0}" data-type="${esc(t.aircraft_type || '')}" data-livery="${esc(((t.card_types || []).includes('Special Livery') && t.extra_info) ? t.extra_info : '')}" data-airline="${esc(r.airline_name || '')}" data-icao="${esc(r.airline_icao || '')}" onclick="bdPossiblePreview(this)" title="${esc([t.excluded ? tt('Hidden from Feed by the Exclusion List') : '', t.over_spotted ? `${tt('Already photographed')} ${t.spotted}×` : ''].filter(Boolean).join(' · '))}">` +
           `<span class="bd-trig-d">${esc(ago)}</span>` +
           `<a href="${_fr24AircraftUrl(t.registration)}" target="_blank" rel="noopener" class="bd-trig-reg">${_flag(_regoCountryCode(t.registration), { h: 10 })}${esc(t.registration)}</a>` +
           (t.sessions > 0 ? `<span class="bd-trig-n" title="${esc(tt('Spotting sessions'))}">${t.sessions}x</span>` : '') +
@@ -6427,34 +6439,22 @@ async function _spOpenPhotos(rego, iata, date) {
     const airlineName = (d.airline || '').replace(/\s*\([^)]*\)\s*$/, '').trim();
     const airlineDisp = airlineName ? tExternalName(airlineName) : '';
     const metaLine = [d.aircraft_type, airlineDisp].filter(Boolean).join(' · ');
-    const notesHtml = d.notes ? `<span class="sp-photo-notes">${esc(tLiveryName(d.notes))}</span>` : '';
-    const tagsHtml = (d.tags || []).map(t => `<span class="col-sp-tag ${_colTagClass(t)}">${esc(tColKeyword(t))}</span>`).join('');
+    // Special Livery first (and always there when the photo has a livery name), then the other keywords
+    const tagList = [...(d.tags || [])];
+    if (d.notes && !tagList.includes('Special Livery')) tagList.push('Special Livery');
+    tagList.sort((x, y) => (y === 'Special Livery') - (x === 'Special Livery'));
+    const tagsHtml = tagList.map(t => `<span class="col-sp-tag ${_colTagClass(t)}">${esc(tColKeyword(t))}</span>`).join('');
     await _translateNamesForZh([airlineName, d.airport_name].filter(Boolean));
-    // Mobile: short IATA code, moved up onto row1 (right-aligned, alongside
-    // the manufacturer/type/airline line) — there isn't room on a phone
-    // width for a full airport name AND a separate row for it. Desktop:
-    // full shortened name — normally on its own row2 next to notes/tags,
-    // but if there ARE no notes/tags, row2 would otherwise just be an
-    // near-empty line holding only the date pill, so it moves up onto row1
-    // there too rather than wasting a whole row on it.
+    // Phones show the short airport code, PC the shortened airport name
     const isMobile = window.innerWidth < 768;
     const apDisp = isMobile ? d.airport : (d.airport_name ? _airportDisplayName(d.airport_name) : d.airport);
     const dateFlagHtml = d.airport_flag ? `<span class="sp-photo-date-flag">${esc(d.airport_flag)}</span>` : '';
     const dateHtml = `<span class="sp-photo-date">${dateFlagHtml}<span>${esc(apDisp)} · ${esc(_colShortDate(date))}</span></span>`;
-    const row1LeftHtml = metaLine ? `<div class="sp-photo-row1-left">${badge}<span>${esc(metaLine)}</span></div>` : '';
-    const row2LeftHtml = (notesHtml || tagsHtml) ? `<div class="sp-photo-row2-left">${notesHtml}${tagsHtml}</div>` : '';
-    const dateOnRow1 = isMobile || !row2LeftHtml;
-    const row1Html = (row1LeftHtml || dateOnRow1)
-      ? `<div class="sp-photo-row1">${row1LeftHtml}${dateOnRow1 ? dateHtml : ''}</div>` : '';
-    const row2Html = (row2LeftHtml || !dateOnRow1)
-      ? `<div class="sp-photo-row2">${row2LeftHtml}${dateOnRow1 ? '' : dateHtml}</div>` : '';
+    const icaoM = (d.airline || '').match(/\(([A-Z0-9]{2,4})\)\s*$/);
     body.innerHTML = `
       <img class="sp-photo-img" src="/api/session-photo-thumb/${d.id}" alt="" oncontextmenu="return false">
       <span class="sp-photo-close" onclick="_spClosePhotos()"></span>
-      <div class="sp-photo-top">
-        <span class="sp-photo-rego">${flag}${esc(d.registration)}</span>
-      </div>
-      <div class="sp-photo-bottom">${row1Html}${row2Html}</div>`;
+      ${_spPhotoInfoHtml({ flag, reg: d.registration, mfr: badge, type: d.aircraft_type, airline: airlineDisp, icao: icaoM ? icaoM[1] : '', pills: tagsHtml, livery: d.notes, loc: dateHtml })}`;
     if (window.twemoji) twemoji.parse(body, {folder:'svg',ext:'.svg'});
   } catch (_) {
     body.innerHTML = `<div class="sp-photos-empty">${tt('Failed to load photos.')}</div><span class="sp-photo-close" onclick="_spClosePhotos()"></span>`;

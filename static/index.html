@@ -2094,7 +2094,7 @@
     /* Same top-pill / bottom-gradient-fade treatment as the Feed's .sq photo cards */
     .sp-photo-top {
       position: absolute; top: 10px; left: 10px; right: 52px;
-      display: flex; align-items: flex-start; z-index: 2;
+      display: flex; flex-direction: column; align-items: flex-start; gap: 6px; z-index: 2;
     }
     .sp-photo-rego {
       background: rgba(0,0,0,0.55); color: #fff; display: inline-flex; align-items: center; gap: 5px;
@@ -2107,44 +2107,38 @@
       position: absolute; bottom: 0; left: 0; right: 0; z-index: 2;
       background: linear-gradient(to top, rgba(0,0,0,0.85) 0%, transparent 100%);
       padding: 40px 12px 12px;
+      display: flex; align-items: flex-end; justify-content: space-between; flex-wrap: wrap; gap: 6px 10px;
     }
-    /* Date/airport pill sits in normal flow at the far end of a row (not
-       absolutely positioned) — wraps naturally instead of needing padding
-       reserved to dodge an overlay. On mobile it lives at the end of row1
-       (alongside manufacturer/type/airline); on desktop it's on row2
-       (alongside notes/tags) — see the JS for which row gets it. */
-    .sp-photo-row1 { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: #fff; font-size: 13px; margin-bottom: 5px; }
-    .sp-photo-row1-left { display: flex; align-items: center; gap: 6px; min-width: 0; }
-    .sp-photo-row2 { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
-    .sp-photo-row2-left { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
-    /* Fixed, IDENTICAL height + line-height on both — align-items:center alone
-       isn't enough because the pill's border+padding and the notes' italic
-       glyph metrics give them naturally different box heights, so centering
-       each within its own box still leaves the two centers at different
-       pixel rows. Pinning both to the same height forces true alignment. */
-    .sp-photo-notes, .sp-photo-row2-left .col-sp-tag {
-      display: inline-flex; align-items: center; box-sizing: border-box;
-      height: 18px; line-height: 16px;
-    }
-    .sp-photo-notes { font-size: 11px; color: rgba(255,255,255,0.75); font-style: italic; }
-    .sp-photo-date {
-      display: inline-flex; align-items: center; gap: 3px; flex-shrink: 0;
+    /* Top left: registration with manufacturer and type under it. Bottom left: airline tail and name. Bottom right: the livery
+       line over the place / date pill. Both bottom groups sit on the bottom edge, so a missing line lets the other drop down. */
+    .sp-photo-left { display: flex; align-items: center; gap: 8px; min-width: 0; }
+
+    .sp-photo-line { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; color: #fff; font-size: 13px; }
+    .sp-photo-right { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; margin-left: auto; min-width: 0; }
+    /* One height for every item on a line, so pills, badges and the italic note centre on the same line */
+    .sp-photo-line > *, .sp-photo-right > .sp-photo-date, .sp-photo-left > .sp-photo-pill { display: inline-flex; align-items: center; box-sizing: border-box; height: 20px; line-height: 18px; }
+    .sp-photo-pill, .sp-photo-date {
+      display: inline-flex; align-items: center; gap: 3px; flex-shrink: 0; padding: 0 8px;
       background: rgba(0,0,0,0.45); color: rgba(255,255,255,0.85);
-      font-size: 11px; padding: 3px 8px; border-radius: 5px; backdrop-filter: blur(3px);
-      white-space: nowrap;
+      font-size: 11px; font-weight: 600; border-radius: 5px; backdrop-filter: blur(3px); white-space: nowrap;
     }
+    .sp-photo-left > .sp-photo-pill { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+    .sp-photo-notes { font-size: 11px; color: rgba(255,255,255,0.75); font-style: italic; }
+    .sp-photo-line .col-sp-tag { font-size: 10px; padding: 0 6px; }
+    .sp-photo-right > .sp-photo-line { justify-content: flex-end; }
+
     @media (min-width: 768px) {
       .sp-photo-rego { font-size: 18px; padding: 5px 12px; }
-      .sp-photo-date { font-size: 14px; padding: 5px 11px; }
-      .sp-photo-bottom { padding: 56px 18px 18px; }
-      .sp-photo-row1 { font-size: 17px; margin-bottom: 8px; }
-      .sp-photo-row1-left { gap: 9px; }
-      .sp-photo-row1-left .mfr { font-size: 12px; height: 20px; padding: 0 7px; }
-      .sp-photo-row2 { gap: 10px; }
-      .sp-photo-row2-left { gap: 7px; }
-      .sp-photo-notes, .sp-photo-row2-left .col-sp-tag { height: 22px; line-height: 20px; }
+      .sp-photo-bottom { padding: 56px 18px 18px; gap: 8px 14px; }
+      .sp-photo-left { gap: 8px; }
+      .sp-photo-line { gap: 9px; font-size: 17px; }
+      .sp-photo-right { gap: 8px; }
+      .sp-photo-line > *, .sp-photo-right > .sp-photo-date, .sp-photo-left > .sp-photo-pill { height: 26px; line-height: 24px; }
+      .sp-photo-left img { max-height: 32px; }
+      .sp-photo-line .mfr { font-size: 12px; padding: 0 8px; }
+      .sp-photo-pill, .sp-photo-date { font-size: 14px; padding: 0 11px; }
       .sp-photo-notes { font-size: 14px; }
-      .sp-photo-row2-left .col-sp-tag { font-size: 11px; padding: 0 6px; }
+      .sp-photo-line .col-sp-tag { font-size: 12px; padding: 0 8px; }
       .sp-photo-close { width: 36px; height: 36px; font-size: 24px; }
     }
     .sp-photos-empty, .sp-photos-loading { color: var(--dim); font-size: 13px; padding: 40px 60px; text-align: center; }
