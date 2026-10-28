@@ -1413,7 +1413,25 @@ def _board_rows_from_entries(entries: list, candidates: set, tz, now_dt) -> tupl
         fr24_text, _diverted = _get_fr24_status(flight)
         status = "Cancelled" if fr24_text == "canceled" else "Diverted" if fr24_text == "diverted" \
             else get_flight_status(flight)
+        # What this same board entry already tells us about the aircraft (stored per registration for the Board's
+        # expanded row — no lookup of its own): model, country, hex, serial, owner, operator and the livery in the airline name.
+        _ac = flight.get("aircraft") or {}
+        _al_name = _safe_get(flight, "airline", "name", default="") or ""
+        _lm = re.match(r"^.*?\((.+)\)\s*$", _al_name)
+        aircraft_facts = {
+            "registration": (_safe_get(flight, "aircraft", "registration", default=None) or "").strip().upper(),
+            "model_text":   _safe_get(flight, "aircraft", "model", "text", default="") or "",
+            "type_code":    _safe_get(flight, "aircraft", "model", "code", default="") or "",
+            "country":      _safe_get(flight, "aircraft", "country", "name", default="") or "",
+            "country_code": (_safe_get(flight, "aircraft", "country", "alpha2", default="") or "").upper(),
+            "hex":          _ac.get("hex") or "",
+            "serial_no":    str(_ac.get("serialNo") or _ac.get("msn") or ""),
+            "owner":        _safe_get(flight, "owner", "name", default="") or "",
+            "operator":     (_safe_get(flight, "airline", "short", default="") or re.sub(r"\s*\(.*\)\s*$", "", _al_name)).strip(),
+            "livery":       (_lm.group(1).strip() if _lm else ""),
+        }
         rows[(fn, sched)] = {
+            "_aircraft":     aircraft_facts,
             "flight_number": fn,
             "scheduled_ts":  sched,
             "estimated_ts":  est,
@@ -1839,6 +1857,8 @@ async def run_check(context: ContextTypes.DEFAULT_TYPE) -> None:
                 board_arrivals + board_hist, cfg.store.board_candidate_flight_numbers(cfg.airport_iata, cfg.store.board_min_appearances()),
                 _tz_obj, _now_dt)
             _midnight = _tz_obj.localize(datetime(_now_dt.year, _now_dt.month, _now_dt.day))
+            cfg.store.upsert_board_aircraft([r.get("_aircraft") or {} for r in _rows], int(datetime.now().timestamp()))
+            _rows = [{k: v for k, v in r.items() if k != "_aircraft"} for r in _rows]
             cfg.store.replace_board_rows(
                 _rows,
                 _window if _pages_failed == 0 else None,   # a failed page must never wipe real rows

@@ -5422,65 +5422,31 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
     # Expanded Board row: photo + aircraft facts for ONE registration. FR24's aircraft lookup is a live call
     # (and these aircraft usually never triggered a card, so nothing is cached in airframes yet) — cache the
     # answer per registration for an hour so re-opening / the 60 s refresh never re-hits FR24.
-    _board_ac_cache: dict = {}
     _board_spot_cache: dict = {}      # (airport, owner, reg, livery) -> (ts, Lightroom session count)
 
     def _board_aircraft_info(cfg_, registration: str) -> dict:
-        import re as _re3
+        """Everything the Board's expanded row shows about one aircraft, read ONLY from what the normal cycle already
+        stored (airframes + board_aircraft + our own flight history) — the Board makes no FR24 / JetPhotos calls."""
         reg = registration.strip().upper()
-        hit = _board_ac_cache.get((cfg_.airport_iata, reg))
-        if hit and time.time() - hit[0] < 3600:
-            return hit[1]
         store_ = cfg_.store
         af = store_.get_airframe(reg) or {}
-        out = {"registration": reg, "photo_url": af.get("photo_url") or "", "manufacturer": af.get("manufacturer") or "",
-               "serial_number": af.get("serial_number") or "", "built_year": af.get("built_year"),
-               "owner": af.get("owner") or "", "operator": af.get("operator") or "",
-               "model": "", "type_code": "", "country": "", "country_code": "", "hex": "", "livery": "",
-               "photo_credit": "", "photo_link": ""}
-        if cfg_.fr_api:
+        ba = store_.get_board_aircraft(reg) or {}
+        model = ba.get("model_text") or ""
+        manufacturer = af.get("manufacturer") or ""
+        if not manufacturer and model:
             try:
-                rd = cfg_.fr_api.get_rego_details(reg) or {}
-                info = rd.get("aircraftInfo") or ((rd.get("data") or [{}])[0].get("aircraft") or {})
-                model = info.get("model") or {}
-                out["model"], out["type_code"] = model.get("text") or "", model.get("code") or ""
-                ctry = info.get("country") or {}
-                out["country"], out["country_code"] = ctry.get("name") or "", (ctry.get("alpha2") or "").upper()
-                out["hex"] = info.get("hex") or ""
-                if info.get("serialNo"):
-                    out["serial_number"] = out["serial_number"] or str(info["serialNo"])
-                if (info.get("owner") or {}).get("name"):
-                    out["owner"] = info["owner"]["name"]
-                al = info.get("airline") or {}
-                # "Qantas (Oneworld Livery)" vs short "Qantas" — anything extra in the name is the livery.
-                m = _re3.match(r"^.*?\((.+)\)\s*$", al.get("name") or "")
-                if m:
-                    out["livery"] = m.group(1).strip()
-                if al.get("short") or al.get("name"):
-                    out["operator"] = al.get("short") or _re3.sub(r"\s*\(.*\)\s*$", "", al.get("name") or "")
-                images = rd.get("aircraftImages") or []
-                if images:
-                    imgs = images[0]["images"]
-                    large = imgs.get("large") or imgs.get("medium") or []
-                    # Keep the photo Feed / Spotting already show (airframes.photo_url); only fall back to
-                    # FR24's current first image when none is stored yet.
-                    if large and not out["photo_url"]:
-                        out["photo_url"] = large[0]["src"].replace("/640cb/", "/640/")
-                        out["photo_credit"] = large[0].get("copyright") or ""
-                        out["photo_link"] = large[0].get("link") or ""
-                    from monitor import _derive_manufacturer
-                    out["manufacturer"] = out["manufacturer"] or _derive_manufacturer(out["model"]) or ""
-                    store_.upsert_airframe_from_fr24(reg, photo_url=out["photo_url"] or None,
-                                                     manufacturer=out["manufacturer"] or None)
-            except Exception as exc:
-                log.debug("Board aircraft lookup failed for %s: %s", reg, exc)
-            if not out["photo_url"]:                      # FR24 had none: try JetPhotos once and save it
-                out["photo_url"] = latest_photo_url(None, reg)
-                if out["photo_url"]:
-                    try:
-                        store_.upsert_airframe_from_fr24(reg, photo_url=out["photo_url"])
-                    except Exception:
-                        pass
+                from monitor import _derive_manufacturer
+                manufacturer = _derive_manufacturer(model) or ""
+            except Exception:
+                pass
+        out = {"registration": reg,
+               "photo_url": f"/api/board/photo/{reg}" if af.get("photo_url") else "",     # served from our own disk copy
+               "manufacturer": manufacturer, "serial_number": af.get("serial_number") or ba.get("serial_no") or "",
+               "built_year": af.get("built_year"), "owner": ba.get("owner") or af.get("owner") or "",
+               "operator": ba.get("operator") or af.get("operator") or "",
+               "model": model, "type_code": ba.get("type_code") or "", "country": ba.get("country") or "",
+               "country_code": ba.get("country_code") or "", "hex": ba.get("hex") or af.get("icao24") or "",
+               "livery": ba.get("livery") or "", "photo_credit": "", "photo_link": ""}
         with store_._connect() as conn:
             n, first, last = conn.execute(
                 "SELECT COUNT(*), MIN(arrival_ts), MAX(arrival_ts) FROM flight_arrivals WHERE registration = ? "
@@ -5488,8 +5454,69 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
             ss = conn.execute("SELECT last_seen_ts FROM rego_sightings WHERE registration = ?", (reg,)).fetchone()
         out.update({"cards_here": n or 0, "first_card_ts": first, "last_card_ts": last,
                     "last_seen_ts": ss[0] if ss else None})
-        _board_ac_cache[(cfg_.airport_iata, reg)] = (time.time(), out)
         return out
+
+    # Board photos are kept as files on the NAS (data/board_photos/), downloaded once from the link FR24 already gave us
+    # (airframes.photo_url) and renewed only when the copy is more than 30 days old. A Feed card's creation refreshes that
+    # link (airframes.photo_ts), which also restarts the 30 days. Feed / Spotting cards still use the link directly.
+    _BOARD_PHOTO_MAX_AGE = 30 * 86400
+    _board_photo_lock = threading.Lock()
+
+    def _board_photo_file(cfg_, registration: str):
+        import re as _re5, json as _j5, requests as _rq5
+        reg = _re5.sub(r"[^A-Z0-9\-]", "", registration.strip().upper())
+        if not reg:
+            return None
+        folder = os.path.join(app.state.data_dir, "board_photos")
+        os.makedirs(folder, exist_ok=True)
+        img, meta_p = os.path.join(folder, reg + ".jpg"), os.path.join(folder, reg + ".json")
+        af = cfg_.store.get_airframe(reg) or {}
+        url = af.get("photo_url") or ""
+        have = os.path.exists(img)
+        if not url:
+            return img if have else None
+        try:
+            with open(meta_p, encoding="utf-8") as fh:
+                meta = _j5.load(fh)
+        except Exception:
+            meta = {}
+        now = time.time()
+        if have and meta.get("url") == url and now - max(meta.get("ts") or 0, af.get("photo_ts") or 0) <= _BOARD_PHOTO_MAX_AGE:
+            return img                                              # a current copy: nothing to fetch
+        if meta.get("url") == url and now - (meta.get("fail_ts") or 0) < 3600:
+            return img if have else None                            # failed an hour ago: don't hammer the CDN
+        with _board_photo_lock:
+            try:
+                r = _rq5.get(url, timeout=8, stream=True, headers={"User-Agent": "Mozilla/5.0"})
+                try:
+                    ok = r.status_code == 200 and "image" in (r.headers.get("Content-Type") or "")
+                    data = r.raw.read(3_000_001, decode_content=True) if ok else b""
+                finally:
+                    r.close()
+                if not ok or not data or len(data) > 3_000_000:
+                    raise ValueError(f"bad image response ({r.status_code})")
+                tmp = img + f".{os.getpid()}.{int(now * 1000)}.tmp"
+                with open(tmp, "wb") as fh:
+                    fh.write(data)
+                os.replace(tmp, img)
+                with open(meta_p, "w", encoding="utf-8") as fh:
+                    _j5.dump({"url": url, "ts": int(now)}, fh)
+                return img
+            except Exception as exc:
+                log.debug("Board photo download failed for %s: %s", reg, exc)
+                try:
+                    with open(meta_p, "w", encoding="utf-8") as fh:
+                        _j5.dump({**meta, "url": meta.get("url") or url, "fail_ts": int(now)}, fh)
+                except Exception:
+                    pass
+                return img if have else None                         # keep serving the old copy
+
+    @app.get("/api/board/photo/{registration}")
+    async def get_board_photo(registration: str, user=Depends(_auth_current_user)):
+        path = await asyncio.to_thread(_board_photo_file, _cfg_for_user(user), registration)
+        if not path:
+            raise HTTPException(404, "No photo")
+        return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=604800"})
 
     @app.get("/api/board/aircraft/{registration}")
     async def get_board_aircraft(registration: str, user=Depends(_auth_current_user)):

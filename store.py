@@ -179,6 +179,14 @@ class SqliteStore:
                 )
             """)
             conn.execute("CREATE TABLE IF NOT EXISTS board_meta (key TEXT PRIMARY KEY, value TEXT)")
+            # What FR24's normal arrivals board already says about each aircraft — kept per registration so the Board's
+            # expanded row never needs a lookup of its own (written by monitor Step 6b, zero extra calls).
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS board_aircraft (
+                    registration TEXT PRIMARY KEY, model_text TEXT, type_code TEXT, country TEXT, country_code TEXT,
+                    hex TEXT, serial_no TEXT, owner TEXT, operator TEXT, livery TEXT, updated_ts INTEGER NOT NULL
+                )
+            """)
             # The Board's one-off flights were briefly tagged "Added" before being renamed "Manual" — carry any
             # such rows (and their cached timeline events) over so they keep working (and can be removed).
             # (Both tables may not exist yet on a brand-new database — nothing to carry over then.)
@@ -339,6 +347,8 @@ class SqliteStore:
             af_cols = {row[1] for row in conn.execute("PRAGMA table_info(airframes)").fetchall()}
             if "photo_url" not in af_cols:
                 conn.execute("ALTER TABLE airframes ADD COLUMN photo_url TEXT DEFAULT NULL")
+            if "photo_ts" not in af_cols:        # when the photo link was last provided by FR24 (a Feed card creation counts)
+                conn.execute("ALTER TABLE airframes ADD COLUMN photo_ts INTEGER DEFAULT NULL")
 
             # flight_arrivals is the canonical filter-match store.
             # One row per (registration, flight_number). notif_types is a JSON array of all
@@ -1188,6 +1198,40 @@ class SqliteStore:
                 "AND COALESCE(estimated_ts, scheduled_ts) < ? ORDER BY COALESCE(estimated_ts, scheduled_ts) ASC",
                 (start_ts, end_ts),
             ).fetchall()]
+
+    def upsert_board_aircraft(self, facts: list, now_ts: int) -> None:
+        """Per-registration facts read off this check's live board (never overwrite a known value with an empty one)."""
+        facts = [f for f in facts if f.get("registration")]
+        if not facts:
+            return
+        with self._connect() as conn:
+            conn.executemany(
+                """
+                INSERT INTO board_aircraft (registration, model_text, type_code, country, country_code, hex, serial_no,
+                                            owner, operator, livery, updated_ts)
+                VALUES (:registration, :model_text, :type_code, :country, :country_code, :hex, :serial_no,
+                        :owner, :operator, :livery, :now)
+                ON CONFLICT(registration) DO UPDATE SET
+                    model_text   = COALESCE(NULLIF(excluded.model_text, ''),   board_aircraft.model_text),
+                    type_code    = COALESCE(NULLIF(excluded.type_code, ''),    board_aircraft.type_code),
+                    country      = COALESCE(NULLIF(excluded.country, ''),      board_aircraft.country),
+                    country_code = COALESCE(NULLIF(excluded.country_code, ''), board_aircraft.country_code),
+                    hex          = COALESCE(NULLIF(excluded.hex, ''),          board_aircraft.hex),
+                    serial_no    = COALESCE(NULLIF(excluded.serial_no, ''),    board_aircraft.serial_no),
+                    owner        = COALESCE(NULLIF(excluded.owner, ''),        board_aircraft.owner),
+                    operator     = COALESCE(NULLIF(excluded.operator, ''),     board_aircraft.operator),
+                    livery       = excluded.livery,
+                    updated_ts   = excluded.updated_ts
+                """,
+                [{**{k: (f.get(k) or "") for k in ("model_text", "type_code", "country", "country_code", "hex", "serial_no",
+                                                    "owner", "operator", "livery")},
+                  "registration": f["registration"].upper(), "now": now_ts} for f in facts],
+            )
+
+    def get_board_aircraft(self, registration: str) -> Optional[dict]:
+        with self._connect() as conn:
+            r = conn.execute("SELECT * FROM board_aircraft WHERE registration = ?", ((registration or "").upper(),)).fetchone()
+        return dict(r) if r else None
 
     def get_board_scheduled_since(self, flight_numbers, since_ts: int) -> dict:
         """{flight_number: [scheduled_ts, ...newest first]} for stored Board rows scheduled at/after since_ts —
@@ -2340,8 +2384,8 @@ class SqliteStore:
                 """
                 INSERT INTO airframes
                     (registration, icao24, manufacturer, serial_number, built_year,
-                     owner, operator, operator_icao, operator_iata, photo_url, fetched_ts)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     owner, operator, operator_icao, operator_iata, photo_url, fetched_ts, photo_ts)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(registration) DO UPDATE SET
                     icao24        = COALESCE(airframes.icao24,        excluded.icao24),
                     manufacturer  = COALESCE(airframes.manufacturer,  excluded.manufacturer),
@@ -2352,10 +2396,11 @@ class SqliteStore:
                     operator_icao = COALESCE(airframes.operator_icao, excluded.operator_icao),
                     operator_iata = COALESCE(airframes.operator_iata, excluded.operator_iata),
                     photo_url     = COALESCE(excluded.photo_url, airframes.photo_url),
+                    photo_ts      = CASE WHEN excluded.photo_url IS NOT NULL THEN excluded.photo_ts ELSE airframes.photo_ts END,
                     fetched_ts    = excluded.fetched_ts
                 """,
                 (registration.upper(), icao24, manufacturer, serial_number, built_year,
-                 owner, operator, operator_icao, operator_iata, photo_url, now_ts),
+                 owner, operator, operator_icao, operator_iata, photo_url, now_ts, now_ts if photo_url else None),
             )
 
 
