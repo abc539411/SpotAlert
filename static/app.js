@@ -2064,7 +2064,7 @@ function _fmtLastSeen(ts) {
     label = `${yy.slice(2)}/${mm}/${dd}`;
   } else {
     const p = Object.fromEntries(new Intl.DateTimeFormat('en-US', { day: '2-digit', month: 'short', year: '2-digit', ...opts }).formatToParts(d).map(x => [x.type, x.value]));
-    label = `${p.day} ${p.month} ${p.year}`;
+    label = `${p.day} ${p.month} '${p.year}`;
   }
   const dateStr  = ts  => new Date(ts * 1000).toLocaleDateString('en-CA', opts); // YYYY-MM-DD
   const seenDay  = dateStr(ts);
