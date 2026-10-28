@@ -2430,6 +2430,12 @@
       .srch-fl-row-m { padding: 9px 10px; }
     }
 
+    /* Board, phones: every Possible Equipment row is two lines tall, the height the livery rows already take (livery chip over the
+       livery name), so rows without a livery are not shorter */
+    @media (max-width: 767px) {
+      .bd-detail .bd-trig-row:not(.spot-row), .detail-sheet-scroll .bd-trig-row:not(.spot-row) { min-height: 42px; box-sizing: border-box; }
+    }
+
     /* inset blocks */
     .bd-eb, .fl-form.fl-inline { border-radius: var(--tile-r); }
     .fl-form.fl-inline { background: var(--surface2); border-color: var(--border); margin: 6px 0; }
