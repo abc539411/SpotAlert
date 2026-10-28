@@ -2666,7 +2666,15 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         kw_stats = []
         try:
             _kw_con = _sq.connect(str(cat))
-            _kw_store = _cfg_for_user(user).store if user is not None else app.state.store
+            # The periodic background refresh builds a stand-in user with NO airport selected, and _cfg_for_user() raises for
+            # that — which used to blank all three tiles ("not set") until the next manual Refresh. These settings are kept
+            # identical in every airport DB (PER_USER_GLOBAL_SETTINGS), so the main store is a fine fallback.
+            _kw_store = app.state.store
+            if user is not None and getattr(user, "airport_iata", None):
+                try:
+                    _kw_store = _cfg_for_user(user).store
+                except Exception:
+                    pass
             _kw_owner = _owner_id(user) if user is not None else "controller"
             with _kw_store._connect() as _kw_settings_conn:
                 for _i in range(1, 4):
@@ -2689,6 +2697,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                         kw_stats.append({'keyword': '', 'count': 0})
             _kw_con.close()
         except Exception:
+            log.warning("Collection keyword tiles could not be read", exc_info=True)
             kw_stats = [{'keyword': '', 'count': 0}] * 3
 
         return {
