@@ -2342,6 +2342,14 @@
     /* Board: the Equipment History bars are the same height as the Possible Equipment rows under them */
     .bd-detail .srch-fl-row[style*="gradient"] { padding: 4px 8px; }
 
+    /* Feed tile: the type chip, aircraft type and flight count are one box (same height, centred), PC and phone */
+    .sq-row2 > .chip, .sq-row2 > .fc-actype, .sq-row2 > .sq-count { box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center; height: 20px; margin: 0; line-height: 1; }
+    .sq-row2 > .sq-count { font-size: 11px; padding: 0 6px; }
+    @media (max-width: 767px) {
+      .sq-row2 > .chip, .sq-row2 > .fc-actype, .sq-row2 > .sq-count { height: 14px; }
+      .sq .sq-count { font-size: 8px !important; padding: 0 5px; }
+    }
+
     /* inset blocks */
     .bd-eb, .fl-form.fl-inline { border-radius: var(--tile-r); }
     .fl-form.fl-inline { background: var(--surface2); border-color: var(--border); margin: 6px 0; }
