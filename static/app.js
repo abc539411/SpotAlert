@@ -481,7 +481,7 @@ function _srchCatDate(dateStr) {
   const [y, m, d] = dateStr.split('-');
   if (!y || !m || !d) return dateStr;
   if (_lang === 'zh') return `${y.slice(2)}/${m}/${d}`;
-  return `${d} ${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][+m - 1] || m} ${y}`;      // 09 Jul 2025
+  return `${+d} ${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][+m - 1] || m} ${y}`;      // 09 Jul 2025
 }
 // Livery/sticker names are arbitrary FR24 text (like airline/airport names —
 // deliberately NOT translated wholesale), but for Chinese, keep the name
