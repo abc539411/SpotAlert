@@ -4038,7 +4038,6 @@ function _bdDetailHtml(r) {
         return `<div class="bd-trig-row${t.excluded ? ' is-excl' : ''}${t.registration === r.registration ? ' is-current' : ''}${t.over_spotted ? ' is-shot' : ''}" data-reg="${esc(t.registration)}" data-last="${t.last_seen_ts || t.ts || 0}" data-type="${esc(t.aircraft_type || '')}" data-livery="${esc(((t.card_types || []).includes('Special Livery') && t.extra_info) ? t.extra_info : '')}" onclick="bdPossiblePreview(this)" title="${esc([t.excluded ? tt('Hidden from Feed by the Exclusion List') : '', t.over_spotted ? `${tt('Already photographed')} ${t.spotted}×` : ''].filter(Boolean).join(' · '))}">` +
           `<span class="bd-trig-d">${esc(ago)}</span>` +
           `<a href="${_fr24AircraftUrl(t.registration)}" target="_blank" rel="noopener" class="bd-trig-reg">${_flag(_regoCountryCode(t.registration), { h: 10 })}${esc(t.registration)}</a>` +
-          `<span class="bd-trig-n">${t.count}x</span>` +
           `<span class="bd-trig-right">${lv}${rareType}<span class="bd-trig-chips">${chips}</span></span></div>`;
       }).join('')}</div>`;
   }
