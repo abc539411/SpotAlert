@@ -5100,7 +5100,14 @@ const _flz = (en, zh) => (_lang === 'zh' ? zh : en);
 async function flownLoad(force) {
   if (_flown && !force) { flownRender(); return; }
   try { _flown = await api('/flown'); } catch (e) { toast('Error: ' + e.message); return; }
+  await _translateNamesForZh(Object.values(_flown.airports || {}));
   flownRender();
+}
+
+// Airport as its shortened name ("Sydney"); falls back to the IATA code when the name is not on file
+function _flownAp(code) {
+  const n = (_flown && _flown.airports || {})[code];
+  return esc(n ? (_airportDisplayName(n) || code) : (code || '?'));
 }
 
 function _flownDate(iso) {
@@ -5151,7 +5158,7 @@ function flownRender() {
       if (_flownFold.has(fk)) return h;
       return h + g.items.map(a => {
         const open = _flownOpenAc.has(a.reg);
-        const sub = open ? `<div class="fl-sublist">${a.fl.map(f => `<div class="fl-subrow"><span>${esc(f.date)}</span><span>${esc(f.flight_number || '—')}</span><span>${esc(f.from_iata || '?')} → ${esc(f.to_iata || '?')}</span></div>`).join('')}</div>` : '';
+        const sub = open ? `<div class="fl-sublist">${a.fl.map(f => `<div class="fl-subrow"><span>${esc(f.date)}</span><span>${esc(f.flight_number || '—')}</span><span>${_flownAp(f.from_iata)} → ${_flownAp(f.to_iata)}</span></div>`).join('')}</div>` : '';
         return `<div class="fl-row act" onclick="flownToggleAc('${esc(a.reg)}')">
           <div class="fl-date">${_flownDate(a.last)}</div>
           <div><div class="fl-fn">${_flag(_regoCountryCode(a.reg), { h: 11 })}${esc(a.reg)}</div><div class="fl-sub">${esc(a.type)}</div></div>

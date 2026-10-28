@@ -4020,7 +4020,15 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                         "type_name": r["type_name"], "type_code": r["type_code"], "registration": r["registration"],
                         "seat": r["seat"], "note": r["note"], "source": r["source"], "edited": bool(r["edited"])})
         regs = {r["registration"] for r in out if r["registration"]}
-        return {"flights": out, "summary": {"total": len(out), "with_registration": sum(1 for r in out if r["registration"]),
+        airports = {}                                           # IATA -> name, from the airports table only (no FR24 lookups)
+        for code in {c for r in out for c in (r["from_iata"], r["to_iata"]) if c}:
+            try:
+                info = app.state.store.get_airport_info(code)
+                if info and info[0]:
+                    airports[code] = info[0]
+            except Exception:
+                pass
+        return {"flights": out, "airports": airports, "summary": {"total": len(out), "with_registration": sum(1 for r in out if r["registration"]),
                                             "aircraft": len(regs), "first": out[-1]["date"] if out else None,
                                             "last": out[0]["date"] if out else None}}
 
