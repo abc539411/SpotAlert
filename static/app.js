@@ -3006,7 +3006,7 @@ async function _loadAircraftDetail(registration, uid, r) {
         if (sessions.length > 0) {
           spotEl.innerHTML = _spotRowsHtml(sessions, registration, r);
           const nEl = document.getElementById(placeholderId + '-spotted-n');       // right-aligned total, like "Since ..." on the Board's Equipment History
-          if (nEl) nEl.textContent = _lang === 'zh' ? `共 ${sessions.length} 次拍摄` : `${sessions.length} ${sessions.length === 1 ? 'session' : 'sessions'}`;
+          if (nEl) nEl.textContent = _lang === 'zh' ? `共 ${sessions.length} 次拍摄` : `${sessions.length} ${sessions.length === 1 ? 'Session' : 'Sessions'}`;
         } else if (data.last_spotted_ts) {
           const d = new Date(data.last_spotted_ts * 1000);
           const lbl = d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
