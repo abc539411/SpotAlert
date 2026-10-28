@@ -2374,8 +2374,9 @@
     /* the list is padded like Flown's, so the group dividers stop short of the card edges and a header is just its text row
        (hover changes the text colour, not a full-width bar) */
     .flt-ac-list { padding-left: 10px; padding-right: 10px; }
-    .flt-type-hd { position: sticky; top: 0; z-index: 2; background: var(--surface); padding: 10px 2px 6px; gap: 6px; }
-    .flt-type-hd:first-child { padding-top: 10px; }
+    /* same box as Flown's .fl-year: 12px above the text, 6px below, 6px gap above the divider */
+    .flt-type-hd { position: sticky; top: 0; z-index: 2; background: var(--surface); padding: 12px 2px 6px; margin-top: 6px; gap: 6px; box-sizing: border-box; }
+    .flt-type-hd:first-child { padding-top: 12px; margin-top: 0; }
     .flt-type-hd:hover { background: var(--surface); }
     .flt-type-hd:hover .flt-type-hd-name { color: var(--text); }
     .flt-type-arrow { width: 12px; font-size: 11px; }
