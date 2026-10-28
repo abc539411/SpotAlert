@@ -2057,7 +2057,15 @@ function _fmtLastSeen(ts) {
   const tz = _feedTimezone || undefined;
   const opts = tz ? { timeZone: tz } : {};
   const d = new Date(ts * 1000);
-  const label = d.toLocaleDateString(_locale(), { day: 'numeric', month: 'short', year: 'numeric', ...opts });
+  // "12 Jul 26" (Chinese: 26/07/12), in the airport's own timezone
+  let label;
+  if (_lang === 'zh') {
+    const [yy, mm, dd] = d.toLocaleDateString('en-CA', opts).split('-');
+    label = `${yy.slice(2)}/${mm}/${dd}`;
+  } else {
+    const p = Object.fromEntries(new Intl.DateTimeFormat('en-US', { day: '2-digit', month: 'short', year: '2-digit', ...opts }).formatToParts(d).map(x => [x.type, x.value]));
+    label = `${p.day} ${p.month} ${p.year}`;
+  }
   const dateStr  = ts  => new Date(ts * 1000).toLocaleDateString('en-CA', opts); // YYYY-MM-DD
   const seenDay  = dateStr(ts);
   const todayDay = dateStr(Math.floor(Date.now() / 1000));
