@@ -5092,7 +5092,7 @@ function _colSubtab(name) {
 // ── Flown: flights you have actually been on (Collection > Flown) ───────────────────────────────────────────────────
 // Imported from a MyFR24 (FlightDiary) or Flighty CSV, and editable by hand. Flighty exports carry no tail numbers, so
 // those rows show "+ rego": tap one to type the registration in.
-let _flown = null, _flownView = 'flights', _flownNoReg = false, _flownEdit = false;
+let _flown = null, _flownView = 'flights', _flownNoReg = false, _flownEdit = false, _flownEditId = null;   // _flownEditId: row whose form is open (0 = new flight)
 const _flownFold = new Set();       // collapsed groups: 'y:2025' (flights by year) / 'a:QFA' (aircraft by airline)
 const _flownOpenAc = new Set();     // aircraft whose flights are shown under them   // edit mode: Import CSV, Add flight, tap a flight to change it
 const _flz = (en, zh) => (_lang === 'zh' ? zh : en);
@@ -5168,9 +5168,10 @@ function flownRender() {
         if (_flownFold.has(fk)) return head;
         return head + g.items.map(f => {
           const route = f.from_iata || f.to_iata ? `${esc(f.from_iata || '?')} → ${esc(f.to_iata || '?')}` : '';
-          const sub = [f.airline_name, f.type_name || f.type_code, f.seat ? `${_flz('Seat', '座位')} ${f.seat}` : ''].filter(Boolean).join(' · ');
+          const sub = [f.airline_name, f.type_name || f.type_code].filter(Boolean).join(' · ');
           const reg = f.registration ? `${_flag(_regoCountryCode(f.registration), { h: 11 })}${esc(f.registration)}`
             : (_flownEdit ? `<span class="fl-noreg">+ ${esc(_flz('rego', '注册号'))}</span>` : `<span class="fl-sub">—</span>`);
+          if (_flownEdit && _flownEditId === f.id) return _flownForm(f);
           return `<div class="fl-row${_flownEdit ? ' act' : ''}"${_flownEdit ? ` onclick="flownEdit(${f.id})"` : ''}>
             <div class="fl-date">${_flownDate(f.date)}</div>
             <div><div class="fl-fn">${esc(f.flight_number || '—')}<span class="fl-route">${route}</span></div><div class="fl-sub">${esc(sub)}</div></div>
@@ -5191,30 +5192,26 @@ function flownRender() {
       <div class="fl-seg"><button class="${_flownView === 'flights' ? 'on' : ''}" onclick="flownView('flights')">${esc(_flz('Flights', '航班'))}</button><button class="${_flownView === 'aircraft' ? 'on' : ''}" onclick="flownView('aircraft')">${esc(_flz('Aircraft', '飞机'))}</button></div>
       ${_flownView === 'flights' ? `<label class="fl-chk"><input type="checkbox" ${_flownNoReg ? 'checked' : ''} onchange="flownNoReg(this.checked)">${esc(_flz('No registration', '无注册号'))}</label>` : ''}
     </div>
-    <div class="fl-list">${body}</div>`;
+    <div class="fl-list">${_flownEdit && _flownEditId === 0 ? _flownForm(null) : ''}${body}</div>`;
   const l = wrap.querySelector('.fl-list'); if (l) l.scrollTop = keepScroll;
 }
 
-function flownToggleEdit() { _flownEdit = !_flownEdit; flownRender(); }
+function flownToggleEdit() { _flownEdit = !_flownEdit; _flownEditId = null; flownRender(); }
 function flownView(v) { _flownView = v; flownRender(); }
 function flownNoReg(on) { _flownNoReg = !!on; flownRender(); }
 
-function flownEdit(id) {
-  const f = id ? (_flown.flights || []).find(x => x.id === id) : null;
+function _flownForm(f) {
   const v = k => esc(f ? (f[k] || '') : '');
   const today = new Date().toISOString().slice(0, 10);
-  $('flown-modal').innerHTML = `<div class="fl-form" onclick="event.stopPropagation()">
-    <h3>${esc(f ? _flz('Edit flight', '编辑航班') : _flz('Add a flight', '添加航班'))}</h3>
+  return `<div class="fl-form fl-inline">
     <div class="fl-grid">
       <label>${esc(_flz('Date', '日期'))}<input id="fl-date" type="date" value="${f ? esc(f.date) : today}"></label>
       <label>${esc(_flz('Flight number', '航班号'))}<input id="fl-fn" value="${v('flight_number')}" placeholder="QF465" autocapitalize="characters"></label>
       <label>${esc(_flz('From (IATA)', '出发（IATA）'))}<input id="fl-from" value="${v('from_iata')}" placeholder="SYD" maxlength="3" autocapitalize="characters"></label>
       <label>${esc(_flz('To (IATA)', '到达（IATA）'))}<input id="fl-to" value="${v('to_iata')}" placeholder="MEL" maxlength="3" autocapitalize="characters"></label>
       <label>${esc(_flz('Registration', '注册号'))}<input id="fl-reg" value="${v('registration')}" placeholder="VH-VXZ" autocapitalize="characters"></label>
-      <label>${esc(_flz('Seat', '座位'))}<input id="fl-seat" value="${v('seat')}" maxlength="8"></label>
+      <label>${esc(_flz('Aircraft type', '机型'))}<input id="fl-type" value="${esc(f ? (f.type_name || f.type_code || '') : '')}" placeholder="Boeing 737-800"></label>
     </div>
-    <label>${esc(_flz('Aircraft type', '机型'))}<input id="fl-type" value="${esc(f ? (f.type_name || f.type_code || '') : '')}" placeholder="Boeing 737-800"></label>
-    <label>${esc(_flz('Note', '备注'))}<input id="fl-note" value="${v('note')}" maxlength="200"></label>
     <div class="fl-err" id="fl-err"></div>
     <div class="fl-actions">
       ${f ? `<button class="fl-btn danger" onclick="flownDelete(${f.id})">${esc(_flz('Delete', '删除'))}</button>` : ''}
@@ -5222,18 +5219,23 @@ function flownEdit(id) {
       <button class="fl-btn" onclick="flownClose()">${esc(_flz('Cancel', '取消'))}</button>
       <button class="fl-btn primary" onclick="flownSave(${f ? f.id : 0})">${esc(_flz('Save', '保存'))}</button>
     </div></div>`;
-  $('flown-modal').classList.remove('hidden');
-  $('flown-modal').onclick = flownClose;
-  setTimeout(() => { const el = $(f && !f.registration ? 'fl-reg' : 'fl-fn'); if (el && window.innerWidth >= 768) el.focus(); }, 50);
 }
-function flownClose() { $('flown-modal').classList.add('hidden'); $('flown-modal').innerHTML = ''; }
+
+function flownEdit(id) {
+  _flownEditId = id;
+  flownRender();
+  const f = id ? (_flown.flights || []).find(x => x.id === id) : null;
+  const el = $(f && !f.registration ? 'fl-reg' : 'fl-fn');
+  if (el) { el.closest('.fl-form').scrollIntoView({ block: 'nearest' }); if (window.innerWidth >= 768) el.focus(); }
+}
+function flownClose() { _flownEditId = null; flownRender(); }
 
 async function flownSave(id) {
   const t = $('fl-type').value.trim();
   const body = { date: $('fl-date').value, flight_number: $('fl-fn').value, from_iata: $('fl-from').value, to_iata: $('fl-to').value,
-                 registration: $('fl-reg').value, seat: $('fl-seat').value, note: $('fl-note').value, type_name: t };
+                 registration: $('fl-reg').value, type_name: t };
   const old = id ? (_flown.flights || []).find(x => x.id === id) : null;
-  if (old) { body.airline_name = old.airline_name; if (old.type_name === t || old.type_code === t) { body.type_name = old.type_name; body.type_code = old.type_code; } }
+  if (old) { body.airline_name = old.airline_name; body.seat = old.seat; body.note = old.note; if (old.type_name === t || old.type_code === t) { body.type_name = old.type_name; body.type_code = old.type_code; } }
   try {
     await api(id ? `/flown/${id}` : '/flown', { method: id ? 'PUT' : 'POST', body: JSON.stringify(body) });
   } catch (e) {
@@ -5244,7 +5246,7 @@ async function flownSave(id) {
 }
 
 async function flownDelete(id) {
-  const btn = document.querySelector('#flown-modal .fl-btn.danger');
+  const btn = document.querySelector('.fl-form .fl-btn.danger');
   if (btn && btn.dataset.armed !== '1') {                    // click once to arm, again to confirm
     btn.dataset.armed = '1'; btn.textContent = _flz('Click again to delete', '再点一次确认删除'); return;
   }

@@ -1724,6 +1724,7 @@
     .fl-row { cursor: default; }
     .fl-row.act { cursor: pointer; }
     .fl-row.act:hover { border-color: var(--accent); }
+    .fl-form.fl-inline { max-width: none; width: auto; margin: 0 0 8px; border-color: var(--accent); }
     .fl-pen { font-size: 12px; color: var(--dim); margin-left: 2px; }
     .fl-date { font-size: 12px; font-weight: 700; line-height: 1.2; font-variant-numeric: tabular-nums; }
     .fl-date small { display: block; font-size: 10px; font-weight: 500; color: var(--dim); }
@@ -2235,7 +2236,6 @@
 
 <div id="refresh-pill" class="refresh-pill"></div>
 <input type="file" id="flown-file" accept=".csv,text/csv" style="display:none" onchange="flownImportFile(this)">
-<div id="flown-modal" class="fl-modal hidden"></div>
 <div id="tour-layer" class="tour-layer"></div>
 <header>
   <div class="header-logo" onclick="logoTap()" title="Back to the start of this view" role="button"><span>✈</span>SpotAlert</div>
