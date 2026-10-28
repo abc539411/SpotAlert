@@ -2312,6 +2312,9 @@
     /* expanded cards (Feed, Board): the same panel colour, the same inset blocks (lighter than the panel), the same section labels */
     .bd-detail { background: var(--surface); }
     .bd-trig-row { background: var(--surface2); }
+    /* Feed card: "Last Visit" sits under the status pill on the badge line, like Flight / Arr. From on the other cards */
+    .detail-badges > .fd-lv { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; font-size: 11px; }
+    .fd-lv-v b { font-weight: 700; color: var(--text); }
     .dc-hd { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
     .dc-hd .lbl { display: inline; }
     .dc-n { font-size: 10px; color: var(--dim); text-transform: none; letter-spacing: 0; }

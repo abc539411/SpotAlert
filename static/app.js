@@ -2619,6 +2619,7 @@ function _detailInner(r, closeCmd, showPhoto = true) {
         ${chips}
         ${mfrBadge(r.manufacturer)}
         ${acType ? `<span class="fc-actype">${esc(acType)}</span>` : ''}
+        ${isMilitary ? '' : `<span class="fd-lv"><span class="rb-lbl">${tt('Last Visit')}</span><span class="fd-lv-v" id="${lazyId}-lastseen" style="color:var(--dim)">—</span></span>`}
       </div>
       <div style="margin-top:4px;display:flex;justify-content:space-between;align-items:flex-end;gap:8px">
         <div style="min-width:0;flex:1">
@@ -2630,7 +2631,6 @@ function _detailInner(r, closeCmd, showPhoto = true) {
       </div>
       ${isMilitary ? `<div style="margin-top:10px;border-top:1px solid var(--border)"></div>${mapSections}` : `<div class="fc-sched${r.flights.length > 2 ? ' flight-bars-scroll' : ''}"${r.flights.length > 2 ? ' style="max-height:290px"' : ''} data-lbl="${esc(tt('Schedule'))}">${flightBars}</div>`}
       <div class="detail-cards">
-        ${isMilitary ? '' : `<div class="dc"><span class="lbl">${tt('Last Visit')}</span><span class="val" id="${lazyId}-lastseen" style="color:var(--dim)">—</span></div>`}
         ${_appRole === 'passenger' ? '' : `<div class="dc"><div class="dc-hd"><span class="lbl">${tt('Spotted')}</span><span class="dc-n" id="${spotId}-n"></span></div><div id="${spotId}" style="margin-top:4px;color:var(--dim);font-size:12px">${tt('Never')}</div></div>`}
       </div>`;
   }
@@ -2995,7 +2995,9 @@ async function _loadAircraftDetail(registration, uid, r) {
       const lsEl = document.getElementById(placeholderId + '-lastseen');
       if (lsEl) {
         if (data.prev_seen_ts) {
-          lsEl.textContent = _fmtLastSeen(data.prev_seen_ts) || '—';
+          const lsTxt = _fmtLastSeen(data.prev_seen_ts) || '—';
+          const lsM = /^(.*?)( \(.*\))$/.exec(lsTxt);                 // "Oct 22, 2026 (7 days ago)": the date bold, the age plain
+          if (lsM) lsEl.innerHTML = `<b>${esc(lsM[1])}</b>${esc(lsM[2])}`; else lsEl.textContent = lsTxt;
           lsEl.style.color = '';
         } else {
           lsEl.textContent = tt('First visit');
