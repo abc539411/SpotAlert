@@ -2344,10 +2344,13 @@
 
     /* Feed tile: the type chip, aircraft type and flight count are one box (same height, centred), PC and phone */
     .sq-row2 > .chip, .sq-row2 > .fc-actype, .sq-row2 > .sq-count { box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center; height: 20px; margin: 0; line-height: 1; }
-    .sq-row2 > .sq-count { font-size: 11px; padding: 0 6px; }
+    /* ...and one text and edge style: same font, weight, tracking, 1px border and corners; only the colours tell them apart */
+    .sq-row2 > .chip, .sq-row2 > .fc-actype, .sq-row2 > .sq-count { font-family: inherit; font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; padding: 0 6px; border: 1px solid; border-radius: 4px; backdrop-filter: none; }
+    .sq-row2 > .chip { border-color: color-mix(in srgb, currentColor 32%, transparent); }
+    .sq-row2 > .fc-actype, .sq-row2 > .sq-count { background: rgba(0,0,0,0.45); border-color: rgba(255,255,255,0.15); color: rgba(255,255,255,0.7); }
     @media (max-width: 767px) {
-      .sq-row2 > .chip, .sq-row2 > .fc-actype, .sq-row2 > .sq-count { height: 14px; }
-      .sq .sq-count { font-size: 8px !important; padding: 0 5px; }
+      .sq-row2 > .chip, .sq-row2 > .fc-actype, .sq-row2 > .sq-count { height: 14px; padding: 0 5px; }
+      .sq .chip, .sq .fc-actype, .sq .sq-count { font-size: 8px !important; }
     }
 
     /* inset blocks */
