@@ -4063,6 +4063,36 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
             raise HTTPException(404, "Not found")
         return JSONResponse({"ok": True})
 
+    @app.post("/api/flown/lookup")
+    async def lookup_flown(request: Request, user=Depends(_auth_require_role("controller", "pilot"))):
+        """Fill in a flight from FR24's history for a flight number + date (it only goes back a couple of weeks)."""
+        data = await request.json()
+        date = str(data.get("date") or "")[:10]
+        i2c, c2i = _flown_airline_maps()
+        iata, icao, number = _flown.split_flight_number(data.get("flight_number"), i2c, c2i)
+        if not date or not number or not (iata or icao):
+            raise HTTPException(400, "Enter a date and a flight number such as QF465")
+        if not app.state.fr_api:
+            raise HTTPException(503, "FlightRadar24 is not available")
+
+        def _search():
+            for q in dict.fromkeys(c + number for c in (iata, icao) if c):
+                for page in (1, 2, 3, 4):
+                    resp = app.state.fr_api.get_flight_by_number(q, page)
+                    entries = resp.get("data") or []
+                    hit = _flown.pick_flight(entries, date)
+                    if hit:
+                        return hit
+                    if not entries or not (resp.get("page") or {}).get("more"):
+                        break
+            return None
+        try:
+            hit = await asyncio.to_thread(_search)
+        except Exception as exc:
+            log.warning("Flown lookup failed: %s", exc)
+            raise HTTPException(502, "FlightRadar24 did not answer; try again in a moment")
+        return JSONResponse({"found": bool(hit), "flight": hit})
+
     @app.post("/api/flown/import")
     async def import_flown(file: UploadFile = File(...), user=Depends(_auth_require_role("controller", "pilot"))):
         raw = await file.read(3 * 1024 * 1024 + 1)

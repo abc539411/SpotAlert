@@ -5222,6 +5222,8 @@ function _flownForm(f) {
       <label>${esc(_flz('Registration', '注册号'))}<input id="fl-reg" value="${v('registration')}" placeholder="VH-VXZ" autocapitalize="characters"></label>
       <label>${esc(_flz('Aircraft type (ICAO)', '机型（ICAO）'))}<input id="fl-type" value="${esc(f ? _flownType(f) : '')}" placeholder="B738"></label>
     </div>
+    <button class="fl-btn fl-lookup" id="fl-lookup" onclick="flownLookup()">${esc(_flz('Look up on FR24', '从 FR24 查询'))}</button>
+    <div class="fl-hint" id="fl-hint">${esc(_flz('Fills in the blank fields from the date and flight number. FR24 only keeps about two weeks of history.', '根据日期和航班号补全空白项。FR24 只保留约两周的历史。'))}</div>
     <div class="fl-err" id="fl-err"></div>
     <div class="fl-actions">
       ${f ? `<button class="fl-btn danger" onclick="flownDelete(${f.id})">${esc(_flz('Delete', '删除'))}</button>` : ''}
@@ -5232,13 +5234,32 @@ function _flownForm(f) {
 }
 
 function flownEdit(id) {
-  _flownEditId = id;
+  _flownEditId = id; _flownLookedUp = null;
   flownRender();
   const f = id ? (_flown.flights || []).find(x => x.id === id) : null;
   const el = $(f && !f.registration ? 'fl-reg' : 'fl-fn');
   if (el) { el.closest('.fl-form').scrollIntoView({ block: 'nearest' }); if (window.innerWidth >= 768) el.focus(); }
 }
 function flownClose() { _flownEditId = null; flownRender(); }
+
+let _flownLookedUp = null;       // airline name returned by the last lookup (saved with the flight)
+async function flownLookup() {
+  const hint = $('fl-hint'), btn = $('fl-lookup');
+  const date = $('fl-date').value, fn = $('fl-fn').value.trim();
+  if (!date || !fn) { hint.textContent = _flz('Enter a date and a flight number first.', '请先填写日期和航班号。'); return; }
+  btn.disabled = true; hint.textContent = _flz('Searching FR24…', '正在查询 FR24…');
+  try {
+    const r = await api('/flown/lookup', { method: 'POST', body: JSON.stringify({ date, flight_number: fn }) });
+    if (!r.found) { hint.textContent = _flz('FR24 has no record of that flight on that date (it only keeps about two weeks).', 'FR24 没有该日期该航班的记录（只保留约两周）。'); return; }
+    const x = r.flight, set = (id, v) => { const el = $(id); if (el && !el.value.trim() && v) el.value = v; };
+    set('fl-from', x.from_iata); set('fl-to', x.to_iata); set('fl-reg', x.registration); set('fl-type', x.type_code || x.type_name);
+    _flownLookedUp = x.airline_name || null;
+    hint.textContent = _flz('Filled in from FR24. Check it, then Save.', '已从 FR24 补全，请核对后保存。');
+  } catch (e) {
+    let msg = e.message; try { msg = JSON.parse(e.message).detail || msg; } catch (x) {}
+    hint.textContent = msg;
+  } finally { btn.disabled = false; }
+}
 
 async function flownSave(id) {
   const t = $('fl-type').value.trim();
@@ -5248,6 +5269,8 @@ async function flownSave(id) {
   if (/^[A-Za-z0-9]{3,4}$/.test(t)) { body.type_code = t.toUpperCase(); body.type_name = old && old.type_code === body.type_code ? old.type_name : ''; }
   else if (old && old.type_name === t) { body.type_name = old.type_name; body.type_code = old.type_code; }
   if (old) { body.airline_name = old.airline_name; body.seat = old.seat; body.note = old.note; }
+  if (_flownLookedUp && !body.airline_name) body.airline_name = _flownLookedUp;
+  _flownLookedUp = null;
   try {
     await api(id ? `/flown/${id}` : '/flown', { method: id ? 'PUT' : 'POST', body: JSON.stringify(body) });
   } catch (e) {

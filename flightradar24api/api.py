@@ -110,12 +110,12 @@ class FlightRadar24API:
     def get_flight_details(self, flight: Flight) -> Dict[Any, Any]:
         return APIRequest(Core.flight_data_url.format(flight.id), headers=Core.json_headers).get_content()
 
-    def get_flight_by_number(self, flight_number: str) -> Dict[Any, Any]:
-        """Fetch flight history/schedule by flight number (callsign)."""
+    def get_flight_by_number(self, flight_number: str, page: int = 1) -> Dict[Any, Any]:
+        """Fetch flight history/schedule by flight number (callsign), newest first, 25 per page."""
         params = {"fetchBy": "flight"}
         if self.__login_data:
             params["token"] = self.__login_data["cookies"]["_frPl"]
-        url = Core.api_flightradar_base_url + f"/flight/list.json?query={flight_number}"
+        url = Core.api_flightradar_base_url + f"/flight/list.json?query={flight_number}" + (f"&page={page}" if page > 1 else "")
         response = APIRequest(url, params, headers=Core.json_headers)
         content: Dict = response.get_content()
         return content.get("result", {}).get("response", {})

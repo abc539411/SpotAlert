@@ -148,3 +148,27 @@ def clean_manual(data: dict, iata_to_icao: Dict[str, str], icao_to_iata: Dict[st
             "airline_iata": iata, "airline_icao": icao, "from_iata": f, "to_iata": t,
             "type_name": _clean(data.get("type_name"))[:60], "type_code": _clean(data.get("type_code")).upper()[:4],
             "registration": reg, "seat": _clean(data.get("seat"))[:8], "note": _clean(data.get("note"))[:200]}, None
+
+
+def pick_flight(entries: List[dict], date_iso: str) -> Optional[dict]:
+    """The FR24 history entry whose departure falls on date_iso (the departure airport's local date), as the
+    fields the Flown form fills in. None when no entry matches."""
+    import datetime as _dt
+    for e in entries or []:
+        try:
+            t = e.get("time") or {}
+            ts = (t.get("real") or {}).get("departure") or (t.get("scheduled") or {}).get("departure")
+            if not isinstance(ts, (int, float)):
+                continue
+            off = ((e.get("airport") or {}).get("origin") or {}).get("timezone", {}).get("offset") or 0
+            if _dt.datetime.fromtimestamp(ts + off, _dt.timezone.utc).strftime("%Y-%m-%d") != date_iso:
+                continue
+            ap, ac = e.get("airport") or {}, e.get("aircraft") or {}
+            code = lambda k: (((ap.get(k) or {}).get("code") or {}).get("iata") or "").upper()
+            model = ac.get("model") or {}
+            return {"from_iata": code("origin"), "to_iata": code("destination"),
+                    "registration": norm_reg(ac.get("registration")), "type_code": (model.get("code") or "").upper(),
+                    "type_name": model.get("text") or "", "airline_name": (e.get("airline") or {}).get("name") or ""}
+        except (AttributeError, TypeError):
+            continue
+    return None
