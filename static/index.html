@@ -2241,6 +2241,48 @@
     .srch-rego { font-size: 14px; font-weight: 700; color: var(--text); letter-spacing: .03em; }
     .srch-airline { font-size: 12px; color: var(--dim); }
     .srch-sessions { display: flex; flex-wrap: wrap; gap: 5px; }
+
+    /* ══ Card system ═══════════════════════════════════════════════════════════════════════════════════════════════════
+       One design language for every card (Spotting, Board, Fleet, Flown, Collection panels, Search results) and the
+       expanded cards inside them. Appearance only: it overrides the per-feature rules above, so nothing in the markup
+       or the scripts depends on it.
+         shell    surface body, 1px --border, --r corners
+         header   shaded (--surface2), 11px 12px, faint divider underneath, 13px bold title, 11px dim sub-line
+         rows     separated by a faint line (no boxes, no radius)
+         inset    a lighter block inside a card (--surface2, 10px corners) for facts and pills
+         lines    one strength everywhere: --border                                                              */
+    :root { --tile-r: 10px; }
+
+    /* headers: Spotting + Board day cards (the Fleet and Flown headers already look like this) */
+    .rec-day-hdr { background: var(--surface2); padding-left: 12px; padding-right: 12px; }
+    .rec-d-label { font-size: 13px; font-weight: 700; }
+    .rec-d-count { font-size: 11px; }
+
+    /* headers: Collection summary panels. The panel gives up its own padding so the header can run edge to edge */
+    .col-stats-panel { padding: 0; }
+    .col-stats-panel-header { margin: 0; padding: 11px 12px; background: var(--surface2); border-bottom: 1px solid var(--border); }
+    .col-stats-panel-title { font-size: 13px; font-weight: 700; color: var(--text); text-transform: none; letter-spacing: 0; }
+    .col-stats-panel-body { padding: 8px 6px 10px 10px; }
+    @media (max-width: 767px) { .col-stats-panel { padding: 0; } }
+
+    /* headers: Search result cards (Catalogue) */
+    .srch-fl-card { padding: 0 12px 6px; gap: 0; }
+    .srch-fl-header { margin: 0 -12px 2px; padding: 8px 12px; background: var(--surface2); border-bottom: 1px solid var(--border); }
+
+    /* rows: separated by a faint line instead of boxes */
+    .srch-fl-rows { gap: 0; margin-top: 0; }
+    .srch-fl-row { background: transparent; border: none; border-top: 1px solid var(--border); border-radius: 0; padding: 8px 2px; }
+    .srch-fl-rows > .srch-fl-row:first-child { border-top: none; }
+    .srch-fl-rows { padding-top: 8px; }
+    .srch-fl-row[style*="gradient"] { border-top: none; border-radius: 6px; margin-top: 3px; padding: 7px 8px; }   /* Route Equipment: the row is a usage bar, so it stays a filled block */
+    .fl-row { border: none; border-top: 1px solid var(--border); border-radius: 0; margin: 0; padding: 9px 2px; background: transparent; }
+    .fl-year + .fl-row { border-top: none; }
+    .fl-row.act:hover { background: var(--surface2); border-color: var(--border); }
+    .fl-year + .fl-year { border-top: 1px solid var(--border); }
+
+    /* inset blocks */
+    .dc, .bd-eb, .fl-form.fl-inline { border-radius: var(--tile-r); }
+    .fl-form.fl-inline { background: var(--surface2); border-color: var(--border); margin: 6px 0; }
   </style>
   <script src="https://cdn.jsdelivr.net/npm/twemoji@14.0.2/dist/twemoji.min.js" crossorigin="anonymous"></script>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
