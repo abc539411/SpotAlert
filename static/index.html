@@ -2383,8 +2383,10 @@
     /* Fleet, PC: same footprint as Flown. Two cards fill the same 1100px column from the left edge (room left for the + column);
        a third card and beyond scroll sideways as before. */
     @media (min-width: 768px) {
-      .flt-wrap { max-width: 1100px; width: 100%; margin: 0 auto; padding: 10px 14px 12px; align-items: stretch; }
-      .flt-card { width: calc((100% - 12px - 56px) / 2); height: 100%; }
+      /* the scroll area spans the whole page (no clipped window in the middle on a wide monitor); the first card lines up with
+         Flown's left edge and cards are Flown's width */
+      .flt-wrap { padding: 10px 14px 12px max(14px, calc((100% - 1100px) / 2 + 14px)); align-items: stretch; }
+      .flt-card { width: 502px; height: 100%; }
     }
     /* Fleet, expanded type group: Flown-style rows instead of rounded pills (green dot = you have it, amber = watched) */
     .flt-pill-wrap { gap: 0; padding: 0 12px 6px; }

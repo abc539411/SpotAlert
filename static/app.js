@@ -5429,8 +5429,8 @@ function _fltShortDate(dateStr) {
     const [y, m, d] = dateStr.split('-');
     return `${y.slice(2)}/${m}/${d}`;
   }
-  const d = new Date(dateStr + 'T00:00:00');
-  return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: '2-digit' });
+  const [y, m, d] = dateStr.split('-');                                          // 28 Dec '22
+  return `${+d} ${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][+m - 1] || m} '${y.slice(2)}`;
 }
 
 function _fmtFleetDate(ts) {
