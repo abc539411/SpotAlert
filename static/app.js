@@ -5221,7 +5221,7 @@ function _flownAircraftHtml(all) {
       if (_flownFold.has(fk)) return h;
       return h + g.items.map(a => {
         const open = _flownOpenAc.has(a.reg);
-        const sub = open ? `<div class="fl-sublist">${a.fl.map(f => `<div class="fl-subrow"><span>${esc(f.date)}</span><span>${esc(f.flight_number || '—')}</span><span>${_flownAp(f.from_iata)} → ${_flownAp(f.to_iata)}</span></div>`).join('')}</div>` : '';
+        const sub = open ? `<div class="fl-sublist">${a.fl.map(f => `<div class="fl-subrow"><span>${esc(f.date)}</span><span class="fl-subfn">${_srchLogoWithFallback(f.airline_icao, f.airline_name, 12, '')}${esc(f.flight_number || '—')}</span><span>${_flownAp(f.from_iata)} → ${_flownAp(f.to_iata)}</span></div>`).join('')}</div>` : '';
         return `<div class="fl-row act" onclick="flownToggleAc('${esc(a.reg)}')">
           <div class="fl-date">${_flownDate(a.last)}</div>
           <div><div class="fl-fn">${_flag(_regoCountryCode(a.reg), { h: 11 })}${esc(a.reg)}</div><div class="fl-sub">${esc(a.type)}</div></div>
@@ -5245,7 +5245,7 @@ function _flownFlightsHtml(all) {
           if (_flownEdit && _flownEditId === f.id) return _flownForm(f);
           return `<div class="fl-row${_flownEdit ? ' act' : ''}"${_flownEdit ? ` onclick="flownEdit(${f.id})"` : ''}>
             <div class="fl-date">${_flownDate(f.date)}</div>
-            <div><div class="fl-fn">${esc(f.flight_number || '—')}<span class="fl-route">${route}</span></div><div class="fl-sub">${esc(sub)}</div></div>
+            <div><div class="fl-fn">${_srchLogoWithFallback(f.airline_icao, f.airline_name, 16, '')}${esc(f.flight_number || '—')}<span class="fl-route">${route}</span></div><div class="fl-sub">${esc(sub)}</div></div>
             <div class="fl-reg">${reg}${_flownEdit ? '<span class="fl-pen">✎</span>' : ''}</div></div>`;
         }).join('');
       }).join('');
