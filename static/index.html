@@ -1710,7 +1710,10 @@
     .fl-seg { display: inline-flex; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
     .fl-seg button { background: none; border: none; color: var(--dim); padding: 6px 12px; font-size: 12px; font-weight: 600; cursor: pointer; }
     .fl-seg button.on { background: var(--surface2); color: var(--text); }
-    .fl-list { flex: 1; min-height: 0; overflow-y: auto; margin: 0 -14px; padding: 0 14px 14px; scrollbar-width: thin; }
+    .fl-list { flex: 1; min-height: 0; overflow-y: auto; margin: 0 -14px; padding: 0 14px 14px; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+    .fl-list::-webkit-scrollbar { width: 4px; }
+    .fl-list::-webkit-scrollbar-track { background: transparent; }
+    .fl-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
     .fl-year { position: sticky; top: 0; z-index: 2; background: var(--bg); padding: 8px 2px 6px; font-size: 12px; font-weight: 700; color: var(--dim); letter-spacing: .04em; display: flex; align-items: center; gap: 6px; }
     .fl-fold { cursor: pointer; user-select: none; }
     .fl-fold:hover { color: var(--text); }

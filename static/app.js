@@ -5093,6 +5093,7 @@ function _colSubtab(name) {
 // Imported from a MyFR24 (FlightDiary) or Flighty CSV, and editable by hand. Flighty exports carry no tail numbers, so
 // those rows show "+ rego": tap one to type the registration in.
 let _flown = null, _flownView = 'flights', _flownEdit = false, _flownEditId = null;   // _flownEditId: row whose form is open (0 = new flight)
+let _flownFoldInit = false;         // the first load starts with everything folded except the current year
 const _flownFold = new Set();       // collapsed groups: 'y:2025' (flights by year) / 'a:QFA' (aircraft by airline)
 const _flownOpenAc = new Set();     // aircraft whose flights are shown under them   // edit mode: Import CSV, Add flight, tap a flight to change it
 const _flz = (en, zh) => (_lang === 'zh' ? zh : en);
@@ -5101,6 +5102,14 @@ async function flownLoad(force) {
   if (_flown && !force) { flownRender(); return; }
   try { _flown = await api('/flown'); } catch (e) { toast('Error: ' + e.message); return; }
   await _translateNamesForZh(Object.values(_flown.airports || {}));
+  if (!_flownFoldInit) {
+    _flownFoldInit = true;
+    const thisYear = String(new Date().getFullYear()), seen = new Set();
+    (_flown.flights || []).forEach(f => {
+      const y = f.date.slice(0, 4); if (y !== thisYear) _flownFold.add('y:' + y);
+      if (f.registration && !seen.has(f.registration)) { seen.add(f.registration); _flownFold.add('a:' + (f.airline_icao || f.airline_iata || '?')); }   // flights are newest first
+    });
+  }
   flownRender();
 }
 
