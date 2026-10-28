@@ -5138,9 +5138,11 @@ function flownRender() {
     body = `<div class="fl-empty">${esc(_flz('Nothing here yet. Import a MyFR24 or Flighty CSV, or add a flight by hand.',
       '这里还没有内容。请导入 MyFR24 或 Flighty 的 CSV，或手动添加航班。'))}</div>`;
   } else if (_flownView === 'aircraft') {
-    // Aircraft grouped by airline (the airline of the aircraft's most recent flight); names come from any row that has one.
-    const names = {};
-    all.forEach(f => { const k = f.airline_icao || f.airline_iata; if (k && f.airline_name && !names[k]) names[k] = f.airline_name; });
+    // Aircraft grouped by airline code (the airline of the aircraft's most recent flight). Qantas and QantasLink share a
+    // code, so the group is named by the name most of its flights carry rather than whichever came first.
+    const tally = {}, names = {};
+    all.forEach(f => { const k = f.airline_icao || f.airline_iata; if (k && f.airline_name) { const t = tally[k] = tally[k] || {}; t[f.airline_name] = (t[f.airline_name] || 0) + 1; } });
+    Object.entries(tally).forEach(([k, t]) => { names[k] = Object.keys(t).sort((x, y) => t[y] - t[x])[0]; });
     const by = {};
     all.filter(f => f.registration).forEach(f => { (by[f.registration] = by[f.registration] || []).push(f); });
     const groups = {};
