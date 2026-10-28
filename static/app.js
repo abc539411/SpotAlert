@@ -2828,7 +2828,7 @@ function openRecDetail(el) {
   panel.className = 'rfc-panel';
   panel.style.left  = rect.left  + 'px';
   panel.style.width = rect.width + 'px';
-  panel.innerHTML = _buildRecDetail(el);
+  panel.innerHTML = _buildRecDetail(el, true);
   document.body.appendChild(panel);
   _openRecPanel = panel;
 
@@ -2873,7 +2873,7 @@ document.addEventListener('click', e => {
   }
 });
 
-function _buildRecDetail(el) {
+function _buildRecDetail(el, compact) {
   const f     = JSON.parse(el.dataset.f);
   const isArr = (f.side || el.dataset.side) === 'arrival' || el.dataset.side === 'arr';
   const { airline } = _parseDetail(f.detail || '');
@@ -2917,7 +2917,7 @@ function _buildRecDetail(el) {
   let statusPill = '';
   if (st) {
     const [bg, fg] = _STATUS_STYLE[st] || _STATUS_STYLE['N/A'];
-    statusPill = `<span style="font-size:11px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;padding:3px 9px;border-radius:20px;background:${bg};color:${fg}">${esc(tLabel(st))}</span>`;
+    statusPill = `<span class="rfc-d-pill" style="background:${bg};color:${fg}">${esc(tLabel(st))}</span>`;
   }
   const { acType } = _parseDetail(f.detail || '');
   const chips = (f.notif_types || []).map(t => `<span class="chip ${chipClass(t)}">${chipLabel(t)}</span>`).join('');
@@ -2925,14 +2925,14 @@ function _buildRecDetail(el) {
   const flightLink = flightNum && flightNum !== '—'
     ? `<a href="${_fr24FlightUrl(flightNum)}" target="_blank" rel="noopener" style="color:var(--text);font-weight:600;text-decoration:none">${esc(flightNum)}</a>` : '';
   const airlineLine = (airline || flightLink)
-    ? `<div style="font-size:12px;color:var(--dim)">${airline ? `<span data-ext-name="${esc(airline)}">${esc(tExternalName(airline))}</span>` : ''}${airline && flightLink ? ' · ' : ''}${flightLink}</div>` : '';
-  const liveryLine = f.extra_info ? `<div style="margin-top:6px;font-size:12px;color:var(--dim);font-style:italic;line-height:1.4">${esc(tLiveryName(f.extra_info))}</div>` : '';
+    ? `<div class="rfc-d-sub">${airline ? `<span data-ext-name="${esc(airline)}">${esc(tExternalName(airline))}</span>` : ''}${airline && flightLink ? ' · ' : ''}${flightLink}</div>` : '';
+  const liveryLine = f.extra_info ? `<div class="rfc-d-liv">${esc(tLiveryName(f.extra_info))}</div>` : '';
 
   return `<div class="rfc-detail">${photoHtml}
     <div class="detail-header">
       <div style="display:flex;align-items:center;gap:8px">
-        <a class="rego" style="font-size:20px;font-weight:700;color:var(--text);text-decoration:none;letter-spacing:.01em" href="${_fr24AircraftUrl(f.registration)}" target="_blank" rel="noopener">${esc(f.registration || '')}</a>
-        ${_flag(_regoCountryCode(f.registration), { h: 26, vab: -13 })}
+        <a class="rego" href="${_fr24AircraftUrl(f.registration)}" target="_blank" rel="noopener">${esc(f.registration || '')}</a>
+        ${compact ? _flag(_regoCountryCode(f.registration), { h: 17, vab: -8 }) : _flag(_regoCountryCode(f.registration), { h: 26, vab: -13 })}
       </div>
       <div style="display:flex;align-items:center;gap:10px">${statusPill}</div>
     </div>
