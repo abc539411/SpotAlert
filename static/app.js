@@ -334,6 +334,7 @@ function tDaysAgo(n) {
 // numerous/one-off each to justify their own named helper. Looked up by the
 // literal English string itself rather than a semantic key.
 const UI_ZH = {
+  'Flight': '航班',
   'Spotting sessions': '拍摄次数',
   'Schedule': '航班时刻',
   'Flown': '乘机',
@@ -2925,7 +2926,7 @@ function _buildRecDetail(el, compact) {
   const chips = (f.notif_types || []).map(t => `<span class="chip ${chipClass(t)}">${chipLabel(t)}</span>`).join('');
   const photoHtml = f.photo_url ? `<div class="bd-photo-wrap"><img class="bd-photo" src="${esc(f.photo_url)}" loading="lazy" alt="${esc(f.registration || '')}"></div>` : '';
   const flightLink = flightNum && flightNum !== '—'
-    ? `<a href="${_fr24FlightUrl(flightNum)}" target="_blank" rel="noopener" class="rfc-d-fn">${esc(flightNum)}</a>` : '';
+    ? `<span class="rfc-d-flt"><span class="rb-lbl">${esc(tt('Flight'))}</span><a href="${_fr24FlightUrl(flightNum)}" target="_blank" rel="noopener" class="rfc-d-fn">${esc(flightNum)}</a></span>` : '';
   const airlineLine = airline ? `<div class="rfc-d-sub"><span data-ext-name="${esc(airline)}">${esc(tExternalName(airline))}</span></div>` : '';
   const liveryLine = f.extra_info ? `<div class="rfc-d-liv">${esc(tLiveryName(f.extra_info))}</div>` : '';
 
