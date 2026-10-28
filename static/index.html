@@ -2128,17 +2128,20 @@
     .sp-photo-right > .sp-photo-line { justify-content: flex-end; }
 
     @media (min-width: 768px) {
-      .sp-photo-rego { font-size: 18px; padding: 5px 12px; }
+      .sp-photo-rego { font-size: 16px; padding: 4px 10px; }
       .sp-photo-bottom { padding: 56px 18px 18px; gap: 8px 14px; }
       .sp-photo-left { gap: 8px; }
       .sp-photo-line { gap: 9px; font-size: 17px; }
       .sp-photo-right { gap: 8px; }
-      .sp-photo-line > *, .sp-photo-right > .sp-photo-date, .sp-photo-left > .sp-photo-pill { height: 26px; line-height: 24px; }
+      .sp-photo-line > *, .sp-photo-right > .sp-photo-date, .sp-photo-left > .sp-photo-pill { height: 22px; line-height: 20px; }   /* manufacturer, type, airline and place / date: one height */
       .sp-photo-left img { max-height: 32px; }
-      .sp-photo-line .mfr { font-size: 12px; padding: 0 8px; }
+      .sp-photo-line .mfr { font-size: 11px; padding: 0 7px; }
+      /* the type line under the registration and the livery line are one notch shorter than the pills at the bottom */
+      .sp-photo-top .sp-photo-line > *, .sp-photo-right > .sp-photo-line > * { height: 22px; line-height: 20px; }
+      .sp-photo-top .sp-photo-pill { font-size: 13px; padding: 0 9px; }
       .sp-photo-pill, .sp-photo-date { font-size: 14px; padding: 0 11px; }
       .sp-photo-notes { font-size: 14px; }
-      .sp-photo-line .col-sp-tag { font-size: 12px; padding: 0 8px; }
+      .sp-photo-line .col-sp-tag { font-size: 11px; padding: 0 6px; }
       .sp-photo-close { width: 36px; height: 36px; font-size: 24px; }
     }
     .sp-photos-empty, .sp-photos-loading { color: var(--dim); font-size: 13px; padding: 40px 60px; text-align: center; }
