@@ -2984,7 +2984,7 @@ function _spotRowsHtml(sessions, registration, r) {
   const isLivery = (r.notif_types || []).includes('Special Livery');
   const curLivery = (r.extra_info || '').trim().toLowerCase();
   const mon = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-  return `<div class="bd-trig">${sessions.map(s => {
+  return `<div class="bd-trig spot-list">${sessions.map(s => {
     const d = new Date(s.ts * 1000);
     const day = String(d.getDate()).padStart(2, '0'), yr = String(d.getFullYear()).slice(2);
     const dateLabel = _lang === 'zh' ? `${yr}/${String(d.getMonth() + 1).padStart(2, '0')}/${day}` : `${day} ${mon[d.getMonth()]} '${yr}`;
@@ -2994,10 +2994,10 @@ function _spotRowsHtml(sessions, registration, r) {
     const hl = isLivery && curLivery && notes && notes.toLowerCase() === curLivery;
     const isoDate = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
     const click = _appRole === 'controller' && apt ? ` onclick="_spOpenPhotos('${esc(registration)}','${esc(apt)}','${isoDate}')"` : '';
-    return `<div class="bd-trig-row${hl ? ' is-current' : ''}"${click}>` +
+    return `<div class="bd-trig-row spot-row${hl ? ' is-current' : ''}"${click}>` +
       `<span class="bd-trig-d">${esc(dateLabel)}</span>` +
       `<span class="bd-trig-reg">${flag}${esc(apt)}</span>` +
-      `<span class="bd-trig-n">${s.count}</span>` +
+      `<span class="bd-trig-n">${s.count}x</span>` +
       `<span class="bd-trig-right">${notes ? `<span class="bd-trig-lv">${esc(tLiveryName(notes))}</span>` : ''}</span>` +
       `</div>`;
   }).join('')}</div>`;

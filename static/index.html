@@ -2311,6 +2311,16 @@
     .bd-facts > .dc { border-top: none; padding-top: 0; }
     .bd-trig-row { border-radius: 7px; }
     .bd-trig-n { background: var(--surface); }
+    /* Feed card > Spotted: fixed columns so date, airport and count line up in every row; scrolls after about six rows */
+    .spot-list { max-height: 224px; overflow-y: auto; padding-right: 4px; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+    .spot-list::-webkit-scrollbar { width: 4px; }
+    .spot-list::-webkit-scrollbar-track { background: transparent; }
+    .spot-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+    .spot-row { display: grid; grid-template-columns: 70px 48px auto minmax(0, 1fr); column-gap: 8px; align-items: center; flex-shrink: 0; }
+    .spot-row .bd-trig-d { min-width: 0; font-variant-numeric: tabular-nums; }
+    .spot-row .bd-trig-reg { min-width: 0; display: inline-flex; align-items: center; gap: 4px; }
+    .spot-row .bd-trig-right { justify-content: flex-end; min-width: 0; }
+    .spot-row .bd-trig-lv { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .bd-sec-t, .dc .lbl { font-size: 10px; letter-spacing: .07em; text-transform: uppercase; color: var(--dim); }
 
     /* inset blocks */
