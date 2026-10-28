@@ -5201,9 +5201,9 @@ function flownRender() {
   const cards = !all.length && !(_flownEdit && _flownEditId === 0)
     ? empty(_flz('Nothing here yet. Import a MyFR24 or Flighty CSV, or add a flight by hand.', '这里还没有内容。请导入 MyFR24 或 Flighty 的 CSV，或手动添加航班。'))
     : `<div class="fl-cards">
-        <div class="fl-card"><div class="fl-card-head">${esc(_flz('Flights', '航班'))}</div>
+        <div class="fl-card"><div class="fl-card-head"><div class="fl-card-title">${esc(_flz('Flights', '航班'))}</div><div class="fl-card-sub">${sm.total || 0} ${esc(_flz('flights', '个航班'))}</div></div>
           <div class="fl-list">${_flownEdit && _flownEditId === 0 ? _flownForm(null) : ''}${flightsBody}</div></div>
-        <div class="fl-card"><div class="fl-card-head">${esc(_flz('Aircraft', '飞机'))}</div>
+        <div class="fl-card"><div class="fl-card-head"><div class="fl-card-title">${esc(_flz('Aircraft', '飞机'))}</div><div class="fl-card-sub">${sm.aircraft || 0} ${esc(_flz('aircraft', '架飞机'))}</div></div>
           <div class="fl-list">${hasAircraft ? _flownAircraftHtml(all) : empty(_flz('No registrations yet.', '还没有注册号。'))}</div></div>
       </div>`;
   const keep = { x: 0, y: [] };
