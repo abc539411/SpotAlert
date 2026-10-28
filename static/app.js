@@ -2479,7 +2479,8 @@ async function quickFilterToggle(btn) {
 // airline in the app should point at the same URL shapes, so this is the one
 // place that knows FR24's URL conventions.
 // Detail cards show the full-size JetPhotos image with its black logo / copyright strip cut off; the server does the cutting
-// once and keeps the result. Links from other sources are used as they are.
+// once and keeps the result. Links from other sources are used as they are. (The Spotting popover on PC keeps the plain 640px
+// photo the Feed tile uses; phones get the full-size one.)
 const _FULL_PHOTO_HOSTS = /^https?:\/\/(cdn\.jetphotos\.com|t\.plnspttrs\.net)\//i;
 function _fullPhotoSrc(url) { return url && _FULL_PHOTO_HOSTS.test(url) ? `/api/photo-full?u=${encodeURIComponent(url)}` : (url || ''); }
 function _fr24AircraftUrl(rego) { return `https://www.flightradar24.com/data/aircraft/${(rego || '').toLowerCase()}`; }
@@ -2938,7 +2939,7 @@ function _buildRecDetail(el, compact) {
   }
   const { acType } = _parseDetail(f.detail || '');
   const chips = (f.notif_types || []).map(t => `<span class="chip ${chipClass(t)}">${chipLabel(t)}</span>`).join('');
-  const photoHtml = f.photo_url ? `<div class="bd-photo-wrap"><img class="bd-photo" src="${esc(_fullPhotoSrc(f.photo_url))}" loading="lazy" alt="${esc(f.registration || '')}" onerror="this.onerror=null;this.src='${esc(f.photo_url)}'"></div>` : '';
+  const photoHtml = f.photo_url ? `<div class="bd-photo-wrap"><img class="bd-photo" src="${esc(compact ? f.photo_url : _fullPhotoSrc(f.photo_url))}" loading="lazy" alt="${esc(f.registration || '')}" onerror="this.onerror=null;this.src='${esc(f.photo_url)}'"></div>` : '';
   const flightLink = flightNum && flightNum !== '—'
     ? `<span class="rfc-d-flt"><span class="rb-lbl">${esc(tt('Flight'))}</span><a href="${_fr24FlightUrl(flightNum)}" target="_blank" rel="noopener" class="rfc-d-fn">${esc(flightNum)}</a></span>` : '';
   const airlineLine = airline ? `<div class="rfc-d-sub"><span data-ext-name="${esc(airline)}">${esc(tExternalName(airline))}</span></div>` : '';
