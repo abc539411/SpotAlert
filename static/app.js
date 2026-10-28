@@ -2073,7 +2073,7 @@ function _fmtLastSeen(ts) {
   const daysAgo  = Math.round((new Date(todayDay) - new Date(seenDay)) / msPerDay);
   if (daysAgo === 0) return `${label} (${tt('today')})`;
   if (daysAgo === 1) return `${label} (${tt('yesterday')})`;
-  return `${label} (${_lang === 'zh' ? `${daysAgo} 天前` : `${daysAgo} days ago`})`;
+  return `${label} (${_lang === 'zh' ? `${daysAgo} 天` : `${daysAgo} days`})`;
 }
 
 // True only when the notification_record row is tracking the same flight as this notification_log row.
