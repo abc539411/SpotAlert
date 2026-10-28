@@ -2908,7 +2908,7 @@ function _buildRecDetail(el, compact) {
   const sortedReasons = [...reasons.filter(r => r.dq), ...reasons.filter(r => !r.dq)];
   const reasonsHtml = sortedReasons.length ? `
     <div class="bd-sec-t" style="border-top:1px solid var(--border);padding-top:12px">${tt('REMARKS')}</div>
-    <div class="rfc-remarks-pills">${sortedReasons.map(r => `<span class="rfc-remark-pill${r.dq ? ' rfc-remark-dq' : ''}">${esc(r.text)}</span>`).join('')}</div>` : '';
+    <div class="bd-trig">${sortedReasons.map(r => `<div class="bd-trig-row rfc-remark-row${r.dq ? ' rfc-remark-dq' : ''}"><span>${esc(r.text)}</span></div>`).join('')}</div>` : '';
 
   // Same layout as the Board's expanded row: photo, then registration + flag + status, badges, airline / flight, livery, sections
   const nowTs = Math.floor(Date.now() / 1000);
@@ -2926,6 +2926,11 @@ function _buildRecDetail(el, compact) {
     ? `<a href="${_fr24FlightUrl(flightNum)}" target="_blank" rel="noopener" style="color:var(--text);font-weight:600;text-decoration:none">${esc(flightNum)}</a>` : '';
   const airlineLine = (airline || flightLink)
     ? `<div class="rfc-d-sub">${airline ? `<span data-ext-name="${esc(airline)}">${esc(tExternalName(airline))}</span>` : ''}${airline && flightLink ? ' · ' : ''}${flightLink}</div>` : '';
+  // Grey "where from / where to" line, as on the Board's expanded row
+  const apIata = isArr ? (f.origin_iata || '') : (f.dep_dest_iata || '');
+  const apName = isArr ? '' : (f.dep_dest_name ? _airportDisplayName(f.dep_dest_name) : '');
+  const fromLine = apIata
+    ? `<div class="rfc-d-from"><span class="rb-lbl">${esc(tt(isArr ? 'Arr. From' : 'Next Dep.'))}</span> ${_flag(_airportCountry(apIata), { h: 10 })}<b>${esc(apIata)}</b>${apName ? ` · ${esc(apName)}` : ''}</div>` : '';
   const liveryLine = f.extra_info ? `<div class="rfc-d-liv">${esc(tLiveryName(f.extra_info))}</div>` : '';
 
   return `<div class="rfc-detail">${photoHtml}
@@ -2937,7 +2942,7 @@ function _buildRecDetail(el, compact) {
       <div style="display:flex;align-items:center;gap:10px">${statusPill}</div>
     </div>
     <div class="detail-badges" style="margin-top:9px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">${chips}${acType ? `<span class="fc-actype">${esc(acType)}</span>` : ''}</div>
-    <div style="margin-top:4px">${airlineLine}${liveryLine}</div>
+    <div style="margin-top:4px">${airlineLine}${fromLine}${liveryLine}</div>
     ${reasonsHtml}
   </div>`;
 }
