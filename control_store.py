@@ -88,6 +88,32 @@ class ControlStore:
             if "country_code" not in _wa_cols:
                 conn.execute("ALTER TABLE watched_airports ADD COLUMN country_code TEXT DEFAULT ''")
 
+            # Flights the user has actually been on (Collection > Flown). Per user, not per airport. One row per
+            # (date, from, to, number); an import fills blanks but never overwrites what the user typed (edited = 1).
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS flown_flights (
+                    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id      TEXT NOT NULL,
+                    flight_date  TEXT NOT NULL,
+                    number       TEXT NOT NULL DEFAULT '',
+                    airline_name TEXT NOT NULL DEFAULT '',
+                    airline_iata TEXT NOT NULL DEFAULT '',
+                    airline_icao TEXT NOT NULL DEFAULT '',
+                    from_iata    TEXT NOT NULL DEFAULT '',
+                    to_iata      TEXT NOT NULL DEFAULT '',
+                    type_name    TEXT NOT NULL DEFAULT '',
+                    type_code    TEXT NOT NULL DEFAULT '',
+                    registration TEXT NOT NULL DEFAULT '',
+                    seat         TEXT NOT NULL DEFAULT '',
+                    note         TEXT NOT NULL DEFAULT '',
+                    source       TEXT NOT NULL DEFAULT '',
+                    edited       INTEGER NOT NULL DEFAULT 0,
+                    created_ts   INTEGER NOT NULL,
+                    updated_ts   INTEGER NOT NULL,
+                    UNIQUE (user_id, flight_date, from_iata, to_iata, number)
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_flown_user_date ON flown_flights(user_id, flight_date)")
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS fleet_cards (
                     owner_user_id TEXT NOT NULL,
@@ -295,6 +321,7 @@ class ControlStore:
         (settings/filter tables) and the catalog file — SQLite has no cross-file FKs."""
         with self._connect() as conn:
             conn.execute("DELETE FROM fleet_cards WHERE owner_user_id = ?", (user_id,))
+            conn.execute("DELETE FROM flown_flights WHERE user_id = ?", (user_id,))
             conn.execute("DELETE FROM push_subscriptions WHERE user_id = ?", (user_id,))
             conn.execute("DELETE FROM push_notification_prefs WHERE owner_user_id = ?", (user_id,))
             conn.execute("DELETE FROM spotting_reminder_prefs WHERE owner_user_id = ?", (user_id,))
@@ -401,6 +428,82 @@ class ControlStore:
     # look the same regardless of which airport is selected. owner_user_id is
     # the 'controller' sentinel for Controller/Passenger, or a Pilot's own
     # stable token — never merged between owners.
+
+    # ── Flown flights (Collection > Flown) ───────────────────────────────────────────────────────
+    _FLOWN_FIELDS = ("number", "airline_name", "airline_iata", "airline_icao", "from_iata", "to_iata",
+                     "type_name", "type_code", "registration", "seat", "note")
+
+    def flown_list(self, user_id: str) -> List[dict]:
+        with self._connect() as conn:
+            rows = conn.execute("SELECT * FROM flown_flights WHERE user_id = ? ORDER BY flight_date DESC, id DESC", (user_id,)).fetchall()
+        return [dict(r) for r in rows]
+
+    def flown_import(self, user_id: str, rows: List[dict], source: str) -> dict:
+        """Merge parsed CSV rows. Existing flight (same date/from/to/number): fill ONLY its blank fields — what the user
+        typed by hand is never overwritten — and the source list grows. Returns counts."""
+        now = int(time.time())
+        added = merged = unchanged = 0
+        with self._connect() as conn:
+            for r in rows:
+                ex = conn.execute(
+                    "SELECT * FROM flown_flights WHERE user_id = ? AND flight_date = ? AND from_iata = ? AND to_iata = ? AND number = ?",
+                    (user_id, r["date"], r["from_iata"], r["to_iata"], r["number"])).fetchone()
+                if ex is None:
+                    conn.execute(
+                        "INSERT INTO flown_flights (user_id, flight_date, number, airline_name, airline_iata, airline_icao, from_iata, to_iata, "
+                        "type_name, type_code, registration, seat, note, source, edited, created_ts, updated_ts) "
+                        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?,?)",
+                        (user_id, r["date"], r["number"], r["airline_name"], r["airline_iata"], r["airline_icao"], r["from_iata"],
+                         r["to_iata"], r["type_name"], r["type_code"], r["registration"], r["seat"], r["note"], source, now, now))
+                    added += 1
+                    continue
+                sets, params = [], []
+                for f in self._FLOWN_FIELDS:
+                    if not ex[f] and r.get(f):
+                        sets.append(f + " = ?")
+                        params.append(r[f])
+                srcs = [x for x in (ex["source"] or "").split(",") if x]
+                if source not in srcs:
+                    sets.append("source = ?")
+                    params.append(",".join(srcs + [source]))
+                if sets:
+                    conn.execute("UPDATE flown_flights SET " + ", ".join(sets) + ", updated_ts = ? WHERE id = ?", params + [now, ex["id"]])
+                    merged += 1
+                else:
+                    unchanged += 1
+        return {"added": added, "merged": merged, "unchanged": unchanged}
+
+    def flown_save(self, user_id: str, row: dict, flight_id: Optional[int] = None) -> Optional[int]:
+        """Create (flight_id None) or update one flight by hand. Returns its id, or None when it is not this user's flight
+        or would duplicate another one (the caller reports that)."""
+        now = int(time.time())
+        with self._connect() as conn:
+            dup = conn.execute(
+                "SELECT id FROM flown_flights WHERE user_id = ? AND flight_date = ? AND from_iata = ? AND to_iata = ? AND number = ?",
+                (user_id, row["date"], row["from_iata"], row["to_iata"], row["number"])).fetchone()
+            if flight_id is None:
+                if dup:
+                    return None
+                cur = conn.execute(
+                    "INSERT INTO flown_flights (user_id, flight_date, number, airline_name, airline_iata, airline_icao, from_iata, to_iata, "
+                    "type_name, type_code, registration, seat, note, source, edited, created_ts, updated_ts) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'manual',1,?,?)",
+                    (user_id, row["date"], row["number"], row["airline_name"], row["airline_iata"], row["airline_icao"], row["from_iata"],
+                     row["to_iata"], row["type_name"], row["type_code"], row["registration"], row["seat"], row["note"], now, now))
+                return cur.lastrowid
+            own = conn.execute("SELECT id FROM flown_flights WHERE id = ? AND user_id = ?", (flight_id, user_id)).fetchone()
+            if not own or (dup and dup["id"] != flight_id):
+                return None
+            conn.execute(
+                "UPDATE flown_flights SET flight_date = ?, number = ?, airline_name = ?, airline_iata = ?, airline_icao = ?, from_iata = ?, "
+                "to_iata = ?, type_name = ?, type_code = ?, registration = ?, seat = ?, note = ?, edited = 1, updated_ts = ? WHERE id = ?",
+                (row["date"], row["number"], row["airline_name"], row["airline_iata"], row["airline_icao"], row["from_iata"], row["to_iata"],
+                 row["type_name"], row["type_code"], row["registration"], row["seat"], row["note"], now, flight_id))
+            return flight_id
+
+    def flown_delete(self, user_id: str, flight_id: int) -> bool:
+        with self._connect() as conn:
+            return conn.execute("DELETE FROM flown_flights WHERE id = ? AND user_id = ?", (flight_id, user_id)).rowcount > 0
 
     def get_fleet_cards(self, owner_user_id: str) -> List[dict]:
         import json as _json

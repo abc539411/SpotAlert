@@ -52,6 +52,7 @@ from fastapi import FastAPI, HTTPException, Query as _Query, Request, Response, 
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+import flown as _flown
 from auth import current_user as _auth_current_user, require_role as _auth_require_role
 
 log = logging.getLogger(__name__)
@@ -3977,6 +3978,92 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                 app.state.control_store.update_fleet_card_photos(owner_user_id, icao, updated)
         except Exception as e:
             log.warning("Fleet photo refresh failed: %s", e)
+
+    # ── Flown (Collection > Flown): the flights this user has actually been on ───────────────────────────────────
+    # Per user (control.db), imported from a MyFR24 or Flighty CSV and editable by hand. Same roles as Collection.
+    _flown_maps: dict = {}
+
+    def _flown_airline_maps():
+        """(iata->icao, icao->iata) airline codes, learned from the airframes table (most common pairing wins)."""
+        if not _flown_maps:
+            i2c: dict = {}
+            c2i: dict = {}
+            try:
+                with app.state.store._connect() as conn:
+                    for r in conn.execute(
+                            "SELECT operator_iata, operator_icao, COUNT(*) AS n FROM airframes WHERE operator_iata IS NOT NULL AND operator_iata != '' "
+                            "AND operator_icao IS NOT NULL AND operator_icao != '' GROUP BY operator_iata, operator_icao ORDER BY n").fetchall():
+                        i2c[r[0].upper()] = r[1].upper()
+                        c2i[r[1].upper()] = r[0].upper()
+            except Exception as exc:
+                log.debug("Flown: airline code map unavailable: %s", exc)
+            _flown_maps["i2c"], _flown_maps["c2i"] = i2c, c2i
+        return _flown_maps["i2c"], _flown_maps["c2i"]
+
+    def _flown_payload(user_id: str) -> dict:
+        rows = app.state.control_store.flown_list(user_id)
+        out = []
+        for r in rows:
+            out.append({"id": r["id"], "date": r["flight_date"], "flight_number": _flown.display_flight_number(
+                            {"airline_iata": r["airline_iata"], "airline_icao": r["airline_icao"], "number": r["number"]}),
+                        "number": r["number"], "airline_name": r["airline_name"], "airline_iata": r["airline_iata"],
+                        "airline_icao": r["airline_icao"], "from_iata": r["from_iata"], "to_iata": r["to_iata"],
+                        "type_name": r["type_name"], "type_code": r["type_code"], "registration": r["registration"],
+                        "seat": r["seat"], "note": r["note"], "source": r["source"], "edited": bool(r["edited"])})
+        regs = {r["registration"] for r in out if r["registration"]}
+        return {"flights": out, "summary": {"total": len(out), "with_registration": sum(1 for r in out if r["registration"]),
+                                            "aircraft": len(regs), "first": out[-1]["date"] if out else None,
+                                            "last": out[0]["date"] if out else None}}
+
+    @app.get("/api/flown")
+    async def get_flown(user=Depends(_auth_require_role("controller", "pilot"))):
+        return JSONResponse(await asyncio.to_thread(_flown_payload, user.user_id))
+
+    @app.post("/api/flown")
+    async def add_flown(request: Request, user=Depends(_auth_require_role("controller", "pilot"))):
+        i2c, c2i = _flown_airline_maps()
+        row, err = _flown.clean_manual(await request.json(), i2c, c2i)
+        if err:
+            raise HTTPException(400, err)
+        fid = app.state.control_store.flown_save(user.user_id, row)
+        if fid is None:
+            raise HTTPException(409, "That flight is already in your list")
+        return JSONResponse({"ok": True, "id": fid})
+
+    @app.put("/api/flown/{flight_id}")
+    async def edit_flown(flight_id: int, request: Request, user=Depends(_auth_require_role("controller", "pilot"))):
+        i2c, c2i = _flown_airline_maps()
+        row, err = _flown.clean_manual(await request.json(), i2c, c2i)
+        if err:
+            raise HTTPException(400, err)
+        if app.state.control_store.flown_save(user.user_id, row, flight_id) is None:
+            raise HTTPException(409, "Could not save: not found, or it would duplicate another flight")
+        return JSONResponse({"ok": True})
+
+    @app.delete("/api/flown/{flight_id}")
+    async def delete_flown(flight_id: int, user=Depends(_auth_require_role("controller", "pilot"))):
+        if not app.state.control_store.flown_delete(user.user_id, flight_id):
+            raise HTTPException(404, "Not found")
+        return JSONResponse({"ok": True})
+
+    @app.post("/api/flown/import")
+    async def import_flown(file: UploadFile = File(...), user=Depends(_auth_require_role("controller", "pilot"))):
+        raw = await file.read(3 * 1024 * 1024 + 1)
+        if len(raw) > 3 * 1024 * 1024:
+            raise HTTPException(413, "That file is too large for a flight export")
+        fmt, rows, skipped = _flown.parse_csv(raw)
+        if not fmt:
+            raise HTTPException(400, "Not a MyFR24 (FlightDiary) or Flighty CSV export")
+        i2c, c2i = _flown_airline_maps()
+        i2c, c2i = dict(i2c), dict(c2i)
+        for r in rows:                                   # the file's own airline pairs (e.g. "(SC/CDG)") are the most reliable
+            if r["airline_iata"] and r["airline_icao"]:
+                i2c[r["airline_iata"]], c2i[r["airline_icao"]] = r["airline_icao"], r["airline_iata"]
+        _flown.fill_airline_codes(rows, i2c, c2i)
+        res = app.state.control_store.flown_import(user.user_id, rows, fmt)
+        payload = _flown_payload(user.user_id)
+        return JSONResponse({"ok": True, "format": fmt, "parsed": len(rows), "skipped": skipped, **res,
+                             "missing_registration": payload["summary"]["total"] - payload["summary"]["with_registration"]})
 
     @app.get("/api/fleet-cards")
     async def get_fleet_cards(background_tasks: BackgroundTasks,

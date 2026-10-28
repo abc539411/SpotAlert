@@ -95,7 +95,7 @@ const I18N = {
     'login.submitRequest': '提交申请',
     'login.requestSubmitted': '申请已提交——请等待管理员审核。',
 
-    'col.summary': '概览', 'col.fleet': '机队',
+    'col.summary': '概览', 'col.fleet': '机队', 'col.flown': '乘机记录',
     'col.noCatalog': '请在设置 → 拍机推荐 中上传目录以使用此功能。',
     'col.photos': '照片', 'col.aircraft': '飞机', 'col.airlines': '航空公司',
     'col.airports': '机场', 'col.sessions': '拍摄场次',
@@ -5086,7 +5086,164 @@ function _colSubtab(name) {
     p.classList.toggle('hidden', p.id !== 'col-subtab-' + name);
   });
   if (name === 'fleet') _fleetInit();
+  if (name === 'flown') flownLoad();
   if (typeof _syncRecScrollHeight === 'function') requestAnimationFrame(_syncRecScrollHeight);
+}
+
+// ── Flown: flights you have actually been on (Collection > Flown) ───────────────────────────────────────────────────
+// Imported from a MyFR24 (FlightDiary) or Flighty CSV, and editable by hand. Flighty exports carry no tail numbers, so
+// those rows show "+ rego": tap one to type the registration in.
+let _flown = null, _flownView = 'flights', _flownQ = '', _flownNoReg = false;
+const _flz = (en, zh) => (_lang === 'zh' ? zh : en);
+
+async function flownLoad(force) {
+  if (_flown && !force) { flownRender(); return; }
+  try { _flown = await api('/flown'); } catch (e) { toast('Error: ' + e.message); return; }
+  flownRender();
+}
+
+function _flownDate(iso) {
+  const [y, m, d] = iso.split('-').map(Number);
+  const dt = new Date(y, m - 1, d);
+  return `${dt.toLocaleDateString(_locale(), { day: 'numeric', month: 'short' })}<small>${y}</small>`;
+}
+
+function flownRender() {
+  const wrap = $('flown-wrap');
+  if (!wrap || !_flown) return;
+  const sm = _flown.summary || {}, all = _flown.flights || [];
+  const q = _flownQ.trim().toLowerCase();
+  const match = f => !q || [f.flight_number, f.registration, f.from_iata, f.to_iata, f.type_name, f.type_code, f.airline_name, f.seat, f.note, f.date]
+    .some(v => (v || '').toLowerCase().includes(q));
+  let list;
+  if (_flownView === 'aircraft') {
+    const by = {};
+    all.filter(f => f.registration && match(f)).forEach(f => { (by[f.registration] = by[f.registration] || []).push(f); });
+    list = Object.entries(by).map(([reg, fl]) => ({ reg, fl, last: fl[0].date, n: fl.length }))
+      .sort((a, b) => b.n - a.n || (a.last < b.last ? 1 : -1));
+  } else {
+    list = all.filter(f => match(f) && (!_flownNoReg || !f.registration));
+  }
+  const stats = `<b>${sm.total || 0}</b> ${_flz('flights', '个航班')} · <b>${sm.aircraft || 0}</b> ${_flz('aircraft', '架飞机')}` +
+    ((sm.total || 0) - (sm.with_registration || 0) > 0 ? ` · ${(sm.total || 0) - (sm.with_registration || 0)} ${_flz('without a registration', '缺注册号')}` : '');
+  let body = '';
+  if (!all.length) {
+    body = `<div class="fl-empty">${esc(_flz('Nothing here yet. Import a MyFR24 or Flighty CSV, or add a flight by hand.',
+      '这里还没有内容。请导入 MyFR24 或 Flighty 的 CSV，或手动添加航班。'))}</div>`;
+  } else if (!list.length) {
+    body = `<div class="fl-empty">${esc(_flz('No matches.', '没有匹配项。'))}</div>`;
+  } else if (_flownView === 'aircraft') {
+    body = list.map(a => {
+      const f = a.fl[0];
+      const ty = f.type_name || f.type_code || '';
+      return `<div class="fl-row" onclick="flownShowAircraft('${esc(a.reg)}')">
+        <div class="fl-date">${_flownDate(a.last)}</div>
+        <div><div class="fl-fn">${_flag(_regoCountryCode(a.reg), { h: 11 })}${esc(a.reg)}</div><div class="fl-sub">${esc(ty)}</div></div>
+        <div class="fl-count">${a.n} ${esc(_flz(a.n === 1 ? 'flight' : 'flights', '次'))}</div></div>`;
+    }).join('');
+  } else {
+    let year = '';
+    body = list.map(f => {
+      const y = f.date.slice(0, 4);
+      const hdr = y !== year ? `<div class="fl-year">${y}</div>` : '';
+      year = y;
+      const route = f.from_iata || f.to_iata ? `${esc(f.from_iata || '?')} → ${esc(f.to_iata || '?')}` : '';
+      const sub = [f.airline_name, f.type_name || f.type_code, f.seat ? `${_flz('Seat', '座位')} ${f.seat}` : ''].filter(Boolean).join(' · ');
+      const reg = f.registration ? `${_flag(_regoCountryCode(f.registration), { h: 11 })}${esc(f.registration)}`
+        : `<span class="fl-noreg">+ ${esc(_flz('rego', '注册号'))}</span>`;
+      return `${hdr}<div class="fl-row" onclick="flownEdit(${f.id})">
+        <div class="fl-date">${_flownDate(f.date)}</div>
+        <div><div class="fl-fn">${esc(f.flight_number || '—')}<span class="fl-route">${route}</span></div><div class="fl-sub">${esc(sub)}</div></div>
+        <div class="fl-reg">${reg}</div></div>`;
+    }).join('');
+  }
+  const keepScroll = wrap.querySelector('.fl-list') ? wrap.querySelector('.fl-list').scrollTop : 0;
+  const hadSearchFocus = document.activeElement && document.activeElement.id === 'flown-q';
+  wrap.innerHTML = `
+    <div class="fl-top"><div class="fl-stats">${stats}</div>
+      <button class="fl-btn" onclick="$('flown-file').click()">${esc(_flz('Import CSV', '导入 CSV'))}</button>
+      <button class="fl-btn primary" onclick="flownEdit(0)">+ ${esc(_flz('Add flight', '添加航班'))}</button></div>
+    <div class="fl-tools">
+      <div class="fl-seg"><button class="${_flownView === 'flights' ? 'on' : ''}" onclick="flownView('flights')">${esc(_flz('Flights', '航班'))}</button><button class="${_flownView === 'aircraft' ? 'on' : ''}" onclick="flownView('aircraft')">${esc(_flz('Aircraft', '飞机'))}</button></div>
+      <input id="flown-q" class="fl-search" value="${esc(_flownQ)}" placeholder="${esc(_flz('Search', '搜索'))}" oninput="flownSearch(this.value)">
+      ${_flownView === 'flights' ? `<label class="fl-chk"><input type="checkbox" ${_flownNoReg ? 'checked' : ''} onchange="flownNoReg(this.checked)">${esc(_flz('No registration', '无注册号'))}</label>` : ''}
+    </div>
+    <div class="fl-list">${body}</div>`;
+  const l = wrap.querySelector('.fl-list'); if (l) l.scrollTop = keepScroll;
+  if (hadSearchFocus) { const i = $('flown-q'); if (i) { i.focus(); i.setSelectionRange(i.value.length, i.value.length); } }
+}
+
+function flownView(v) { _flownView = v; flownRender(); }
+function flownSearch(v) { _flownQ = v; flownRender(); }
+function flownNoReg(on) { _flownNoReg = !!on; flownRender(); }
+function flownShowAircraft(reg) { _flownView = 'flights'; _flownQ = reg; flownRender(); }
+
+function flownEdit(id) {
+  const f = id ? (_flown.flights || []).find(x => x.id === id) : null;
+  const v = k => esc(f ? (f[k] || '') : '');
+  const today = new Date().toISOString().slice(0, 10);
+  $('flown-modal').innerHTML = `<div class="fl-form" onclick="event.stopPropagation()">
+    <h3>${esc(f ? _flz('Edit flight', '编辑航班') : _flz('Add a flight', '添加航班'))}</h3>
+    <div class="fl-grid">
+      <label>${esc(_flz('Date', '日期'))}<input id="fl-date" type="date" value="${f ? esc(f.date) : today}"></label>
+      <label>${esc(_flz('Flight number', '航班号'))}<input id="fl-fn" value="${v('flight_number')}" placeholder="QF465" autocapitalize="characters"></label>
+      <label>${esc(_flz('From (IATA)', '出发（IATA）'))}<input id="fl-from" value="${v('from_iata')}" placeholder="SYD" maxlength="3" autocapitalize="characters"></label>
+      <label>${esc(_flz('To (IATA)', '到达（IATA）'))}<input id="fl-to" value="${v('to_iata')}" placeholder="MEL" maxlength="3" autocapitalize="characters"></label>
+      <label>${esc(_flz('Registration', '注册号'))}<input id="fl-reg" value="${v('registration')}" placeholder="VH-VXZ" autocapitalize="characters"></label>
+      <label>${esc(_flz('Seat', '座位'))}<input id="fl-seat" value="${v('seat')}" maxlength="8"></label>
+    </div>
+    <label>${esc(_flz('Aircraft type', '机型'))}<input id="fl-type" value="${esc(f ? (f.type_name || f.type_code || '') : '')}" placeholder="Boeing 737-800"></label>
+    <label>${esc(_flz('Note', '备注'))}<input id="fl-note" value="${v('note')}" maxlength="200"></label>
+    <div class="fl-err" id="fl-err"></div>
+    <div class="fl-actions">
+      ${f ? `<button class="fl-btn danger" onclick="flownDelete(${f.id})">${esc(_flz('Delete', '删除'))}</button>` : ''}
+      <span class="grow"></span>
+      <button class="fl-btn" onclick="flownClose()">${esc(_flz('Cancel', '取消'))}</button>
+      <button class="fl-btn primary" onclick="flownSave(${f ? f.id : 0})">${esc(_flz('Save', '保存'))}</button>
+    </div></div>`;
+  $('flown-modal').classList.remove('hidden');
+  $('flown-modal').onclick = flownClose;
+  setTimeout(() => { const el = $(f && !f.registration ? 'fl-reg' : 'fl-fn'); if (el && window.innerWidth >= 768) el.focus(); }, 50);
+}
+function flownClose() { $('flown-modal').classList.add('hidden'); $('flown-modal').innerHTML = ''; }
+
+async function flownSave(id) {
+  const t = $('fl-type').value.trim();
+  const body = { date: $('fl-date').value, flight_number: $('fl-fn').value, from_iata: $('fl-from').value, to_iata: $('fl-to').value,
+                 registration: $('fl-reg').value, seat: $('fl-seat').value, note: $('fl-note').value, type_name: t };
+  const old = id ? (_flown.flights || []).find(x => x.id === id) : null;
+  if (old) { body.airline_name = old.airline_name; if (old.type_name === t || old.type_code === t) { body.type_name = old.type_name; body.type_code = old.type_code; } }
+  try {
+    await api(id ? `/flown/${id}` : '/flown', { method: id ? 'PUT' : 'POST', body: JSON.stringify(body) });
+  } catch (e) {
+    let msg = e.message; try { msg = JSON.parse(e.message).detail || msg; } catch (x) {}
+    $('fl-err').textContent = msg; return;
+  }
+  flownClose(); toast(_flz('Saved', '已保存')); flownLoad(true);
+}
+
+async function flownDelete(id) {
+  const btn = document.querySelector('#flown-modal .fl-btn.danger');
+  if (btn && btn.dataset.armed !== '1') {                    // click once to arm, again to confirm
+    btn.dataset.armed = '1'; btn.textContent = _flz('Click again to delete', '再点一次确认删除'); return;
+  }
+  try { await api(`/flown/${id}`, { method: 'DELETE' }); } catch (e) { toast('Error: ' + e.message); return; }
+  flownClose(); flownLoad(true);
+}
+
+async function flownImportFile(input) {
+  const file = input.files && input.files[0];
+  input.value = '';
+  if (!file) return;
+  const fd = new FormData(); fd.append('file', file);
+  try {
+    const r = await fetch('/api/flown/import', { method: 'POST', body: fd });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) { toast(d.detail || _flz('Could not import that file', '无法导入该文件')); return; }
+    const src = d.format === 'flighty' ? 'Flighty' : 'MyFR24';
+    toast(_flz(`${src}: ${d.added} added, ${d.merged} updated, ${d.unchanged} already there`, `${src}：新增 ${d.added}，更新 ${d.merged}，已存在 ${d.unchanged}`));
+    flownLoad(true);
+  } catch (e) { toast('Error: ' + e.message); }
 }
 
 function _fleetToggleType(key) {
@@ -8317,7 +8474,7 @@ function _syncRecScrollHeight() {
   }
   const vvh = window.visualViewport ? window.visualViewport.height : window.innerHeight;
   document.documentElement.style.setProperty('--app-vvh', vvh + 'px');
-  ['col-subtab-summary', 'col-subtab-fleet'].forEach(id => {
+  ['col-subtab-summary', 'col-subtab-fleet', 'col-subtab-flown'].forEach(id => {
     const page = document.getElementById(id);
     if (page && !page.classList.contains('hidden')) {
       document.documentElement.style.setProperty('--col-avail-h', page.clientHeight + 'px');

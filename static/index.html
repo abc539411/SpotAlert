@@ -1689,9 +1689,48 @@
     #tab-collection { display: grid; grid-template-rows: auto 1fr; overflow: hidden; padding: 0; gap: 0; }
     .col-subtab-page { overflow: hidden; min-height: 0; display: flex; flex-direction: column; }
     .col-subtab-page.hidden { display: none; }
+    #col-subtab-flown { min-height: 0; }
     .col-no-catalog { display: flex; align-items: center; justify-content: center; flex: 1; padding: 24px; text-align: center; color: var(--dim); }
     .col-no-catalog.hidden { display: none; }
     .col-dashboard.hidden { display: none; }
+    /* ── Flown (Collection > Flown) ──────────────────────────────────────── */
+    .fl-wrap { display: flex; flex-direction: column; flex: 1; min-height: 0; padding: 10px 14px 0; gap: 8px; max-width: 760px; width: 100%; margin: 0 auto; }
+    .fl-top { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+    .fl-stats { flex: 1; min-width: 0; font-size: 12px; color: var(--dim); }
+    .fl-stats b { color: var(--text); font-weight: 700; }
+    .fl-btn { background: var(--surface2); border: 1px solid var(--border); color: var(--text); border-radius: 8px; padding: 6px 12px; font-size: 12px; font-weight: 600; cursor: pointer; }
+    .fl-btn:hover { border-color: var(--accent); }
+    .fl-btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+    .fl-btn.danger { color: var(--danger); }
+    .fl-tools { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+    .fl-seg { display: inline-flex; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+    .fl-seg button { background: none; border: none; color: var(--dim); padding: 6px 12px; font-size: 12px; font-weight: 600; cursor: pointer; }
+    .fl-seg button.on { background: var(--surface2); color: var(--text); }
+    .fl-search { flex: 1; min-width: 120px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; color: var(--text); padding: 6px 10px; font-size: 13px; }
+    .fl-chk { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--dim); cursor: pointer; white-space: nowrap; }
+    .fl-list { flex: 1; min-height: 0; overflow-y: auto; margin: 0 -14px; padding: 0 14px 14px; scrollbar-width: thin; }
+    .fl-year { position: sticky; top: 0; z-index: 2; background: var(--bg); padding: 8px 2px 4px; font-size: 11px; font-weight: 700; color: var(--dim); letter-spacing: .06em; }
+    .fl-row { display: grid; grid-template-columns: 54px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 9px 12px; border: 1px solid var(--border); border-radius: 10px; margin-bottom: 6px; background: var(--surface); cursor: pointer; }
+    .fl-row:hover { border-color: var(--accent); }
+    .fl-date { font-size: 12px; font-weight: 700; line-height: 1.2; font-variant-numeric: tabular-nums; }
+    .fl-date small { display: block; font-size: 10px; font-weight: 500; color: var(--dim); }
+    .fl-fn { font-size: 13px; font-weight: 700; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .fl-route { font-size: 12px; font-weight: 600; color: var(--dim); }
+    .fl-sub { font-size: 11px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .fl-reg { font-size: 13px; font-weight: 700; display: inline-flex; align-items: center; gap: 5px; text-align: right; }
+    .fl-noreg { font-size: 11px; font-weight: 600; color: var(--accent); border: 1px dashed var(--border); border-radius: 999px; padding: 2px 8px; }
+    .fl-count { font-size: 11px; font-weight: 600; color: var(--dim); }
+    .fl-empty { text-align: center; color: var(--dim); font-size: 13px; line-height: 1.6; padding: 36px 20px; }
+    .fl-modal { position: fixed; inset: 0; z-index: 300; background: rgba(0,0,0,.6); display: flex; align-items: center; justify-content: center; padding: 16px; }
+    .fl-modal.hidden { display: none; }
+    .fl-form { width: min(420px, 100%); max-height: 100%; overflow-y: auto; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 16px; display: flex; flex-direction: column; gap: 10px; }
+    .fl-form h3 { margin: 0; font-size: 16px; }
+    .fl-form label { display: flex; flex-direction: column; gap: 3px; font-size: 11px; color: var(--dim); font-weight: 600; min-width: 0; }
+    .fl-form input { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; color: var(--text); padding: 8px 10px; font-size: 16px; width: 100%; min-width: 0; box-sizing: border-box; }
+    .fl-form .fl-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; }
+    .fl-form .fl-err { color: var(--danger); font-size: 12px; min-height: 0; }
+    .fl-form .fl-actions { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+    .fl-form .fl-actions .grow { flex: 1; }
     /* ── Fleet cards ─────────────────────────────────────────────────────── */
     .flt-wrap { display: flex; flex-direction: row; flex: 1; overflow-x: auto; overflow-y: hidden; padding: 12px; gap: 12px; align-items: center; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
     /* Empty state */
@@ -2182,6 +2221,8 @@
 </div>
 
 <div id="refresh-pill" class="refresh-pill"></div>
+<input type="file" id="flown-file" accept=".csv,text/csv" style="display:none" onchange="flownImportFile(this)">
+<div id="flown-modal" class="fl-modal hidden"></div>
 <div id="tour-layer" class="tour-layer"></div>
 <header>
   <div class="header-logo" onclick="logoTap()" title="Back to the start of this view" role="button"><span>✈</span>SpotAlert</div>
@@ -2345,6 +2386,7 @@
     <div class="srch-subtab-bar">
       <button class="srch-subtab active" data-col-subtab="summary" onclick="_colSubtab('summary')" data-i18n="col.summary">Summary</button>
       <button class="srch-subtab" data-col-subtab="fleet" onclick="_colSubtab('fleet')" data-i18n="col.fleet">Fleet</button>
+      <button class="srch-subtab" data-col-subtab="flown" onclick="_colSubtab('flown')" data-i18n="col.flown">Flown</button>
     </div>
     <!-- Summary subtab -->
     <div class="col-subtab-page" id="col-subtab-summary">
@@ -2404,6 +2446,11 @@
     <div class="col-subtab-page hidden" id="col-subtab-fleet">
       <div id="flt-wrap" class="flt-wrap"></div>
     </div><!-- /col-subtab-fleet -->
+
+    <!-- Flown subtab: the flights you have actually been on (import MyFR24 / Flighty, or add and edit by hand) -->
+    <div class="col-subtab-page hidden" id="col-subtab-flown">
+      <div id="flown-wrap" class="fl-wrap"></div>
+    </div><!-- /col-subtab-flown -->
   </div>
 
   <!-- Search -->
