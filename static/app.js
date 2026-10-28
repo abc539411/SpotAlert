@@ -2925,9 +2925,8 @@ function _buildRecDetail(el, compact) {
   const chips = (f.notif_types || []).map(t => `<span class="chip ${chipClass(t)}">${chipLabel(t)}</span>`).join('');
   const photoHtml = f.photo_url ? `<div class="bd-photo-wrap"><img class="bd-photo" src="${esc(f.photo_url)}" loading="lazy" alt="${esc(f.registration || '')}"></div>` : '';
   const flightLink = flightNum && flightNum !== '—'
-    ? `<a href="${_fr24FlightUrl(flightNum)}" target="_blank" rel="noopener" style="color:var(--text);font-weight:600;text-decoration:none">${esc(flightNum)}</a>` : '';
-  const airlineLine = (airline || flightLink)
-    ? `<div class="rfc-d-sub">${airline ? `<span data-ext-name="${esc(airline)}">${esc(tExternalName(airline))}</span>` : ''}${airline && flightLink ? ' · ' : ''}${flightLink}</div>` : '';
+    ? `<a href="${_fr24FlightUrl(flightNum)}" target="_blank" rel="noopener" class="rfc-d-fn">${esc(flightNum)}</a>` : '';
+  const airlineLine = airline ? `<div class="rfc-d-sub"><span data-ext-name="${esc(airline)}">${esc(tExternalName(airline))}</span></div>` : '';
   const liveryLine = f.extra_info ? `<div class="rfc-d-liv">${esc(tLiveryName(f.extra_info))}</div>` : '';
 
   return `<div class="rfc-detail">${photoHtml}
@@ -2936,7 +2935,7 @@ function _buildRecDetail(el, compact) {
         <a class="rego" href="${_fr24AircraftUrl(f.registration)}" target="_blank" rel="noopener">${esc(f.registration || '')}</a>
         ${compact ? _flag(_regoCountryCode(f.registration), { h: 17, vab: -8 }) : _flag(_regoCountryCode(f.registration), { h: 26, vab: -13 })}
       </div>
-      <div style="display:flex;align-items:center;gap:10px">${statusPill}</div>
+      <div style="display:flex;align-items:center;gap:10px">${flightLink}${statusPill}</div>
     </div>
     <div class="detail-badges" style="margin-top:9px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">${chips}${acType ? `<span class="fc-actype">${esc(acType)}</span>` : ''}</div>
     <div style="margin-top:4px">${airlineLine}${liveryLine}</div>
