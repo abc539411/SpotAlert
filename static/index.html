@@ -2282,8 +2282,20 @@
     .fl-list > .fl-year:first-child { border-top: none; }
     .fl-card:first-child .fl-row { border-top-color: color-mix(in srgb, var(--border) 50%, transparent); }   /* the lines between flights are fainter than the group lines */
 
+    /* expanded cards (Feed, Board): the same panel colour, the same inset blocks (lighter than the panel), the same section labels */
+    .bd-detail { background: var(--surface); }
+    .bd-trig-row { background: var(--surface2); }
+    /* facts (Last Visit, Spotted, ...) are plain sections split by the faint line, the same in Feed and Board */
+    .dc, .bd-detail .dc { background: none; border-radius: 0; padding: 10px 0 0; border-top: 1px solid var(--border); }
+    .detail-cards { gap: 10px; }
+    .detail-cards > .dc:first-child { border-top: none; padding-top: 0; }
+    .bd-facts > .dc { border-top: none; padding-top: 0; }
+    .bd-trig-row { border-radius: 7px; }
+    .bd-trig-n { background: var(--surface); }
+    .bd-sec-t, .dc .lbl { font-size: 10px; letter-spacing: .07em; text-transform: uppercase; color: var(--dim); }
+
     /* inset blocks */
-    .dc, .bd-eb, .fl-form.fl-inline { border-radius: var(--tile-r); }
+    .bd-eb, .fl-form.fl-inline { border-radius: var(--tile-r); }
     .fl-form.fl-inline { background: var(--surface2); border-color: var(--border); margin: 6px 0; }
   </style>
   <script src="https://cdn.jsdelivr.net/npm/twemoji@14.0.2/dist/twemoji.min.js" crossorigin="anonymous"></script>
