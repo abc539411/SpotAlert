@@ -2971,7 +2971,7 @@ function _spotRowsHtml(sessions, registration, r) {
     const dateLabel = _lang === 'zh' ? `${yr}/${String(d.getMonth() + 1).padStart(2, '0')}/${day}` : `${day} ${mon[d.getMonth()]} '${yr}`;
     const apt = s.airport || '';
     const flag = _flag(_airportCountry(apt), { h: 10 });
-    const aptName = s.airport_name ? (_airportDisplayName(s.airport_name) || apt) : apt;      // shortened name; the code when the airport has none on file
+    const aptName = window.innerWidth >= 768 && s.airport_name ? (_airportDisplayName(s.airport_name) || apt) : apt;      // PC: shortened name; phones (and airports with no name on file): the code
     const notes = (s.notes || '').trim();
     const hl = isLivery && curLivery && notes && notes.toLowerCase() === curLivery;
     const isoDate = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
