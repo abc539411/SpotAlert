@@ -334,6 +334,7 @@ function tDaysAgo(n) {
 // numerous/one-off each to justify their own named helper. Looked up by the
 // literal English string itself rather than a semantic key.
 const UI_ZH = {
+  'Flown': '乘机',
   '✈ Add to Home Screen in Safari to enable push notifications.': '✈ 在 Safari 中添加到主屏幕以启用推送通知。',
   '✈ Install SpotAlert for quick access and notifications.': '✈ 安装 SpotAlert 以便快速访问并接收通知。',
   'Install': '安装',
@@ -1005,6 +1006,7 @@ async function _authBoot() {
     api('/me/language', { method: 'PUT', body: JSON.stringify({ language: _lang }) }).catch(() => {});
   }
   _appRole = me.user.role || '';                             // the tour (below) can start before the rest of the boot sets it
+  flownMarkLoad();
   // Every sign-in and every app version change opens the tour BEFORE anything can be tapped: the airport page goes up
   // under the tour's dim layer, and the app boots behind it on the example airport (X-Tour-Airport header) so the
   // tour can walk through the real tabs even though no airport has been picked yet. Finish or Skip, nothing else.
@@ -5092,6 +5094,65 @@ function _colSubtab(name) {
 // ── Flown: flights you have actually been on (Collection > Flown) ───────────────────────────────────────────────────
 // Imported from a MyFR24 (FlightDiary) or Flighty CSV, and editable by hand. Flighty exports carry no tail numbers, so
 // those rows show "+ rego": tap one to type the registration in.
+// ── Flown aircraft marked throughout the app ───────────────────────────────────────────────────────────────────────
+// Controllers and Pilots see every registration they have flown in green with a small plane after it. Rather than touching
+// every place that prints a registration, a text scan finds any text that is exactly a flown registration (on load and as the
+// page changes) and wraps it; the Flown subtab itself is left alone since everything there is flown.
+let _flownRegos = {};                 // REG -> times flown
+let _flownObs = null;
+const _FLOWN_ICON = `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M21 16v-2l-8-5V3.5a1.5 1.5 0 0 0-3 0V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5z"/></svg>`;
+
+function _flownScan(root) {
+  if (!root || !Object.keys(_flownRegos).length) return;
+  const nodes = [];
+  if (root.nodeType === 3) nodes.push(root);
+  else if (root.nodeType === 1) {
+    const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    for (let n = w.nextNode(); n; n = w.nextNode()) nodes.push(n);
+  }
+  for (const n of nodes) {
+    const p = n.parentElement;
+    if (!p || /^(SCRIPT|STYLE|TEXTAREA|OPTION|TITLE)$/.test(p.tagName) || p.closest('.flown-reg, .flown-ic, #flown-wrap')) continue;
+    const m = /^(\s*)(\S+)(\s*)$/.exec(n.nodeValue);
+    if (!m) continue;
+    const count = _flownRegos[m[2].toUpperCase()];
+    if (!count) continue;
+    const frag = document.createDocumentFragment();
+    if (m[1]) frag.append(m[1]);
+    const t = document.createElement('span'); t.className = 'flown-reg'; t.textContent = m[2]; frag.append(t);
+    const ic = document.createElement('span'); ic.className = 'flown-ic'; ic.innerHTML = _FLOWN_ICON;
+    ic.title = `${tt('Flown')} ${count}×`; frag.append(ic);
+    if (m[3]) frag.append(m[3]);
+    n.replaceWith(frag);
+  }
+}
+
+function _flownUnmark() {
+  document.querySelectorAll('.flown-ic').forEach(e => e.remove());
+  document.querySelectorAll('.flown-reg').forEach(e => e.replaceWith(document.createTextNode(e.textContent)));
+}
+
+function _flownSetRegos(map) {
+  _flownRegos = map || {};
+  _flownUnmark();
+  if (!Object.keys(_flownRegos).length) return;
+  _flownScan(document.body);
+  if (!_flownObs) {
+    _flownObs = new MutationObserver(recs => {
+      for (const r of recs) {
+        if (r.type === 'characterData') _flownScan(r.target);
+        else r.addedNodes.forEach(n => _flownScan(n));
+      }
+    });
+    _flownObs.observe(document.body, { childList: true, subtree: true, characterData: true });
+  }
+}
+
+async function flownMarkLoad() {
+  if (_appRole === 'passenger') return;
+  try { _flownSetRegos((await api('/flown/regos')).regos); } catch (e) {}
+}
+
 let _flown = null, _flownEdit = false, _flownEditId = null;   // _flownEditId: row whose form is open (0 = new flight)
 let _flownFoldInit = false;         // the first load starts with everything folded except the current year
 const _flownFold = new Set();       // collapsed groups: 'y:2025' (flights by year) / 'a:QFA' (aircraft by airline)
@@ -5101,6 +5162,7 @@ const _flz = (en, zh) => (_lang === 'zh' ? zh : en);
 async function flownLoad(force) {
   if (_flown && !force) { flownRender(); return; }
   try { _flown = await api('/flown'); } catch (e) { toast('Error: ' + e.message); return; }
+  flownMarkLoad();
   await _translateNamesForZh(Object.values(_flown.airports || {}));
   if (!_flownFoldInit) {
     _flownFoldInit = true;

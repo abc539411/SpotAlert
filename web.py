@@ -4036,6 +4036,17 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
     async def get_flown(user=Depends(_auth_require_role("controller", "pilot"))):
         return JSONResponse(await asyncio.to_thread(_flown_payload, user.user_id))
 
+    @app.get("/api/flown/regos")
+    async def get_flown_regos(user=Depends(_auth_require_role("controller", "pilot"))):
+        """Every registration the user has flown, with how many times (the app marks these everywhere)."""
+        def _counts():
+            out: dict = {}
+            for r in app.state.control_store.flown_list(user.user_id):
+                if r["registration"]:
+                    out[r["registration"]] = out.get(r["registration"], 0) + 1
+            return out
+        return JSONResponse({"regos": await asyncio.to_thread(_counts)})
+
     @app.post("/api/flown")
     async def add_flown(request: Request, user=Depends(_auth_require_role("controller", "pilot"))):
         i2c, c2i = _flown_airline_maps()
