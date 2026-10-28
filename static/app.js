@@ -5294,30 +5294,29 @@ function flownRender() {
   const wrap = $('flown-wrap');
   if (!wrap || !_flown) return;
   const sm = _flown.summary || {}, all = _flown.flights || [];
-  const stats = `<b>${sm.total || 0}</b> ${_flz('flights', '个航班')} · <b>${sm.aircraft || 0}</b> ${_flz('aircraft', '架飞机')}` +
-    ((sm.total || 0) - (sm.with_registration || 0) > 0 ? ` · ${(sm.total || 0) - (sm.with_registration || 0)} ${_flz('without a registration', '缺注册号')}` : '');
   const empty = msg => `<div class="fl-empty">${esc(msg)}</div>`;
   const hasAircraft = all.some(f => f.registration);
   const flightsBody = _flownFlightsHtml(all);
-  const cards = !all.length && !(_flownEdit && _flownEditId === 0)
-    ? empty(_flz('Nothing here yet. Import a MyFR24 or Flighty CSV, or add a flight by hand.', '这里还没有内容。请导入 MyFR24 或 Flighty 的 CSV，或手动添加航班。'))
-    : `<div class="fl-cards${_flownEdit ? ' one' : ''}">
+  const emptyMsg = empty(_flz('Nothing here yet. Import a MyFR24 or Flighty CSV, or add a flight by hand.', '这里还没有内容。请导入 MyFR24 或 Flighty 的 CSV，或手动添加航班。'));
+  const hasFlights = all.length > 0 || (_flownEdit && _flownEditId === 0);
+  // The Edit control is its own column at the far right (a small round button on PC, a full swipe page on phones, like Fleet's
+  // "+ Add Airline"); while editing it holds Import CSV, Add flight and Done.
+  const editCol = `<div class="fl-edit-col">${_flownEdit
+    ? `<button class="fl-btn" onclick="$('flown-file').click()">${esc(_flz('Import CSV', '导入 CSV'))}</button>
+       <button class="fl-btn" onclick="flownEdit(0)">+ ${esc(_flz('Add flight', '添加航班'))}</button>
+       <button class="fl-btn primary" onclick="flownToggleEdit()">${esc(_flz('Done', '完成'))}</button>`
+    : `<button class="fl-ec-round" onclick="flownToggleEdit()" title="${esc(_flz('Edit', '编辑'))}">✎</button><div class="fl-ec-label">${esc(_flz('Edit', '编辑'))}</div>`}</div>`;
+  const cards = `<div class="fl-cards${_flownEdit || !all.length ? ' one' : ''}">
         <div class="fl-card"><div class="fl-card-head"><div class="fl-card-title">${esc(_flz('Flights', '航班'))}</div><div class="fl-card-sub">${sm.total || 0} ${esc(_flz('flights', '个航班'))}</div></div>
-          <div class="fl-list">${_flownEdit && _flownEditId === 0 ? _flownForm(null) : ''}${flightsBody}</div></div>
-        ${_flownEdit ? '' : `<div class="fl-card"><div class="fl-card-head"><div class="fl-card-title">${esc(_flz('Aircraft', '飞机'))}</div><div class="fl-card-sub">${sm.aircraft || 0} ${esc(_flz('aircraft', '架飞机'))}</div></div>
+          <div class="fl-list">${_flownEdit && _flownEditId === 0 ? _flownForm(null) : ''}${hasFlights ? flightsBody : emptyMsg}</div></div>
+        ${_flownEdit || !all.length ? '' : `<div class="fl-card"><div class="fl-card-head"><div class="fl-card-title">${esc(_flz('Aircraft', '飞机'))}</div><div class="fl-card-sub">${sm.aircraft || 0} ${esc(_flz('aircraft', '架飞机'))}</div></div>
           <div class="fl-list">${hasAircraft ? _flownAircraftHtml(all) : empty(_flz('No registrations yet.', '还没有注册号。'))}</div></div>`}
+        ${editCol}
       </div>`;
   const keep = { x: 0, y: [] };
   const old = wrap.querySelector('.fl-cards');
   if (old) { keep.x = old.scrollLeft; keep.y = [...old.querySelectorAll('.fl-list')].map(l => l.scrollTop); }
-  wrap.innerHTML = `
-    <div class="fl-top"><div class="fl-stats">${stats}</div>
-      ${_flownEdit
-        ? `<button class="fl-btn" onclick="$('flown-file').click()">${esc(_flz('Import CSV', '导入 CSV'))}</button>
-           <button class="fl-btn" onclick="flownEdit(0)">+ ${esc(_flz('Add flight', '添加航班'))}</button>
-           <button class="fl-btn primary" onclick="flownToggleEdit()">${esc(_flz('Done', '完成'))}</button>`
-        : `<button class="fl-btn" onclick="flownToggleEdit()">${esc(_flz('Edit', '编辑'))}</button>`}</div>
-    ${cards}`;
+  wrap.innerHTML = cards;
   const nu = wrap.querySelector('.fl-cards');
   if (nu) { nu.scrollLeft = keep.x; nu.querySelectorAll('.fl-list').forEach((l, i) => { l.scrollTop = keep.y[i] || 0; }); }
 }
