@@ -8076,9 +8076,8 @@ async function _srchExec() {
       const airlineHtml = airlineName ? `<span style="font-size:12px;color:var(--dim)"><span data-ext-name="${esc(airlineName)}">${esc(tExternalName(airlineName))}</span>${r.aircraft_type ? `<span style="margin:0 4px;opacity:.4">·</span>${esc(r.aircraft_type)}` : ''}</span>` : '';
       const headerHtml = window.innerWidth < 768
         ? `<div class="srch-fl-header-m">
-            <div class="srch-fl-hm-row1"><span class="srch-fl-rego"><span style="width:40px;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0">${logo || flag || ''}</span>${esc(r.reg)}</span>${badge}</div>
+            <div class="srch-fl-hm-row1"><span class="srch-fl-rego"><span style="width:40px;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0">${logo || flag || ''}</span>${esc(r.reg)}</span>${badge}<span class="srch-fl-hm-sess">${sessionPill}</span></div>
             ${airlineHtml ? `<div class="srch-fl-hm-row2">${airlineHtml}</div>` : ''}
-            <div class="srch-fl-hm-row3">${sessionPill}</div>
           </div>`
         : `<div class="srch-fl-header">
             <span class="srch-fl-rego"><span style="width:40px;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0">${logo || flag || ''}</span>${esc(r.reg)}</span>

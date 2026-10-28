@@ -2416,6 +2416,18 @@
       .fl-cards { gap: 12px; padding-bottom: 6px; }
     }
 
+    /* Search > Catalogue on phones: the card gets the same shaded header as on PC, the sessions pill sits at the right end of the
+       first header row, and every session row keeps the flag and code in one column whatever the date's width */
+    @media (max-width: 767px) {
+      .srch-fl-card .srch-fl-header-m { margin: 0 -12px 0; padding: 12px 12px 10px; background: var(--surface2); border-bottom: 1px solid var(--border); gap: 6px; }
+      .srch-fl-hm-row1 { width: 100%; flex-wrap: wrap; }
+      .srch-fl-hm-sess { margin-left: auto; display: inline-flex; }
+      .srch-fl-row-m .srch-fl-m-row1 { gap: 8px; }
+      .srch-fl-row-m .srch-fl-m-row1 .srch-fl-date { flex: 0 0 84px; }
+      .srch-fl-row-m .srch-fl-m-row1 > :not(.srch-fl-date) { flex: none; }
+      .srch-fl-row-m { padding: 9px 10px; }
+    }
+
     /* inset blocks */
     .bd-eb, .fl-form.fl-inline { border-radius: var(--tile-r); }
     .fl-form.fl-inline { background: var(--surface2); border-color: var(--border); margin: 6px 0; }
