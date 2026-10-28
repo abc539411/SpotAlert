@@ -2629,7 +2629,7 @@ function _detailInner(r, closeCmd, showPhoto = true) {
       ${isMilitary ? `<div style="margin-top:10px;border-top:1px solid var(--border)"></div>${mapSections}` : `<div class="fc-sched${r.flights.length > 2 ? ' flight-bars-scroll' : ''}"${r.flights.length > 2 ? ' style="max-height:290px"' : ''} data-lbl="${esc(tt('Schedule'))}">${flightBars}</div>`}
       <div class="detail-cards">
         ${isMilitary ? '' : `<div class="dc"><span class="lbl">${tt('Last Visit')}</span><span class="val" id="${lazyId}-lastseen" style="color:var(--dim)">—</span></div>`}
-        ${_appRole === 'passenger' ? '' : `<div class="dc"><span class="lbl">${tt('Spotted')}</span><div id="${spotId}" style="margin-top:4px;color:var(--dim);font-size:12px">${tt('Never')}</div></div>`}
+        ${_appRole === 'passenger' ? '' : `<div class="dc"><div class="dc-hd"><span class="lbl">${tt('Spotted')}</span><span class="dc-n" id="${spotId}-n"></span></div><div id="${spotId}" style="margin-top:4px;color:var(--dim);font-size:12px">${tt('Never')}</div></div>`}
       </div>`;
   }
 
@@ -3005,6 +3005,8 @@ async function _loadAircraftDetail(registration, uid, r) {
         const sessions = data.sessions || [];
         if (sessions.length > 0) {
           spotEl.innerHTML = _spotRowsHtml(sessions, registration, r);
+          const nEl = document.getElementById(placeholderId + '-spotted-n');       // right-aligned total, like "Since ..." on the Board's Equipment History
+          if (nEl) nEl.textContent = _lang === 'zh' ? `共 ${sessions.length} 次拍摄` : `${sessions.length} ${sessions.length === 1 ? 'session' : 'sessions'}`;
         } else if (data.last_spotted_ts) {
           const d = new Date(data.last_spotted_ts * 1000);
           const lbl = d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
