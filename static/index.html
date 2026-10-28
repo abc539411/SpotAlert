@@ -931,7 +931,9 @@
     }
     .detail-badges > .fc-actype { font-family: inherit; border-color: var(--border); }
     .detail-badges > .mfr { border-radius: 4px; }
-    .detail-badges + div { margin-top: 9px !important; }   /* breathing space between the badge row and the airline / livery lines (Feed, Board, Spotting) */
+    .detail-badges + div { margin-top: 9px !important; }
+    /* Board: the airline / livery block is always two lines tall, so the four action buttons keep the same gap under "Arr. From" whether or not there is a livery name */
+    .bd-detail .detail-badges + div > div:first-child { min-height: 39px; }   /* breathing space between the badge row and the airline / livery lines (Feed, Board, Spotting) */
     /* the card-type chip is a see-through tint, so give it an outline in its own colour: it then reads as tall as the solid manufacturer pill and the outlined type pill */
     .detail-badges > .chip { border-color: color-mix(in srgb, currentColor 32%, transparent); }
     /* ── Type chips ──────────────────────────────────────────────────────── */
