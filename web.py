@@ -4594,11 +4594,12 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
 
     def _cached_logo_path(icao: str):
         """Return (Path, media_type) for a cached logo, checking both .png and .svg."""
-        base = Path(__file__).parent / "static" / "airline_logos"
-        for ext, mt in (("png", "image/png"), ("svg", "image/svg+xml")):
-            p = base / f"{icao}.{ext}"
-            if p.exists():
-                return p, mt
+        # static/logo_overrides/ is checked into the repo: hand-picked logos that win over the downloaded cache (which a rebuild wipes)
+        for base in (Path(__file__).parent / "static" / "logo_overrides", Path(__file__).parent / "static" / "airline_logos"):
+            for ext, mt in (("png", "image/png"), ("svg", "image/svg+xml")):
+                p = base / f"{icao}.{ext}"
+                if p.exists():
+                    return p, mt
         return None, None
 
     @app.get("/api/airforce-roundel/{country}")
