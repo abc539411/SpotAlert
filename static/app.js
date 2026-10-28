@@ -2957,13 +2957,14 @@ function _spotRowsHtml(sessions, registration, r) {
     const dateLabel = _lang === 'zh' ? `${yr}/${String(d.getMonth() + 1).padStart(2, '0')}/${day}` : `${day} ${mon[d.getMonth()]} '${yr}`;
     const apt = s.airport || '';
     const flag = _flag(_airportCountry(apt), { h: 10 });
+    const aptName = s.airport_name ? (_airportDisplayName(s.airport_name) || apt) : apt;      // shortened name; the code when the airport has none on file
     const notes = (s.notes || '').trim();
     const hl = isLivery && curLivery && notes && notes.toLowerCase() === curLivery;
     const isoDate = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
     const click = _appRole === 'controller' && apt ? ` onclick="_spOpenPhotos('${esc(registration)}','${esc(apt)}','${isoDate}')"` : '';
     return `<div class="bd-trig-row spot-row${hl ? ' is-current' : ''}"${click}>` +
       `<span class="bd-trig-d">${esc(dateLabel)}</span>` +
-      `<span class="bd-trig-reg">${flag}${esc(apt)}</span>` +
+      `<span class="bd-trig-reg" title="${esc(apt)}">${flag}<span class="spot-ap">${esc(aptName)}</span></span>` +
       `<span class="bd-trig-right">${notes ? `<span class="bd-trig-lv">${esc(tLiveryName(notes))}</span>` : ''}</span>` +
       `</div>`;
   }).join('')}</div>`;
@@ -3007,6 +3008,7 @@ async function _loadAircraftDetail(registration, uid, r) {
       if (spotEl) {
         const sessions = data.sessions || [];
         if (sessions.length > 0) {
+          await _translateNamesForZh(sessions.map(x => x.airport_name).filter(Boolean));
           spotEl.innerHTML = _spotRowsHtml(sessions, registration, r);
           const nEl = document.getElementById(placeholderId + '-spotted-n');       // right-aligned total, like "Since ..." on the Board's Equipment History
           if (nEl) nEl.textContent = _lang === 'zh' ? `共 ${sessions.length} 次拍摄` : `${sessions.length} ${sessions.length === 1 ? 'Session' : 'Sessions'}`;

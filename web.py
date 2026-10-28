@@ -1587,8 +1587,16 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                     result["last_spotted_airport"] = apt
                     result["spotted_count"]        = count
                 sessions = catalog.get_all_sessions(registration)
+                _ap_names: dict = {}
+                for _a in {apt for _dt, apt, _c, _n in sessions if apt}:         # airport names for the Spotted rows (airports table only, no lookups)
+                    try:
+                        _inf = store.get_airport_info(_a)
+                        if _inf and _inf[0]:
+                            _ap_names[_a] = _inf[0]
+                    except Exception:
+                        pass
                 result["sessions"] = [
-                    {"ts": int(dt.timestamp()), "airport": apt, "count": cnt, "notes": notes}
+                    {"ts": int(dt.timestamp()), "airport": apt, "airport_name": _ap_names.get(apt, ""), "count": cnt, "notes": notes}
                     for dt, apt, cnt, notes in sessions
                 ]
             except Exception as exc:
