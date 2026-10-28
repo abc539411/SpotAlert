@@ -3911,7 +3911,7 @@ async function bdPossiblePreview(el) {
   body.innerHTML = `
     <img class="sp-photo-img" src="${esc(ac.photo_url)}" alt="" oncontextmenu="return false">
     <span class="sp-photo-close" onclick="_spClosePhotos()"></span>
-    ${_spPhotoInfoHtml({ flag, reg, mfr: badge, type, airline: operator, icao: el.dataset.icao || '', pills: livPill, livery })}`;
+    ${_spPhotoInfoHtml({ flag, reg, mfr: badge, type, airline: operator, icao: el.dataset.icao || '', pills: livPill, livery, loc: '<span class="sp-photo-date">JetPhotos</span>' })}`;
 }
 
 function _bdDetailHtml(r) {
