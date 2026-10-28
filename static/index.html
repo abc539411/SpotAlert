@@ -2136,7 +2136,8 @@
     .sp-photo-left > .sp-photo-pill { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
     .sp-photo-notes { font-size: 11px; color: rgba(255,255,255,0.75); font-style: italic; }
     .sp-photo-line .col-sp-tag { font-size: 10px; padding: 0 6px; }
-    .sp-photo-right > .sp-photo-line { justify-content: flex-end; }
+    /* the place / date pill has 8px of padding inside it; give the livery line the same, so both white texts end on one line */
+    .sp-photo-right > .sp-photo-line { justify-content: flex-end; padding-right: 8px; }
 
     @media (min-width: 768px) {
       .sp-photo-rego { font-size: 16px; padding: 4px 10px; }
@@ -2151,6 +2152,7 @@
       .sp-photo-top .sp-photo-line > *, .sp-photo-right > .sp-photo-line > * { height: 22px; line-height: 20px; }
       .sp-photo-top .sp-photo-pill { font-size: 13px; padding: 0 9px; }
       .sp-photo-pill, .sp-photo-date { font-size: 14px; padding: 0 11px; }
+      .sp-photo-right > .sp-photo-line { padding-right: 11px; }
       .sp-photo-notes { font-size: 14px; }
       .sp-photo-line .col-sp-tag { font-size: 11px; padding: 0 6px; }
       .sp-photo-close { width: 36px; height: 36px; font-size: 24px; }
