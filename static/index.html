@@ -2387,6 +2387,7 @@
          Flown's left edge and cards are Flown's width */
       .flt-wrap { padding: 10px 14px 12px max(14px, calc((100% - 1100px) / 2 + 14px)); align-items: stretch; }
       .flt-card { width: 502px; height: 100%; }
+      .flt-wrap:has(> .flt-empty) { padding: 10px 14px 12px; }      /* empty states (no airlines yet / no catalog) stay centred on the page */
     }
     /* Fleet, expanded type group: Flown-style rows instead of rounded pills (green dot = you have it, amber = watched) */
     .flt-pill-wrap { gap: 0; padding: 0 12px 6px; }
