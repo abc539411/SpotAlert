@@ -2962,7 +2962,6 @@ function _spotRowsHtml(sessions, registration, r) {
     return `<div class="bd-trig-row spot-row${hl ? ' is-current' : ''}"${click}>` +
       `<span class="bd-trig-d">${esc(dateLabel)}</span>` +
       `<span class="bd-trig-reg">${flag}${esc(apt)}</span>` +
-      `<span class="bd-trig-n">${s.count}x</span>` +
       `<span class="bd-trig-right">${notes ? `<span class="bd-trig-lv">${esc(tLiveryName(notes))}</span>` : ''}</span>` +
       `</div>`;
   }).join('')}</div>`;
