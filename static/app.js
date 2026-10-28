@@ -1032,7 +1032,7 @@ async function _authBoot() {
   ` : '';
   $('header-whoami').innerHTML = me.user.username ? `
     ${_airportHtml}
-    <span class="header-whoami-who"><span class="hw-top hw-label">${tt('Logged in as:')}</span><span class="hw-sub"><span class="header-whoami-user">${esc(me.user.username)}</span><span class="picker-role-pill role-${esc(_role)}">${esc(tRole(_role))}</span></span></span>
+    <span class="header-whoami-who"><span class="hw-top hw-label">${tt('Logged in as:').replace(/[:：]\s*$/, '')}</span><span class="hw-sub"><span class="header-whoami-user">${esc(me.user.username)}</span><span class="picker-role-pill role-${esc(_role)}">${esc(tRole(_role))}</span></span></span>
   ` : '';
   // Mobile counterpart of the desktop time above (that block is display:none under 768px):
   // a compact flag + IATA + time chip on the header's free left side.
