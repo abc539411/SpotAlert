@@ -2936,9 +2936,9 @@ function _buildRecDetail(el, compact) {
         <a class="rego" href="${_fr24AircraftUrl(f.registration)}" target="_blank" rel="noopener">${esc(f.registration || '')}</a>
         ${compact ? _flag(_regoCountryCode(f.registration), { h: 17, vab: -8 }) : _flag(_regoCountryCode(f.registration), { h: 26, vab: -13 })}
       </div>
-      <div style="display:flex;align-items:center;gap:10px">${flightLink}${statusPill}</div>
+      <div style="display:flex;align-items:center;gap:10px">${statusPill}</div>
     </div>
-    <div class="detail-badges" style="margin-top:9px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">${chips}${acType ? `<span class="fc-actype">${esc(acType)}</span>` : ''}</div>
+    <div class="detail-badges" style="margin-top:9px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">${chips}${acType ? `<span class="fc-actype">${esc(acType)}</span>` : ''}${flightLink ? `<span style="margin-left:auto">${flightLink}</span>` : ''}</div>
     <div style="margin-top:4px">${airlineLine}${liveryLine}</div>
     ${reasonsHtml}
   </div>`;
@@ -3950,10 +3950,10 @@ function _bdDetailHtml(r) {
           <a class="rego" style="font-size:20px;font-weight:700;color:var(--text);text-decoration:none;letter-spacing:.01em" href="${_fr24AircraftUrl(r.registration)}" target="_blank" rel="noopener">${esc(r.registration)}</a>
           ${_flag(_regoCountryCode(r.registration), { h: 26, vab: -13 })}
         </div>
-        <div style="display:flex;align-items:center;gap:10px">${from}${statusPill}</div>
+        <div style="display:flex;align-items:center;gap:10px">${statusPill}</div>
       </div>
       <div class="detail-badges" style="margin-top:9px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">
-        ${chips}${mfrBadge(ac.manufacturer)}${(r.aircraft_type || typeCode) ? `<span class="fc-actype">${esc(r.aircraft_type || typeCode)}</span>` : ''}
+        ${chips}${mfrBadge(ac.manufacturer)}${(r.aircraft_type || typeCode) ? `<span class="fc-actype">${esc(r.aircraft_type || typeCode)}</span>` : ''}${from ? `<span style="margin-left:auto">${from}</span>` : ''}
       </div>
       <div style="margin-top:4px;display:flex;justify-content:space-between;align-items:flex-end;gap:8px">
         <div style="min-width:0;flex:1">
