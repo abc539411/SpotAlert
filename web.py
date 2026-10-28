@@ -3991,6 +3991,8 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
     # ── Flown (Collection > Flown): the flights this user has actually been on ───────────────────────────────────
     # Per user (control.db), imported from a MyFR24 or Flighty CSV and editable by hand. Same roles as Collection.
     _flown_maps: dict = {}
+    _FLOWN_EXTRA_AIRLINES = {"KA": "HDA"}      # Cathay Dragon
+
 
     def _flown_airline_maps():
         """(iata->icao, icao->iata) airline codes, learned from the airframes table (most common pairing wins)."""
@@ -4006,17 +4008,21 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                         c2i[r[1].upper()] = r[0].upper()
             except Exception as exc:
                 log.debug("Flown: airline code map unavailable: %s", exc)
+            for iata, icao in _FLOWN_EXTRA_AIRLINES.items():          # airlines that no longer fly, so the airframes table has no pairing
+                i2c.setdefault(iata, icao)
+                c2i.setdefault(icao, iata)
             _flown_maps["i2c"], _flown_maps["c2i"] = i2c, c2i
         return _flown_maps["i2c"], _flown_maps["c2i"]
 
     def _flown_payload(user_id: str) -> dict:
         rows = app.state.control_store.flown_list(user_id)
+        i2c, _c2i = _flown_airline_maps()
         out = []
         for r in rows:
             out.append({"id": r["id"], "date": r["flight_date"], "flight_number": _flown.display_flight_number(
                             {"airline_iata": r["airline_iata"], "airline_icao": r["airline_icao"], "number": r["number"]}),
                         "number": r["number"], "airline_name": r["airline_name"], "airline_iata": r["airline_iata"],
-                        "airline_icao": r["airline_icao"], "from_iata": r["from_iata"], "to_iata": r["to_iata"],
+                        "airline_icao": r["airline_icao"] or i2c.get(r["airline_iata"], ""), "from_iata": r["from_iata"], "to_iata": r["to_iata"],
                         "type_name": r["type_name"], "type_code": r["type_code"], "registration": r["registration"],
                         "seat": r["seat"], "note": r["note"], "source": r["source"], "edited": bool(r["edited"])})
         regs = {r["registration"] for r in out if r["registration"]}

@@ -5726,7 +5726,7 @@ function _flagEmoji(cc, h = 16) {
   return `<img src="https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/svg/${code}.svg" style="height:${h}px;width:auto;vertical-align:middle;flex-shrink:0">`;
 }
 
-const _LOGO_V = 9;  // bump to bust SW logo cache when server-side logic changes
+const _LOGO_V = 10;  // bump to bust SW logo cache when server-side logic changes
 function _airlineLogoByIcao(icao, size = 28, fallbackName = '') {
   if (!icao && !fallbackName) return '';
   const src = icao
