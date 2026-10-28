@@ -5474,9 +5474,24 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                     n_ = 0
                 _board_spot_cache[k] = (time.time(), n_)
                 return n_
+            _cat_all = app.state.get_user_catalog(user)         # for the "Nx" pill: sessions the aircraft was spotted in, any airport
+            def _sessions_n(reg_):
+                if not _cat_all:
+                    return 0
+                k = (_owner_id(user), reg_)
+                hit_ = _board_sess_cache.get(k)
+                if hit_ and time.time() - hit_[0] < 300:
+                    return hit_[1]
+                try:
+                    n_ = len(_cat_all.get_all_sessions(reg_) or [])
+                except Exception:
+                    n_ = 0
+                _board_sess_cache[k] = (time.time(), n_)
+                return n_
             for o in by_off.values():
                 for row in o["rows"]:
                     for t in row.get("past_triggers", []):
+                        t["sessions"] = _sessions_n(t["registration"])
                         t["last_seen_ts"] = _seen.get(t["registration"]) or t["ts"]
                         t["count"] = max(_visits.get(t["registration"], 0), t["count"])
                         liv_ = t["extra_info"] if "Special Livery" in (t["card_types"] or []) else ""
@@ -5575,6 +5590,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
     # (and these aircraft usually never triggered a card, so nothing is cached in airframes yet) — cache the
     # answer per registration for an hour so re-opening / the 60 s refresh never re-hits FR24.
     _board_spot_cache: dict = {}      # (airport, owner, reg, livery) -> (ts, Lightroom session count)
+    _board_sess_cache: dict = {}      # (owner, reg) -> (ts, how many sessions this aircraft was ever photographed in)
 
     def _board_aircraft_info(cfg_, registration: str) -> dict:
         """Everything the Board's expanded row shows about one aircraft, read ONLY from what the normal cycle already

@@ -334,6 +334,7 @@ function tDaysAgo(n) {
 // numerous/one-off each to justify their own named helper. Looked up by the
 // literal English string itself rather than a semantic key.
 const UI_ZH = {
+  'Spotting sessions': '拍摄次数',
   'Schedule': '航班时刻',
   'Flown': '乘机',
   '✈ Add to Home Screen in Safari to enable push notifications.': '✈ 在 Safari 中添加到主屏幕以启用推送通知。',
@@ -3990,8 +3991,17 @@ function _bdDetailHtml(r) {
   // Every aircraft that has triggered a card on this flight number (3-year history) — the "possibilities".
   let triggers = '';
   if ((r.past_triggers || []).length) {
+    // The aircraft assigned to THIS flight is listed too when it has never triggered a card on this flight number
+    // (only on this flight's own row: nothing is stored)
+    let rows = r.past_triggers;
+    if (r.registration && !rows.some(t => t.registration === r.registration)) {
+      const cur = (r.kind && r.card_types) || [];
+      rows = [{ registration: r.registration, last_seen_ts: (ac && ac.last_seen_ts) || Math.floor(Date.now() / 1000), ts: Math.floor(Date.now() / 1000),
+                card_types: cur, extra_info: r.extra_info || '', aircraft_type: r.aircraft_type || '', count: 0,
+                sessions: ((_bdSp[r.registration] && _bdSp[r.registration].sessions) || []).length }, ...rows];
+    }
     triggers = `<div class="bd-sec-t" style="border-top:1px solid var(--border);padding-top:12px">${esc(tt('Possible Equipment'))}</div>` +
-      `<div class="bd-trig">${r.past_triggers.map(t => {
+      `<div class="bd-trig">${rows.map(t => {
         const chips = (t.card_types || []).map(c => `<span class="chip ${chipClass(c)}">${esc(chipLabel(c))}</span>`).join('');
         const lv = (t.card_types || []).includes('Special Livery') && t.extra_info ? `<span class="bd-trig-lv">${esc(tLiveryName(t.extra_info))}</span>` : '';
         // Rare-plane triggers: which type it was (that is what made it rare).
@@ -4002,6 +4012,7 @@ function _bdDetailHtml(r) {
         return `<div class="bd-trig-row${t.excluded ? ' is-excl' : ''}${t.registration === r.registration ? ' is-current' : ''}${t.over_spotted ? ' is-shot' : ''}" data-reg="${esc(t.registration)}" data-last="${t.last_seen_ts || t.ts || 0}" data-type="${esc(t.aircraft_type || '')}" data-livery="${esc(((t.card_types || []).includes('Special Livery') && t.extra_info) ? t.extra_info : '')}" onclick="bdPossiblePreview(this)" title="${esc([t.excluded ? tt('Hidden from Feed by the Exclusion List') : '', t.over_spotted ? `${tt('Already photographed')} ${t.spotted}×` : ''].filter(Boolean).join(' · '))}">` +
           `<span class="bd-trig-d">${esc(ago)}</span>` +
           `<a href="${_fr24AircraftUrl(t.registration)}" target="_blank" rel="noopener" class="bd-trig-reg">${_flag(_regoCountryCode(t.registration), { h: 10 })}${esc(t.registration)}</a>` +
+          (t.sessions > 0 ? `<span class="bd-trig-n" title="${esc(tt('Spotting sessions'))}">${t.sessions}x</span>` : '') +
           `<span class="bd-trig-right">${lv}${rareType}<span class="bd-trig-chips">${chips}</span></span></div>`;
       }).join('')}</div>`;
   }
@@ -4012,7 +4023,6 @@ function _bdDetailHtml(r) {
     ${facts.trim() ? `<div class="bd-facts" style="margin-top:10px">${facts}</div>` : ''}
     <div class="bd-sec-t" style="border-top:1px solid var(--border);padding-top:12px;display:flex;justify-content:space-between;gap:8px"><span>${esc(tt('Equipment History'))}</span><span style="text-transform:none;letter-spacing:0">${esc(Array.isArray(eq) ? _eqSinceLabel(eq) : '')}</span></div>
     <div class="srch-fl-rows" style="margin-top:0">${hist}</div>
-    ${spotted}
     ${triggers}
   </div>`;
 }
