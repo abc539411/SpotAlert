@@ -890,6 +890,9 @@
       .bd-row { grid-template-columns: 62px minmax(0, 1fr) auto; gap: 8px; padding: 9px 10px; }
     }
     /* ── Route bar ───────────────────────────────────────────────────────── */
+    /* the small grey "Schedule" label that sits under the first divider, above the arrival / departure bars */
+    .fc-sched::before { content: attr(data-lbl); display: block; margin-top: 10px; padding-top: 12px; border-top: 1px solid var(--border); font-size: 10px; letter-spacing: .07em; text-transform: uppercase; color: var(--dim); }
+    .fc-sched > .rb:first-child { border-top: none; margin-top: 0; padding-top: 6px; }
     .rb { display: flex; align-items: flex-start; margin: 10px 0 0; padding: 12px 0; border-top: 1px solid var(--border); }
     .flight-bars-scroll { overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
     .flight-bars-scroll::-webkit-scrollbar { width: 4px; }

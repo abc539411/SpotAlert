@@ -334,6 +334,7 @@ function tDaysAgo(n) {
 // numerous/one-off each to justify their own named helper. Looked up by the
 // literal English string itself rather than a semantic key.
 const UI_ZH = {
+  'Schedule': '航班时刻',
   'Flown': '乘机',
   '✈ Add to Home Screen in Safari to enable push notifications.': '✈ 在 Safari 中添加到主屏幕以启用推送通知。',
   '✈ Install SpotAlert for quick access and notifications.': '✈ 安装 SpotAlert 以便快速访问并接收通知。',
@@ -2624,7 +2625,7 @@ function _detailInner(r, closeCmd, showPhoto = true) {
         </div>
         ${_detailQuickFilterBtns(r.registration, _manualRemoveBtn(r))}
       </div>
-      ${isMilitary ? `<div style="margin-top:10px;border-top:1px solid var(--border)"></div>${mapSections}` : `<div${r.flights.length > 2 ? ' class="flight-bars-scroll" style="max-height:290px"' : ''}>${flightBars}</div>`}
+      ${isMilitary ? `<div style="margin-top:10px;border-top:1px solid var(--border)"></div>${mapSections}` : `<div class="fc-sched${r.flights.length > 2 ? ' flight-bars-scroll' : ''}"${r.flights.length > 2 ? ' style="max-height:290px"' : ''} data-lbl="${esc(tt('Schedule'))}">${flightBars}</div>`}
       <div class="detail-cards">
         ${isMilitary ? '' : `<div class="dc"><span class="lbl">${tt('Last Visit')}</span><span class="val" id="${lazyId}-lastseen" style="color:var(--dim)">—</span></div>`}
         ${_appRole === 'passenger' ? '' : `<div class="dc"><span class="lbl">${tt('Spotted')}</span><div id="${spotId}" style="margin-top:4px;color:var(--dim);font-size:12px">${tt('Never')}</div></div>`}
