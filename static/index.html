@@ -2297,6 +2297,10 @@
     .srch-fl-card { padding: 0 12px 6px; gap: 0; }
     .srch-fl-header { margin: 0 -12px 2px; padding: 8px 12px; background: var(--surface2); border-bottom: 1px solid var(--border); }
 
+    /* Search > Last Seen: a card with no rows under its header is a single-row card, so no shaded header, divider or empty body */
+    .srch-fl-card:not(:has(.srch-fl-row)) { padding: 10px 12px; }
+    .srch-fl-card:not(:has(.srch-fl-row)) .srch-fl-header { margin: 0; padding: 0; background: none; border-bottom: none; }
+    .srch-fl-card:not(:has(.srch-fl-row)) .srch-fl-rows { display: none; }
     /* Search result sessions: the same rounded rows as Spotted on the Feed card and the Board */
     .srch-fl-card { padding-bottom: 10px; }
     .srch-fl-rows { gap: 6px; margin-top: 4px; padding-top: 4px; }
