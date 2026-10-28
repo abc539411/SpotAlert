@@ -1723,7 +1723,8 @@
     .fl-list::-webkit-scrollbar { width: 4px; }
     .fl-list::-webkit-scrollbar-track { background: transparent; }
     .fl-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
-    .fl-year { position: sticky; top: 0; z-index: 2; background: var(--surface); padding: 10px 2px 5px; font-size: 12px; font-weight: 600; color: var(--dim); display: flex; align-items: center; gap: 7px; }
+    .fl-year { position: sticky; top: 0; z-index: 2; background: var(--surface); padding: 12px 2px 6px; margin-top: 6px; border-top: 1px solid color-mix(in srgb, var(--text) 24%, transparent); font-size: 12px; font-weight: 600; color: var(--dim); display: flex; align-items: center; gap: 7px; }
+    .fl-list > .fl-year:first-child { border-top: none; margin-top: 0; }
     .fl-fold { cursor: pointer; user-select: none; }
     .fl-fold:hover { color: var(--text); }
     .fl-arrow { display: inline-block; width: 12px; font-size: 11px; color: var(--dim); }
