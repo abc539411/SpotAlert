@@ -2977,6 +2977,31 @@ return sessions.map(s => {
   }).join('');
 }
 
+// The Feed card's Spotted sessions as rows, laid out like the Board's Possible Equipment list:
+// date, airport (flag + code), photo count, and the session's livery note on the right
+function _spotRowsHtml(sessions, registration, r) {
+  const isLivery = (r.notif_types || []).includes('Special Livery');
+  const curLivery = (r.extra_info || '').trim().toLowerCase();
+  const mon = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  return `<div class="bd-trig">${sessions.map(s => {
+    const d = new Date(s.ts * 1000);
+    const day = String(d.getDate()).padStart(2, '0'), yr = String(d.getFullYear()).slice(2);
+    const dateLabel = _lang === 'zh' ? `${yr}/${String(d.getMonth() + 1).padStart(2, '0')}/${day}` : `${day} ${mon[d.getMonth()]} '${yr}`;
+    const apt = s.airport || '';
+    const flag = _flag(_airportCountry(apt), { h: 10 });
+    const notes = (s.notes || '').trim();
+    const hl = isLivery && curLivery && notes && notes.toLowerCase() === curLivery;
+    const isoDate = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const click = _appRole === 'controller' && apt ? ` onclick="_spOpenPhotos('${esc(registration)}','${esc(apt)}','${isoDate}')"` : '';
+    return `<div class="bd-trig-row${hl ? ' is-current' : ''}"${click}>` +
+      `<span class="bd-trig-d">${esc(dateLabel)}</span>` +
+      `<span class="bd-trig-reg">${flag}${esc(apt)}</span>` +
+      `<span class="bd-trig-n">${s.count}</span>` +
+      `<span class="bd-trig-right">${notes ? `<span class="bd-trig-lv">${esc(tLiveryName(notes))}</span>` : ''}</span>` +
+      `</div>`;
+  }).join('')}</div>`;
+}
+
 async function _loadAircraftDetail(registration, uid, r) {
   const placeholderId = `detail-lazy-${uid}`;
   // Military cards: the flag next to the registration can't be reliably
@@ -3013,8 +3038,7 @@ async function _loadAircraftDetail(registration, uid, r) {
       if (spotEl) {
         const sessions = data.sessions || [];
         if (sessions.length > 0) {
-          const pills = _spotPillsHtml(sessions, registration, r);
-          spotEl.innerHTML = `<div class="col-ex-pills" style="padding:0">${pills}</div>`;
+          spotEl.innerHTML = _spotRowsHtml(sessions, registration, r);
         } else if (data.last_spotted_ts) {
           const d = new Date(data.last_spotted_ts * 1000);
           const lbl = d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
