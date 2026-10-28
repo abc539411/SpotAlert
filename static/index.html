@@ -2371,14 +2371,16 @@
 
     /* Fleet card: type groups look like Flown's year / airline groups: roomier arrow, rounded count pill right after the name,
        header stays at the top of the list while its rows scroll */
-    .flt-type-hd { position: sticky; top: 0; z-index: 2; background: var(--surface); padding: 10px 12px 6px; gap: 6px; }
+    /* the list is padded like Flown's, so the group dividers stop short of the card edges and a header is just its text row
+       (hover changes the text colour, not a full-width bar) */
+    .flt-ac-list { padding-left: 10px; padding-right: 10px; }
+    .flt-type-hd { position: sticky; top: 0; z-index: 2; background: var(--surface); padding: 10px 2px 6px; gap: 6px; }
     .flt-type-hd:first-child { padding-top: 10px; }
-    .flt-type-hd:hover { background: var(--surface2); }
+    .flt-type-hd:hover { background: var(--surface); }
+    .flt-type-hd:hover .flt-type-hd-name { color: var(--text); }
     .flt-type-arrow { width: 12px; font-size: 11px; }
     .flt-type-hd-name { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .flt-type-count { background: var(--surface2); border-radius: 999px; padding: 0 7px; font-size: 11px; font-weight: 600; line-height: 16px; margin-left: 1px; }
-    .flt-type-hd:hover .flt-type-count { background: var(--surface); }
-    .flt-pill-wrap { padding-left: 12px; padding-right: 12px; }
 
     /* Fleet, PC: same footprint as Flown. Two cards fill the same 1100px column from the left edge (room left for the + column);
        a third card and beyond scroll sideways as before. */
@@ -2390,7 +2392,7 @@
       .flt-wrap:has(> .flt-empty) { padding: 10px 14px 12px; }      /* empty states (no airlines yet / no catalog) stay centred on the page */
     }
     /* Fleet, expanded type group: Flown-style rows instead of rounded pills (green dot = you have it, amber = watched) */
-    .flt-pill-wrap { gap: 0; padding: 0 12px 6px; }
+    .flt-pill-wrap { gap: 0; padding: 0 2px 6px; }
     .flt-pill-wrap > .flt-rego-pill { border: none; border-top: 1px solid var(--border); border-radius: 0; background: transparent; padding: 8px 2px; gap: 8px; font-size: 13px; font-weight: 700; }
     .flt-pill-wrap > .flt-rego-pill:first-child { border-top: none; }
     .flt-pill-wrap > .flt-pill--have::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--success); flex: none; }
