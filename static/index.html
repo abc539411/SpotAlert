@@ -2321,6 +2321,8 @@
     .detail-cards > .dc:first-child { border-top: none; padding-top: 0; }
     .bd-facts > .dc { border-top: none; padding-top: 0; }
     .bd-trig-row { border-radius: 7px; }
+    /* Possible Equipment: the "N days" column is right-aligned, so the numbers end on one line (Feed's Spotted dates keep their own layout) */
+    .bd-trig-row:not(.spot-row) .bd-trig-d { text-align: right; min-width: 62px; }
     .bd-trig-n { background: var(--surface); }
     /* Feed card > Spotted: fixed columns so date, airport and count line up in every row; scrolls after about six rows */
     .spot-list { max-height: 224px; overflow-y: auto; padding-right: 4px; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
