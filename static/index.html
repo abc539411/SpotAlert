@@ -2410,6 +2410,12 @@
     /* count pills sit at the right edge of the group header (Fleet and Flown) */
     .flt-type-count, .fl-group-n { margin-left: auto; }
 
+    /* Flown on phones: the same card footprint as a Fleet card (6px from the screen edges, same top and bottom, 12px between pages) */
+    @media (max-width: 767px) {
+      .fl-wrap { padding: 6px 6px 0; }
+      .fl-cards { gap: 12px; padding-bottom: 6px; }
+    }
+
     /* inset blocks */
     .bd-eb, .fl-form.fl-inline { border-radius: var(--tile-r); }
     .fl-form.fl-inline { background: var(--surface2); border-color: var(--border); margin: 6px 0; }
