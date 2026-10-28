@@ -2943,41 +2943,6 @@ function _buildRecDetail(el, compact) {
   </div>`;
 }
 
-// Lightroom "Spotted" session pills (airport · date · photo count) — shared by the Feed card and the Board row.
-function _spotPillsHtml(sessions, registration, r) {
-  const isLivery = (r.notif_types || []).includes('Special Livery');
-  const curLivery = (r.extra_info || '').trim().toLowerCase();
-return sessions.map(s => {
-    const d   = new Date(s.ts * 1000);
-    const mon = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getMonth()];
-    const yr  = String(d.getFullYear()).slice(2);
-    const day = String(d.getDate()).padStart(2,'0');
-    const dateLabel = _lang === 'zh'
-      ? `${yr}/${String(d.getMonth()+1).padStart(2,'0')}/${day}`
-      : `${day} ${mon} '${yr}`;
-    const apt = s.airport || '';
-    const cc  = _airportCountry(apt);
-    const flag = _flag(cc, { h: 11, vab: -1 });
-    const codePart = flag
-      ? `<span style="display:inline-flex;align-items:center;gap:3px">${flag}${esc(apt)}</span>`
-      : esc(apt);
-    const sesNotes = (s.notes || '').trim().toLowerCase();
-    const hl = isLivery && curLivery && sesNotes && sesNotes === curLivery;
-    const isoDate = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-    const clickable = _appRole === 'controller' && apt;
-    const clickAttrs = clickable
-      ? ` class="col-ex-pill${hl ? ' col-ex-pill-hl' : ''} col-ex-pill-clickable" onclick="_spOpenPhotos('${esc(registration)}','${esc(apt)}','${isoDate}')"`
-      : ` class="col-ex-pill${hl ? ' col-ex-pill-hl' : ''}"`;
-    return `<span${clickAttrs}>` +
-      `<span class="col-ex-pill-code">${codePart}</span>` +
-      `<span class="col-ex-pill-sep"></span>` +
-      `<span class="col-ex-pill-count" style="color:var(--text)">${dateLabel}</span>` +
-      `<span class="col-ex-pill-sep"></span>` +
-      `<span class="col-ex-pill-count">${s.count}</span>` +
-      `</span>`;
-  }).join('');
-}
-
 // The Feed card's Spotted sessions as rows, laid out like the Board's Possible Equipment list:
 // date, airport (flag + code), photo count, and the session's livery note on the right
 function _spotRowsHtml(sessions, registration, r) {
@@ -3956,7 +3921,7 @@ function _bdDetailHtml(r) {
       const sess = sp.sessions || [];
       // Same section style as Possible Equipment: divider + small caps title, then the Lightroom session pills.
       spotted = `<div class="bd-sec-t" style="border-top:1px solid var(--border);padding-top:12px">${esc(tt('Spotted'))}</div>` + (sess.length
-        ? `<div class="col-ex-pills" style="padding:0">${_spotPillsHtml(sess, r.registration, { notif_types: r.card_types || [], extra_info: r.extra_info || '' })}</div>`
+        ? _spotRowsHtml(sess, r.registration, { notif_types: r.card_types || [], extra_info: r.extra_info || '' })
         : `<div style="color:var(--dim);font-size:12px">${esc(tt('Never'))}</div>`);
     }
     const sameAsOperator = ac.owner && ac.operator && ac.owner.toLowerCase() === ac.operator.toLowerCase();
