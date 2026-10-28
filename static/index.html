@@ -2288,12 +2288,13 @@
     .srch-fl-card { padding: 0 12px 6px; gap: 0; }
     .srch-fl-header { margin: 0 -12px 2px; padding: 8px 12px; background: var(--surface2); border-bottom: 1px solid var(--border); }
 
-    /* rows: separated by a faint line instead of boxes */
-    .srch-fl-rows { gap: 0; margin-top: 0; }
-    .srch-fl-row { background: transparent; border: none; border-top: 1px solid var(--border); border-radius: 0; padding: 8px 2px; }
-    .srch-fl-rows > .srch-fl-row:first-child { border-top: none; }
-    .srch-fl-rows { padding-top: 8px; }
-    .srch-fl-row[style*="gradient"] { border-top: none; border-radius: 6px; margin-top: 3px; padding: 7px 8px; }   /* Route Equipment: the row is a usage bar, so it stays a filled block */
+    /* Search result sessions: the same rounded rows as Spotted on the Feed card and the Board */
+    .srch-fl-card { padding-bottom: 10px; }
+    .srch-fl-rows { gap: 6px; margin-top: 4px; padding-top: 4px; }
+    .srch-fl-row { background: var(--surface2); border: 1px solid var(--border); border-radius: 7px; padding: 6px 10px; }
+    .srch-fl-row-clickable { border-radius: 7px; }
+    .srch-fl-row[style*="gradient"] { border-radius: 7px; margin-top: 0; padding: 7px 10px; }   /* Route Equipment: the row is a usage bar, so its fill stays */
+    /* rows: separated by a faint line instead of boxes (Flown) */
     .fl-row { border: none; border-top: 1px solid var(--border); border-radius: 0; margin: 0; padding: 9px 2px; background: transparent; }
     .fl-year + .fl-row { border-top: none; }
     .fl-row.act:hover { background: var(--surface2); border-color: var(--border); }
