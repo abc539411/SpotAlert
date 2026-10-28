@@ -5112,6 +5112,9 @@ function _flownDate(iso) {
 function flownToggleFold(key) { if (_flownFold.has(key)) _flownFold.delete(key); else _flownFold.add(key); flownRender(); }
 function flownToggleAc(reg) { if (_flownOpenAc.has(reg)) _flownOpenAc.delete(reg); else _flownOpenAc.add(reg); flownRender(); }
 
+// Aircraft type is shown as its ICAO code (B738); rows that only have a name keep the name, and the "()" placeholder shows nothing
+function _flownType(f) { const n = f.type_name === '()' ? '' : (f.type_name || ''); return f.type_code || n; }
+
 function _flownGroupHead(key, title, count) {
   const open = !_flownFold.has(key);
   return `<div class="fl-year fl-fold" onclick="flownToggleFold('${esc(key)}')"><span class="fl-arrow">${open ? '▾' : '▸'}</span>${esc(title)}<span class="fl-group-n">${count}</span></div>`;
@@ -5138,7 +5141,7 @@ function flownRender() {
       const f0 = fl[0];                                  // flights are newest first
       const key = f0.airline_icao || f0.airline_iata || '?';
       const g = groups[key] = groups[key] || { key, title: names[key] || (key === '?' ? _flz('Unknown airline', '未知航司') : key), items: [] };
-      g.items.push({ reg, fl, last: f0.date, n: fl.length, type: f0.type_name || f0.type_code || '' });
+      g.items.push({ reg, fl, last: f0.date, n: fl.length, type: _flownType(f0) });
     });
     const list = Object.values(groups).sort((a, b) => b.items.length - a.items.length || a.title.localeCompare(b.title));
     body = list.map(g => {
@@ -5168,7 +5171,7 @@ function flownRender() {
         if (_flownFold.has(fk)) return head;
         return head + g.items.map(f => {
           const route = f.from_iata || f.to_iata ? `${esc(f.from_iata || '?')} → ${esc(f.to_iata || '?')}` : '';
-          const sub = [f.airline_name, f.type_name || f.type_code].filter(Boolean).join(' · ');
+          const sub = [f.airline_name, _flownType(f)].filter(Boolean).join(' · ');
           const reg = f.registration ? `${_flag(_regoCountryCode(f.registration), { h: 11 })}${esc(f.registration)}`
             : (_flownEdit ? `<span class="fl-noreg">+ ${esc(_flz('rego', '注册号'))}</span>` : `<span class="fl-sub">—</span>`);
           if (_flownEdit && _flownEditId === f.id) return _flownForm(f);
@@ -5210,7 +5213,7 @@ function _flownForm(f) {
       <label>${esc(_flz('From (IATA)', '出发（IATA）'))}<input id="fl-from" value="${v('from_iata')}" placeholder="SYD" maxlength="3" autocapitalize="characters"></label>
       <label>${esc(_flz('To (IATA)', '到达（IATA）'))}<input id="fl-to" value="${v('to_iata')}" placeholder="MEL" maxlength="3" autocapitalize="characters"></label>
       <label>${esc(_flz('Registration', '注册号'))}<input id="fl-reg" value="${v('registration')}" placeholder="VH-VXZ" autocapitalize="characters"></label>
-      <label>${esc(_flz('Aircraft type', '机型'))}<input id="fl-type" value="${esc(f ? (f.type_name || f.type_code || '') : '')}" placeholder="Boeing 737-800"></label>
+      <label>${esc(_flz('Aircraft type (ICAO)', '机型（ICAO）'))}<input id="fl-type" value="${esc(f ? _flownType(f) : '')}" placeholder="B738"></label>
     </div>
     <div class="fl-err" id="fl-err"></div>
     <div class="fl-actions">
@@ -5235,7 +5238,9 @@ async function flownSave(id) {
   const body = { date: $('fl-date').value, flight_number: $('fl-fn').value, from_iata: $('fl-from').value, to_iata: $('fl-to').value,
                  registration: $('fl-reg').value, type_name: t };
   const old = id ? (_flown.flights || []).find(x => x.id === id) : null;
-  if (old) { body.airline_name = old.airline_name; body.seat = old.seat; body.note = old.note; if (old.type_name === t || old.type_code === t) { body.type_name = old.type_name; body.type_code = old.type_code; } }
+  if (/^[A-Za-z0-9]{3,4}$/.test(t)) { body.type_code = t.toUpperCase(); body.type_name = old && old.type_code === body.type_code ? old.type_name : ''; }
+  else if (old && old.type_name === t) { body.type_name = old.type_name; body.type_code = old.type_code; }
+  if (old) { body.airline_name = old.airline_name; body.seat = old.seat; body.note = old.note; }
   try {
     await api(id ? `/flown/${id}` : '/flown', { method: id ? 'PUT' : 'POST', body: JSON.stringify(body) });
   } catch (e) {
