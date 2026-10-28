@@ -2278,7 +2278,9 @@
     .fl-row { border: none; border-top: 1px solid var(--border); border-radius: 0; margin: 0; padding: 9px 2px; background: transparent; }
     .fl-year + .fl-row { border-top: none; }
     .fl-row.act:hover { background: var(--surface2); border-color: var(--border); }
-    .fl-year + .fl-year { border-top: 1px solid var(--border); }
+    .fl-year { border-top: 1px solid var(--border); }              /* a group header always has its line above it, so an open group is closed off by the next header's line */
+    .fl-list > .fl-year:first-child { border-top: none; }
+    .fl-card:first-child .fl-row { border-top-color: color-mix(in srgb, var(--border) 50%, transparent); }   /* the lines between flights are fainter than the group lines */
 
     /* inset blocks */
     .dc, .bd-eb, .fl-form.fl-inline { border-radius: var(--tile-r); }
