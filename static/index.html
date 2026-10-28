@@ -2422,6 +2422,8 @@
       .srch-fl-card .srch-fl-header-m { margin: 0 -12px 0; padding: 12px 12px 10px; background: var(--surface2); border-bottom: 1px solid var(--border); gap: 6px; }
       .srch-fl-hm-row1 { width: 100%; flex-wrap: wrap; }
       .srch-fl-hm-sess { margin-left: auto; display: inline-flex; }
+      /* the airline logo sits at the left of its slot, so the grey airline line below starts exactly where the logo does */
+      .srch-fl-header-m .srch-fl-rego > span:first-child { justify-content: flex-start !important; }
       .srch-fl-row-m .srch-fl-m-row1 { gap: 8px; }
       .srch-fl-row-m .srch-fl-m-row1 .srch-fl-date { flex: 0 0 84px; }
       .srch-fl-row-m .srch-fl-m-row1 > :not(.srch-fl-date) { flex: none; }
