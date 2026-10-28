@@ -334,7 +334,7 @@ function tDaysAgo(n) {
 // numerous/one-off each to justify their own named helper. Looked up by the
 // literal English string itself rather than a semantic key.
 const UI_ZH = {
-  'Past 3 years': '近三年',
+  'Past 3 Years': '近三年',
   'Flight': '航班',
   'Spotting sessions': '拍摄次数',
   'Schedule': '航班时刻',
@@ -4003,7 +4003,7 @@ function _bdDetailHtml(r) {
                 card_types: cur, extra_info: r.extra_info || '', aircraft_type: r.aircraft_type || '', count: 0,
                 sessions: ((_bdSp[r.registration] && _bdSp[r.registration].sessions) || []).length }, ...rows];
     }
-    triggers = `<div class="bd-sec-t" style="border-top:1px solid var(--border);padding-top:12px;display:flex;justify-content:space-between;gap:8px"><span>${esc(tt('Possible Equipment'))}</span><span style="text-transform:none;letter-spacing:0">${esc(tt('Past 3 years'))}</span></div>` +
+    triggers = `<div class="bd-sec-t" style="border-top:1px solid var(--border);padding-top:12px;display:flex;justify-content:space-between;gap:8px"><span>${esc(tt('Possible Equipment'))}</span><span style="text-transform:none;letter-spacing:0">${esc(tt('Past 3 Years'))}</span></div>` +
       `<div class="bd-trig">${rows.map(t => {
         const chips = (t.card_types || []).map(c => `<span class="chip ${chipClass(c)}">${esc(chipLabel(c))}</span>`).join('');
         const lv = (t.card_types || []).includes('Special Livery') && t.extra_info ? `<span class="bd-trig-lv">${esc(tLiveryName(t.extra_info))}</span>` : '';
