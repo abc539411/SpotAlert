@@ -2330,8 +2330,8 @@
     .spot-list::-webkit-scrollbar { width: 4px; }
     .spot-list::-webkit-scrollbar-track { background: transparent; }
     .spot-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
-    .spot-row { display: grid; grid-template-columns: 76px 48px minmax(0, 1fr); column-gap: 12px; align-items: center; flex-shrink: 0; }
-    .spot-row .bd-trig-d { min-width: 0; font-variant-numeric: tabular-nums; text-align: right; }   /* right-aligned, so the years line up whatever the month is */
+    .spot-row { display: grid; grid-template-columns: 70px 48px minmax(0, 1fr); column-gap: 10px; align-items: center; flex-shrink: 0; padding-left: 13px; }   /* a little room between the blue bar and the date */
+    .spot-row .bd-trig-d { min-width: 0; font-variant-numeric: tabular-nums; text-align: left; }
     .spot-row .bd-trig-reg { min-width: 0; display: inline-flex; align-items: center; gap: 4px; }
     .spot-row .bd-trig-right { justify-content: flex-end; min-width: 0; }
     .spot-row .bd-trig-lv { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
