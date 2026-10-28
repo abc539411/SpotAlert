@@ -5506,9 +5506,9 @@ async function _fleetInit() {
     const w = $('flt-wrap');
     const first = w && w.querySelector('.flt-card');
     if (w && first) {
-      const side = Math.max(12, Math.round((w.clientWidth - first.offsetWidth) / 2));
-      w.style.paddingLeft  = side + 'px';
-      w.style.paddingRight = side + 'px';
+      // PC: cards start at the left and fill the page like Flown's (no centring); phones keep their side padding
+      const side = window.innerWidth >= 768 ? 0 : Math.max(12, Math.round((w.clientWidth - first.offsetWidth) / 2));
+      if (side) { w.style.paddingLeft = side + 'px'; w.style.paddingRight = side + 'px'; }
       w.scrollLeft = 0;
     }
   }, 80);
