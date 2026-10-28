@@ -1699,7 +1699,7 @@
     .col-no-catalog.hidden { display: none; }
     .col-dashboard.hidden { display: none; }
     /* ── Flown (Collection > Flown) ──────────────────────────────────────── */
-    .fl-wrap { display: flex; flex-direction: column; flex: 1; min-height: 0; padding: 10px 14px 0; gap: 8px; max-width: 760px; width: 100%; margin: 0 auto; }
+    .fl-wrap { display: flex; flex-direction: column; flex: 1; min-height: 0; padding: 10px 14px 0; gap: 8px; max-width: 1100px; width: 100%; margin: 0 auto; }
     .fl-top { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
     .fl-stats { flex: 1; min-width: 0; font-size: 12px; color: var(--dim); }
     .fl-stats b { color: var(--text); font-weight: 700; }
@@ -1707,10 +1707,16 @@
     .fl-btn:hover { border-color: var(--accent); }
     .fl-btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
     .fl-btn.danger { color: var(--danger); }
-    .fl-seg { display: inline-flex; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
-    .fl-seg button { background: none; border: none; color: var(--dim); padding: 6px 12px; font-size: 12px; font-weight: 600; cursor: pointer; }
-    .fl-seg button.on { background: var(--surface2); color: var(--text); }
-    .fl-list { flex: 1; min-height: 0; overflow-y: auto; margin: 0 -14px; padding: 0 14px 14px; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+    /* two cards side by side on PC; on phones they are full-width pages you swipe between (the next one peeks in) */
+    .fl-cards { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; padding-bottom: 12px; }
+    .fl-card { min-width: 0; min-height: 0; display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 14px; overflow: hidden; }
+    .fl-card-head { padding: 10px 14px 4px; font-size: 13px; font-weight: 700; }
+    @media (max-width: 767px) {
+      .fl-cards { display: flex; overflow-x: auto; scroll-snap-type: x mandatory; scrollbar-width: none; -webkit-overflow-scrolling: touch; gap: 10px; }
+      .fl-cards::-webkit-scrollbar { display: none; }
+      .fl-card { flex: 0 0 92%; scroll-snap-align: start; }
+    }
+    .fl-list { flex: 1; min-height: 0; overflow-y: auto; margin: 0; padding: 0 10px 14px; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
     .fl-list::-webkit-scrollbar { width: 4px; }
     .fl-list::-webkit-scrollbar-track { background: transparent; }
     .fl-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
