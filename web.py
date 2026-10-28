@@ -5632,6 +5632,101 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                     "last_seen_ts": ss[0] if ss else None})
         return out
 
+    # ── Full-size photos with the JetPhotos strip cut off ────────────────────────────────────────────────────────────────
+    # The "/full/" JetPhotos image is much sharper than the 640px one but ends in a black strip carrying the logo and the
+    # copyright line. Detail cards (Feed, Spotting) and the Board's own photo cache use the full image with that strip
+    # cropped off, cut once and kept on disk (data/photo_full/), so it is never shown or stored with the bar.
+    _PHOTO_HOSTS = ("cdn.jetphotos.com", "t.plnspttrs.net")
+    _photo_full_lock = threading.Lock()
+    _photo_full_fail: dict = {}
+
+    def _full_variant_url(url: str) -> str:
+        return url.replace("/640/", "/full/").replace("/400/", "/full/").replace("/640cb/", "/full/")
+
+    def _download_photo(url: str, cap: int = 8_000_000) -> bytes:
+        import requests as _rq
+        r = _rq.get(url, timeout=15, stream=True, headers={"User-Agent": "Mozilla/5.0"})
+        try:
+            ok = r.status_code == 200 and "image" in (r.headers.get("Content-Type") or "")
+            data = r.raw.read(cap + 1, decode_content=True) if ok else b""
+        finally:
+            r.close()
+        if not ok or not data or len(data) > cap:
+            raise ValueError(f"bad image response ({r.status_code})")
+        return data
+
+    def _clean_photo_bytes(raw: bytes) -> bytes:
+        """Crop the black logo / copyright strip off the bottom and cap the width at 1280px. A photo that simply has a dark
+        bottom edge is left alone (the strip is only trusted when it is well under 8% of the height)."""
+        from PIL import Image
+        import io as _io
+        im = Image.open(_io.BytesIO(raw))
+        im.load()
+        im = im.convert("RGB")
+        w_, h_ = im.size
+        px = im.convert("L").load()
+        xs = list(range(0, w_, max(1, w_ // 80)))
+        limit = max(40, h_ // 12)
+        cut = 0
+        for y in range(h_ - 1, h_ - 1 - limit, -1):
+            if sum(1 for x in xs if px[x, y] < 40) / len(xs) >= 0.60:
+                cut += 1
+            else:
+                break
+        if 0 < cut < limit:
+            im = im.crop((0, 0, w_, h_ - cut - 1))
+        if im.width > 1280:
+            im = im.resize((1280, max(1, round(im.height * 1280 / im.width))), Image.LANCZOS)
+        out = _io.BytesIO()
+        im.save(out, "JPEG", quality=85, optimize=True, progressive=True)
+        return out.getvalue()
+
+    def _clean_full_photo(url: str) -> bytes:
+        """The cleaned full-size image for a JetPhotos link, falling back to the link itself when there is no full image."""
+        last = None
+        for u in dict.fromkeys((_full_variant_url(url), url)):
+            try:
+                return _clean_photo_bytes(_download_photo(u))
+            except Exception as exc:
+                last = exc
+        raise ValueError(f"no photo: {last}")
+
+    def _photo_full_file(src: str):
+        import hashlib as _hl
+        from urllib.parse import urlparse as _up
+        p = _up(src or "")
+        if p.scheme not in ("http", "https") or (p.hostname or "") not in _PHOTO_HOSTS:
+            return None
+        key = _hl.sha1(src.encode("utf-8")).hexdigest()
+        folder = os.path.join(app.state.data_dir, "photo_full")
+        path = os.path.join(folder, key + ".jpg")
+        if os.path.exists(path):
+            return path
+        if time.time() - _photo_full_fail.get(key, 0) < 600:
+            return None
+        with _photo_full_lock:
+            if os.path.exists(path):
+                return path
+            try:
+                os.makedirs(folder, exist_ok=True)
+                data = _clean_full_photo(src)
+                tmp = path + f".{os.getpid()}.{int(time.time() * 1000)}.tmp"
+                with open(tmp, "wb") as fh:
+                    fh.write(data)
+                os.replace(tmp, path)
+                return path
+            except Exception as exc:
+                log.debug("Full photo failed for %s: %s", src, exc)
+                _photo_full_fail[key] = time.time()
+                return None
+
+    @app.get("/api/photo-full")
+    async def get_photo_full(u: str = "", user=Depends(_auth_current_user)):
+        path = await asyncio.to_thread(_photo_full_file, u)
+        if not path:
+            raise HTTPException(404, "No photo")
+        return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=2592000"})
+
     # Board photos are kept as files on the NAS (data/board_photos/), downloaded once from the link FR24 already gave us
     # (airframes.photo_url) and renewed only when the copy is more than 30 days old. A Feed card's creation refreshes that
     # link (airframes.photo_ts), which also restarts the 30 days. Feed / Spotting cards still use the link directly.
@@ -5657,26 +5752,19 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         except Exception:
             meta = {}
         now = time.time()
-        if have and meta.get("url") == url and now - max(meta.get("ts") or 0, af.get("photo_ts") or 0) <= _BOARD_PHOTO_MAX_AGE:
+        if have and meta.get("url") == url and meta.get("v") == 2 and now - max(meta.get("ts") or 0, af.get("photo_ts") or 0) <= _BOARD_PHOTO_MAX_AGE:
             return img                                              # a current copy: nothing to fetch
         if meta.get("url") == url and now - (meta.get("fail_ts") or 0) < 3600:
             return img if have else None                            # failed an hour ago: don't hammer the CDN
         with _board_photo_lock:
             try:
-                r = _rq5.get(url, timeout=8, stream=True, headers={"User-Agent": "Mozilla/5.0"})
-                try:
-                    ok = r.status_code == 200 and "image" in (r.headers.get("Content-Type") or "")
-                    data = r.raw.read(3_000_001, decode_content=True) if ok else b""
-                finally:
-                    r.close()
-                if not ok or not data or len(data) > 3_000_000:
-                    raise ValueError(f"bad image response ({r.status_code})")
+                data = _clean_full_photo(url)
                 tmp = img + f".{os.getpid()}.{int(now * 1000)}.tmp"
                 with open(tmp, "wb") as fh:
                     fh.write(data)
                 os.replace(tmp, img)
                 with open(meta_p, "w", encoding="utf-8") as fh:
-                    _j5.dump({"url": url, "ts": int(now)}, fh)
+                    _j5.dump({"url": url, "ts": int(now), "v": 2}, fh)
                 return img
             except Exception as exc:
                 log.debug("Board photo download failed for %s: %s", reg, exc)
