@@ -5092,7 +5092,7 @@ function _colSubtab(name) {
 // ── Flown: flights you have actually been on (Collection > Flown) ───────────────────────────────────────────────────
 // Imported from a MyFR24 (FlightDiary) or Flighty CSV, and editable by hand. Flighty exports carry no tail numbers, so
 // those rows show "+ rego": tap one to type the registration in.
-let _flown = null, _flownView = 'flights', _flownNoReg = false, _flownEdit = false, _flownEditId = null;   // _flownEditId: row whose form is open (0 = new flight)
+let _flown = null, _flownView = 'flights', _flownEdit = false, _flownEditId = null;   // _flownEditId: row whose form is open (0 = new flight)
 const _flownFold = new Set();       // collapsed groups: 'y:2025' (flights by year) / 'a:QFA' (aircraft by airline)
 const _flownOpenAc = new Set();     // aircraft whose flights are shown under them   // edit mode: Import CSV, Add flight, tap a flight to change it
 const _flz = (en, zh) => (_lang === 'zh' ? zh : en);
@@ -5166,7 +5166,7 @@ function flownRender() {
       }).join('');
     }).join('');
   } else {
-    const list = all.filter(f => !_flownNoReg || !f.registration);
+    const list = all;
     if (!list.length) {
       body = `<div class="fl-empty">${esc(_flz('No matches.', '没有匹配项。'))}</div>`;
     } else {
@@ -5193,22 +5193,18 @@ function flownRender() {
   const keepScroll = wrap.querySelector('.fl-list') ? wrap.querySelector('.fl-list').scrollTop : 0;
   wrap.innerHTML = `
     <div class="fl-top"><div class="fl-stats">${stats}</div>
+      <div class="fl-seg"><button class="${_flownView === 'flights' ? 'on' : ''}" onclick="flownView('flights')">${esc(_flz('Flights', '航班'))}</button><button class="${_flownView === 'aircraft' ? 'on' : ''}" onclick="flownView('aircraft')">${esc(_flz('Aircraft', '飞机'))}</button></div>
       ${_flownEdit
         ? `<button class="fl-btn" onclick="$('flown-file').click()">${esc(_flz('Import CSV', '导入 CSV'))}</button>
            <button class="fl-btn" onclick="flownEdit(0)">+ ${esc(_flz('Add flight', '添加航班'))}</button>
            <button class="fl-btn primary" onclick="flownToggleEdit()">${esc(_flz('Done', '完成'))}</button>`
         : `<button class="fl-btn" onclick="flownToggleEdit()">${esc(_flz('Edit', '编辑'))}</button>`}</div>
-    <div class="fl-tools">
-      <div class="fl-seg"><button class="${_flownView === 'flights' ? 'on' : ''}" onclick="flownView('flights')">${esc(_flz('Flights', '航班'))}</button><button class="${_flownView === 'aircraft' ? 'on' : ''}" onclick="flownView('aircraft')">${esc(_flz('Aircraft', '飞机'))}</button></div>
-      ${_flownView === 'flights' ? `<label class="fl-chk"><input type="checkbox" ${_flownNoReg ? 'checked' : ''} onchange="flownNoReg(this.checked)">${esc(_flz('No registration', '无注册号'))}</label>` : ''}
-    </div>
     <div class="fl-list">${_flownEdit && _flownEditId === 0 ? _flownForm(null) : ''}${body}</div>`;
   const l = wrap.querySelector('.fl-list'); if (l) l.scrollTop = keepScroll;
 }
 
 function flownToggleEdit() { _flownEdit = !_flownEdit; _flownEditId = null; flownRender(); }
 function flownView(v) { _flownView = v; flownRender(); }
-function flownNoReg(on) { _flownNoReg = !!on; flownRender(); }
 
 function _flownForm(f) {
   const v = k => esc(f ? (f[k] || '') : '');
