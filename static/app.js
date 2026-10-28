@@ -5093,7 +5093,7 @@ function _colSubtab(name) {
 // ── Flown: flights you have actually been on (Collection > Flown) ───────────────────────────────────────────────────
 // Imported from a MyFR24 (FlightDiary) or Flighty CSV, and editable by hand. Flighty exports carry no tail numbers, so
 // those rows show "+ rego": tap one to type the registration in.
-let _flown = null, _flownView = 'flights', _flownQ = '', _flownNoReg = false;
+let _flown = null, _flownView = 'flights', _flownQ = '', _flownNoReg = false, _flownEdit = false;   // edit mode: Import CSV, Add flight, tap a flight to change it
 const _flz = (en, zh) => (_lang === 'zh' ? zh : en);
 
 async function flownLoad(force) {
@@ -5136,7 +5136,7 @@ function flownRender() {
     body = list.map(a => {
       const f = a.fl[0];
       const ty = f.type_name || f.type_code || '';
-      return `<div class="fl-row" onclick="flownShowAircraft('${esc(a.reg)}')">
+      return `<div class="fl-row act" onclick="flownShowAircraft('${esc(a.reg)}')">
         <div class="fl-date">${_flownDate(a.last)}</div>
         <div><div class="fl-fn">${_flag(_regoCountryCode(a.reg), { h: 11 })}${esc(a.reg)}</div><div class="fl-sub">${esc(ty)}</div></div>
         <div class="fl-count">${a.n} ${esc(_flz(a.n === 1 ? 'flight' : 'flights', '次'))}</div></div>`;
@@ -5150,19 +5150,22 @@ function flownRender() {
       const route = f.from_iata || f.to_iata ? `${esc(f.from_iata || '?')} → ${esc(f.to_iata || '?')}` : '';
       const sub = [f.airline_name, f.type_name || f.type_code, f.seat ? `${_flz('Seat', '座位')} ${f.seat}` : ''].filter(Boolean).join(' · ');
       const reg = f.registration ? `${_flag(_regoCountryCode(f.registration), { h: 11 })}${esc(f.registration)}`
-        : `<span class="fl-noreg">+ ${esc(_flz('rego', '注册号'))}</span>`;
-      return `${hdr}<div class="fl-row" onclick="flownEdit(${f.id})">
+        : (_flownEdit ? `<span class="fl-noreg">+ ${esc(_flz('rego', '注册号'))}</span>` : `<span class="fl-sub">—</span>`);
+      return `${hdr}<div class="fl-row${_flownEdit ? ' act' : ''}"${_flownEdit ? ` onclick="flownEdit(${f.id})"` : ''}>
         <div class="fl-date">${_flownDate(f.date)}</div>
         <div><div class="fl-fn">${esc(f.flight_number || '—')}<span class="fl-route">${route}</span></div><div class="fl-sub">${esc(sub)}</div></div>
-        <div class="fl-reg">${reg}</div></div>`;
+        <div class="fl-reg">${reg}${_flownEdit ? '<span class="fl-pen">✎</span>' : ''}</div></div>`;
     }).join('');
   }
   const keepScroll = wrap.querySelector('.fl-list') ? wrap.querySelector('.fl-list').scrollTop : 0;
   const hadSearchFocus = document.activeElement && document.activeElement.id === 'flown-q';
   wrap.innerHTML = `
     <div class="fl-top"><div class="fl-stats">${stats}</div>
-      <button class="fl-btn" onclick="$('flown-file').click()">${esc(_flz('Import CSV', '导入 CSV'))}</button>
-      <button class="fl-btn primary" onclick="flownEdit(0)">+ ${esc(_flz('Add flight', '添加航班'))}</button></div>
+      ${_flownEdit
+        ? `<button class="fl-btn" onclick="$('flown-file').click()">${esc(_flz('Import CSV', '导入 CSV'))}</button>
+           <button class="fl-btn" onclick="flownEdit(0)">+ ${esc(_flz('Add flight', '添加航班'))}</button>
+           <button class="fl-btn primary" onclick="flownToggleEdit()">${esc(_flz('Done', '完成'))}</button>`
+        : `<button class="fl-btn" onclick="flownToggleEdit()">${esc(_flz('Edit', '编辑'))}</button>`}</div>
     <div class="fl-tools">
       <div class="fl-seg"><button class="${_flownView === 'flights' ? 'on' : ''}" onclick="flownView('flights')">${esc(_flz('Flights', '航班'))}</button><button class="${_flownView === 'aircraft' ? 'on' : ''}" onclick="flownView('aircraft')">${esc(_flz('Aircraft', '飞机'))}</button></div>
       <input id="flown-q" class="fl-search" value="${esc(_flownQ)}" placeholder="${esc(_flz('Search', '搜索'))}" oninput="flownSearch(this.value)">
@@ -5173,6 +5176,7 @@ function flownRender() {
   if (hadSearchFocus) { const i = $('flown-q'); if (i) { i.focus(); i.setSelectionRange(i.value.length, i.value.length); } }
 }
 
+function flownToggleEdit() { _flownEdit = !_flownEdit; flownRender(); }
 function flownView(v) { _flownView = v; flownRender(); }
 function flownSearch(v) { _flownQ = v; flownRender(); }
 function flownNoReg(on) { _flownNoReg = !!on; flownRender(); }
