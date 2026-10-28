@@ -1711,10 +1711,15 @@
     .fl-seg { display: inline-flex; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
     .fl-seg button { background: none; border: none; color: var(--dim); padding: 6px 12px; font-size: 12px; font-weight: 600; cursor: pointer; }
     .fl-seg button.on { background: var(--surface2); color: var(--text); }
-    .fl-search { flex: 1; min-width: 120px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; color: var(--text); padding: 6px 10px; font-size: 13px; }
     .fl-chk { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--dim); cursor: pointer; white-space: nowrap; }
     .fl-list { flex: 1; min-height: 0; overflow-y: auto; margin: 0 -14px; padding: 0 14px 14px; scrollbar-width: thin; }
-    .fl-year { position: sticky; top: 0; z-index: 2; background: var(--bg); padding: 8px 2px 4px; font-size: 11px; font-weight: 700; color: var(--dim); letter-spacing: .06em; }
+    .fl-year { position: sticky; top: 0; z-index: 2; background: var(--bg); padding: 8px 2px 6px; font-size: 12px; font-weight: 700; color: var(--dim); letter-spacing: .04em; display: flex; align-items: center; gap: 6px; }
+    .fl-fold { cursor: pointer; user-select: none; }
+    .fl-fold:hover { color: var(--text); }
+    .fl-arrow { display: inline-block; width: 12px; font-size: 11px; color: var(--dim); }
+    .fl-group-n { font-size: 11px; font-weight: 600; color: var(--dim); background: var(--surface2); border-radius: 999px; padding: 0 7px; }
+    .fl-sublist { margin: -2px 0 8px 12px; padding: 4px 10px; border-left: 2px solid var(--border); }
+    .fl-subrow { display: grid; grid-template-columns: 88px 70px 1fr; gap: 8px; font-size: 12px; color: var(--dim); padding: 3px 0; font-variant-numeric: tabular-nums; }
     .fl-row { display: grid; grid-template-columns: 54px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 9px 12px; border: 1px solid var(--border); border-radius: 10px; margin-bottom: 6px; background: var(--surface); }
     .fl-row { cursor: default; }
     .fl-row.act { cursor: pointer; }

@@ -5092,7 +5092,9 @@ function _colSubtab(name) {
 // ── Flown: flights you have actually been on (Collection > Flown) ───────────────────────────────────────────────────
 // Imported from a MyFR24 (FlightDiary) or Flighty CSV, and editable by hand. Flighty exports carry no tail numbers, so
 // those rows show "+ rego": tap one to type the registration in.
-let _flown = null, _flownView = 'flights', _flownQ = '', _flownNoReg = false, _flownEdit = false;   // edit mode: Import CSV, Add flight, tap a flight to change it
+let _flown = null, _flownView = 'flights', _flownNoReg = false, _flownEdit = false;
+const _flownFold = new Set();       // collapsed groups: 'y:2025' (flights by year) / 'a:QFA' (aircraft by airline)
+const _flownOpenAc = new Set();     // aircraft whose flights are shown under them   // edit mode: Import CSV, Add flight, tap a flight to change it
 const _flz = (en, zh) => (_lang === 'zh' ? zh : en);
 
 async function flownLoad(force) {
@@ -5107,57 +5109,77 @@ function _flownDate(iso) {
   return `${dt.toLocaleDateString(_locale(), { day: 'numeric', month: 'short' })}<small>${y}</small>`;
 }
 
+function flownToggleFold(key) { if (_flownFold.has(key)) _flownFold.delete(key); else _flownFold.add(key); flownRender(); }
+function flownToggleAc(reg) { if (_flownOpenAc.has(reg)) _flownOpenAc.delete(reg); else _flownOpenAc.add(reg); flownRender(); }
+
+function _flownGroupHead(key, title, count) {
+  const open = !_flownFold.has(key);
+  return `<div class="fl-year fl-fold" onclick="flownToggleFold('${esc(key)}')"><span class="fl-arrow">${open ? '▾' : '▸'}</span>${esc(title)}<span class="fl-group-n">${count}</span></div>`;
+}
+
 function flownRender() {
   const wrap = $('flown-wrap');
   if (!wrap || !_flown) return;
   const sm = _flown.summary || {}, all = _flown.flights || [];
-  const q = _flownQ.trim().toLowerCase();
-  const match = f => !q || [f.flight_number, f.registration, f.from_iata, f.to_iata, f.type_name, f.type_code, f.airline_name, f.seat, f.note, f.date]
-    .some(v => (v || '').toLowerCase().includes(q));
-  let list;
-  if (_flownView === 'aircraft') {
-    const by = {};
-    all.filter(f => f.registration && match(f)).forEach(f => { (by[f.registration] = by[f.registration] || []).push(f); });
-    list = Object.entries(by).map(([reg, fl]) => ({ reg, fl, last: fl[0].date, n: fl.length }))
-      .sort((a, b) => b.n - a.n || (a.last < b.last ? 1 : -1));
-  } else {
-    list = all.filter(f => match(f) && (!_flownNoReg || !f.registration));
-  }
   const stats = `<b>${sm.total || 0}</b> ${_flz('flights', '个航班')} · <b>${sm.aircraft || 0}</b> ${_flz('aircraft', '架飞机')}` +
     ((sm.total || 0) - (sm.with_registration || 0) > 0 ? ` · ${(sm.total || 0) - (sm.with_registration || 0)} ${_flz('without a registration', '缺注册号')}` : '');
   let body = '';
   if (!all.length) {
     body = `<div class="fl-empty">${esc(_flz('Nothing here yet. Import a MyFR24 or Flighty CSV, or add a flight by hand.',
       '这里还没有内容。请导入 MyFR24 或 Flighty 的 CSV，或手动添加航班。'))}</div>`;
-  } else if (!list.length) {
-    body = `<div class="fl-empty">${esc(_flz('No matches.', '没有匹配项。'))}</div>`;
   } else if (_flownView === 'aircraft') {
-    body = list.map(a => {
-      const f = a.fl[0];
-      const ty = f.type_name || f.type_code || '';
-      return `<div class="fl-row act" onclick="flownShowAircraft('${esc(a.reg)}')">
-        <div class="fl-date">${_flownDate(a.last)}</div>
-        <div><div class="fl-fn">${_flag(_regoCountryCode(a.reg), { h: 11 })}${esc(a.reg)}</div><div class="fl-sub">${esc(ty)}</div></div>
-        <div class="fl-count">${a.n} ${esc(_flz(a.n === 1 ? 'flight' : 'flights', '次'))}</div></div>`;
+    // Aircraft grouped by airline (the airline of the aircraft's most recent flight); names come from any row that has one.
+    const names = {};
+    all.forEach(f => { const k = f.airline_icao || f.airline_iata; if (k && f.airline_name && !names[k]) names[k] = f.airline_name; });
+    const by = {};
+    all.filter(f => f.registration).forEach(f => { (by[f.registration] = by[f.registration] || []).push(f); });
+    const groups = {};
+    Object.entries(by).forEach(([reg, fl]) => {
+      const f0 = fl[0];                                  // flights are newest first
+      const key = f0.airline_icao || f0.airline_iata || '?';
+      const g = groups[key] = groups[key] || { key, title: names[key] || (key === '?' ? _flz('Unknown airline', '未知航司') : key), items: [] };
+      g.items.push({ reg, fl, last: f0.date, n: fl.length, type: f0.type_name || f0.type_code || '' });
+    });
+    const list = Object.values(groups).sort((a, b) => b.items.length - a.items.length || a.title.localeCompare(b.title));
+    body = list.map(g => {
+      g.items.sort((a, b) => b.n - a.n || (a.last < b.last ? 1 : -1));
+      const fk = 'a:' + g.key;
+      let h = _flownGroupHead(fk, g.title, g.items.length);
+      if (_flownFold.has(fk)) return h;
+      return h + g.items.map(a => {
+        const open = _flownOpenAc.has(a.reg);
+        const sub = open ? `<div class="fl-sublist">${a.fl.map(f => `<div class="fl-subrow"><span>${esc(f.date)}</span><span>${esc(f.flight_number || '—')}</span><span>${esc(f.from_iata || '?')} → ${esc(f.to_iata || '?')}</span></div>`).join('')}</div>` : '';
+        return `<div class="fl-row act" onclick="flownToggleAc('${esc(a.reg)}')">
+          <div class="fl-date">${_flownDate(a.last)}</div>
+          <div><div class="fl-fn">${_flag(_regoCountryCode(a.reg), { h: 11 })}${esc(a.reg)}</div><div class="fl-sub">${esc(a.type)}</div></div>
+          <div class="fl-count">${a.n} ${esc(_flz(a.n === 1 ? 'flight' : 'flights', '次'))} <span class="fl-arrow">${open ? '▾' : '▸'}</span></div></div>${sub}`;
+      }).join('');
     }).join('');
   } else {
-    let year = '';
-    body = list.map(f => {
-      const y = f.date.slice(0, 4);
-      const hdr = y !== year ? `<div class="fl-year">${y}</div>` : '';
-      year = y;
-      const route = f.from_iata || f.to_iata ? `${esc(f.from_iata || '?')} → ${esc(f.to_iata || '?')}` : '';
-      const sub = [f.airline_name, f.type_name || f.type_code, f.seat ? `${_flz('Seat', '座位')} ${f.seat}` : ''].filter(Boolean).join(' · ');
-      const reg = f.registration ? `${_flag(_regoCountryCode(f.registration), { h: 11 })}${esc(f.registration)}`
-        : (_flownEdit ? `<span class="fl-noreg">+ ${esc(_flz('rego', '注册号'))}</span>` : `<span class="fl-sub">—</span>`);
-      return `${hdr}<div class="fl-row${_flownEdit ? ' act' : ''}"${_flownEdit ? ` onclick="flownEdit(${f.id})"` : ''}>
-        <div class="fl-date">${_flownDate(f.date)}</div>
-        <div><div class="fl-fn">${esc(f.flight_number || '—')}<span class="fl-route">${route}</span></div><div class="fl-sub">${esc(sub)}</div></div>
-        <div class="fl-reg">${reg}${_flownEdit ? '<span class="fl-pen">✎</span>' : ''}</div></div>`;
-    }).join('');
+    const list = all.filter(f => !_flownNoReg || !f.registration);
+    if (!list.length) {
+      body = `<div class="fl-empty">${esc(_flz('No matches.', '没有匹配项。'))}</div>`;
+    } else {
+      const years = [];
+      list.forEach(f => { const y = f.date.slice(0, 4); if (!years.length || years[years.length - 1].y !== y) years.push({ y, items: [] }); years[years.length - 1].items.push(f); });
+      body = years.map(g => {
+        const fk = 'y:' + g.y;
+        const head = _flownGroupHead(fk, g.y, g.items.length);
+        if (_flownFold.has(fk)) return head;
+        return head + g.items.map(f => {
+          const route = f.from_iata || f.to_iata ? `${esc(f.from_iata || '?')} → ${esc(f.to_iata || '?')}` : '';
+          const sub = [f.airline_name, f.type_name || f.type_code, f.seat ? `${_flz('Seat', '座位')} ${f.seat}` : ''].filter(Boolean).join(' · ');
+          const reg = f.registration ? `${_flag(_regoCountryCode(f.registration), { h: 11 })}${esc(f.registration)}`
+            : (_flownEdit ? `<span class="fl-noreg">+ ${esc(_flz('rego', '注册号'))}</span>` : `<span class="fl-sub">—</span>`);
+          return `<div class="fl-row${_flownEdit ? ' act' : ''}"${_flownEdit ? ` onclick="flownEdit(${f.id})"` : ''}>
+            <div class="fl-date">${_flownDate(f.date)}</div>
+            <div><div class="fl-fn">${esc(f.flight_number || '—')}<span class="fl-route">${route}</span></div><div class="fl-sub">${esc(sub)}</div></div>
+            <div class="fl-reg">${reg}${_flownEdit ? '<span class="fl-pen">✎</span>' : ''}</div></div>`;
+        }).join('');
+      }).join('');
+    }
   }
   const keepScroll = wrap.querySelector('.fl-list') ? wrap.querySelector('.fl-list').scrollTop : 0;
-  const hadSearchFocus = document.activeElement && document.activeElement.id === 'flown-q';
   wrap.innerHTML = `
     <div class="fl-top"><div class="fl-stats">${stats}</div>
       ${_flownEdit
@@ -5167,19 +5189,15 @@ function flownRender() {
         : `<button class="fl-btn" onclick="flownToggleEdit()">${esc(_flz('Edit', '编辑'))}</button>`}</div>
     <div class="fl-tools">
       <div class="fl-seg"><button class="${_flownView === 'flights' ? 'on' : ''}" onclick="flownView('flights')">${esc(_flz('Flights', '航班'))}</button><button class="${_flownView === 'aircraft' ? 'on' : ''}" onclick="flownView('aircraft')">${esc(_flz('Aircraft', '飞机'))}</button></div>
-      <input id="flown-q" class="fl-search" value="${esc(_flownQ)}" placeholder="${esc(_flz('Search', '搜索'))}" oninput="flownSearch(this.value)">
       ${_flownView === 'flights' ? `<label class="fl-chk"><input type="checkbox" ${_flownNoReg ? 'checked' : ''} onchange="flownNoReg(this.checked)">${esc(_flz('No registration', '无注册号'))}</label>` : ''}
     </div>
     <div class="fl-list">${body}</div>`;
   const l = wrap.querySelector('.fl-list'); if (l) l.scrollTop = keepScroll;
-  if (hadSearchFocus) { const i = $('flown-q'); if (i) { i.focus(); i.setSelectionRange(i.value.length, i.value.length); } }
 }
 
 function flownToggleEdit() { _flownEdit = !_flownEdit; flownRender(); }
 function flownView(v) { _flownView = v; flownRender(); }
-function flownSearch(v) { _flownQ = v; flownRender(); }
 function flownNoReg(on) { _flownNoReg = !!on; flownRender(); }
-function flownShowAircraft(reg) { _flownView = 'flights'; _flownQ = reg; flownRender(); }
 
 function flownEdit(id) {
   const f = id ? (_flown.flights || []).find(x => x.id === id) : null;
