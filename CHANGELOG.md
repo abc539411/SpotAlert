@@ -2,6 +2,26 @@
 
 Versioning: a **major** release is x.y0 (2.10, 2.20...) and re-offers the in-app tour once; point releases (2.11, 2.12...) are fixes and polish and do not.
 
+## 2.20 — since 2.13
+
+### Added
+- **Flown** (Collection → Flown) — the flights you have been on. Import a **MyFR24** (FlightDiary) or **Flighty** CSV, or add flights by hand; a separate **Edit** column holds Import CSV, Add flight and Done. Flights are grouped by year and Aircraft by airline (both fold), side by side on PC and swipeable on phones. Re-importing never duplicates or overwrites what you typed. **Look up on FR24** fills a recent flight (about two weeks of FR24 history) from its date and flight number. The airline name and aircraft type (ICAO) are editable. Controllers and Pilots only; your records stay in your own account.
+- **Flown aircraft are marked everywhere** — a registration you have flown on is green with a small plane after it (Feed, Spotting, Board, Search, photo pop-ups); hover for how many times.
+- **Board: Possible Equipment** shows an `Nx` pill for how many sessions you spotted each aircraft in, lists the aircraft assigned to the flight itself, and a right-aligned "Past 3 Years" note. The Spotted section moved to the Feed card.
+- **Feed card** — Last Visit sits under the status pill; a Schedule heading; Spotted sessions are rows (airport name on PC, code on phones) with the total session count at the right; the total reads "N Sessions".
+- **Photo pop-ups** share one layout (type pills under the registration, airline tail and name bottom-left, livery line above the place and date bottom-right). The Board's Possible Equipment pop-up shows the aircraft's JetPhotos picture with a JetPhotos pill.
+
+### Changed
+- **One card style** across Spotting, Board, Feed, Collection (Summary, Flown, Fleet) and Search: shaded headers, faint-line rows, one divider strength, matching group headers and count pills at the right. Fleet now uses Flown's footprint and rows (a green dot for photographed aircraft); Flown on phones has the same footprint as a Fleet card.
+- **Sharper detail photos** — Feed, Spotting and Board photos use the full-size JetPhotos image with its black logo strip cropped off, cut once and cached on the server. The Spotting pop-up on PC keeps the plain 640px photo.
+- Dates: Feed Last Visit and Fleet read `28 Dec '22`; Catalogue sessions read `9 Jul 2025`.
+- Search → Last Seen single-row cards have no header shading; Catalogue cards on phones got a taller header with the sessions pill at its right.
+- Alitalia and Cathay Dragon tail logos are bundled (`static/logo_overrides/`); the airline code for Cathay Dragon is completed for Flown.
+
+### Fixed
+- Collection keyword tiles no longer fall back to "not set" after the background refresh.
+- The date field in the Flown form no longer overruns its neighbour on iPhone.
+
 ## 2.13 — since 2.12
 
 ### Added

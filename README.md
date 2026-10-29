@@ -60,7 +60,8 @@ Installable as a home-screen app on iOS/Android, accessible from any browser on 
 - **Spotting** — the day's recommended window, clustered by activity gaps, with lighting quality and weather
 - **Board** — an arrivals board for the flight numbers that regularly bring something interesting, showing the aircraft assigned *before* it lands. Each day is a card, today centred and scrolled to the current time; flights not yet on FR24's schedule appear as "No info yet" at their usual time. On a phone, pull the Feed all the way down to open it (or make it your home page under Settings → Board). With a Lightroom catalog and Fleet cards, aircraft you haven't photographed yet carry a small camera marker
 - **Collection** — cross-references your Lightroom catalog against the feed; shows what's photographed, what's missing, and per-keyword session stats
-- **Fleet** — live full-fleet data per airline; pills show which tails you've captured and let you add unseen ones straight to your watchlist
+- **Flown** — the flights you have been on: import a MyFR24 or Flighty CSV or add flights by hand, group by year and airline, and fill recent flights from FR24; aircraft you have flown are marked in green throughout the app
+- **Fleet** — live full-fleet data per airline; rows show which tails you've captured and let you add unseen ones straight to your watchlist
 - **Search** — look up a registration's sighting history, browse route equipment by flight number, or browse your whole catalog
 - **Session photo preview** — tap any past session anywhere in the app to see the actual photo you took — Controller-only, read-only access to your photo library (see below)
 - **Older history** — Feed, Spotting and the Board all reach back through earlier weeks with an **Older** button and a month picker; Feed groups older weeks by year and week
