@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, List as _List, Optional
 import os as _os
 
-VERSION = "2.21"
+VERSION = "2.22"
 _PROCESS_START_TS = int(time.time())
 
 
@@ -4598,11 +4598,19 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         api_key = _logostream_api_key()
         if not api_key:
             raise HTTPException(503, "Logostream API key not configured")
-        r = _req.get(
-            f"https://airlines-api.logostream.dev/airlines/icao/{icao}",
-            params={"key": api_key, "variant": "tail"},
-            timeout=10
-        )
+        for _attempt in (1, 2):                      # one retry: a burst of cold requests sometimes times out or is refused
+            try:
+                r = _req.get(
+                    f"https://airlines-api.logostream.dev/airlines/{'iata' if len(icao) == 2 else 'icao'}/{icao}",   # a 2-character code is an IATA one
+                    params={"key": api_key, "variant": "tail"},
+                    timeout=10
+                )
+                if r.status_code < 500 and r.status_code != 429:
+                    break
+            except Exception:
+                if _attempt == 2:
+                    raise
+            time.sleep(1.5)
         if r.status_code == 404:
             raise HTTPException(404, "Logo not found")
         r.raise_for_status()

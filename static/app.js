@@ -4092,7 +4092,7 @@ function _bdRow(r, isMobile) {
   return `<div class="bd-row${kindCls}${open ? ' open' : ''}${r.pending ? ' bd-row-pending' : ''}${_bdSel.has(r.flight_number) ? ' bd-row-sel' : ''}${r.hidden ? ' bd-row-hidden' : ''}" data-key="${esc(key)}" data-fn="${fn}" onclick="bdRowClick(this)"${kindTip ? ` title="${esc(kindTip)}"` : ''}${rgb ? ` style="--bd-rgb:${rgb}"` : ''}>
       <div class="bd-time">${time}</div>
       <div class="bd-main">
-        <div class="bd-fnrow"><a class="bd-fn" href="${_fr24FlightUrl(r.flight_number)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${_srchLogoWithFallback(r.airline_icao, r.airline_name, 16, '')}${fn}</a>${chips}</div>
+        <div class="bd-fnrow"><a class="bd-fn" href="${_fr24FlightUrl(r.flight_number)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${_srchLogoWithFallback(r.airline_icao, r.airline_name, 16, '', r.flight_number)}${fn}</a>${chips}</div>
         <div class="bd-sub">${sub}</div>
       </div>
       <div class="bd-ac">${ac}</div>
@@ -4282,7 +4282,7 @@ function _bdHiddenCard() {
   const rows = list.map(h => `<div class="bd-row bd-hrow${_bdSel.has(h.flight_number) ? ' bd-row-sel' : ''}" data-fn="${esc(h.flight_number)}" onclick="bdSelToggle(this.dataset.fn)">
       <div class="bd-time">${_BD_EYE_OFF}</div>
       <div class="bd-main">
-        <div class="bd-fnrow"><a class="bd-fn" href="${_fr24FlightUrl(h.flight_number)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${_srchLogoWithFallback(h.airline_icao, h.airline_name, 16, '')}${esc(h.flight_number)}</a></div>
+        <div class="bd-fnrow"><a class="bd-fn" href="${_fr24FlightUrl(h.flight_number)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${_srchLogoWithFallback(h.airline_icao, h.airline_name, 16, '', h.flight_number)}${esc(h.flight_number)}</a></div>
         <div class="bd-sub">${h.airline_name ? `<span data-ext-name="${esc(h.airline_name)}">${esc(tExternalName(h.airline_name))}</span>` : ''}</div>
       </div>
       <div class="bd-ac">${esc(h.origin_city || h.origin_iata || '')}</div>
@@ -5265,7 +5265,7 @@ function _flownAircraftHtml(all) {
       if (_flownFold.has(fk)) return h;
       return h + g.items.map(a => {
         const open = _flownOpenAc.has(a.reg);
-        const sub = open ? `<div class="fl-sublist">${a.fl.map(f => `<div class="fl-subrow"><span>${esc(f.date)}</span><span class="fl-subfn">${_srchLogoWithFallback(f.airline_icao, f.airline_name, 12, '')}${esc(f.flight_number || '—')}</span><span>${_flownAp(f.from_iata)} → ${_flownAp(f.to_iata)}</span></div>`).join('')}</div>` : '';
+        const sub = open ? `<div class="fl-sublist">${a.fl.map(f => `<div class="fl-subrow"><span>${esc(f.date)}</span><span class="fl-subfn">${_srchLogoWithFallback(f.airline_icao, f.airline_name, 12, '', f.flight_number)}${esc(f.flight_number || '—')}</span><span>${_flownAp(f.from_iata)} → ${_flownAp(f.to_iata)}</span></div>`).join('')}</div>` : '';
         return `<div class="fl-row act" onclick="flownToggleAc('${esc(a.reg)}')">
           <div class="fl-date">${_flownDate(a.last)}</div>
           <div><div class="fl-fn">${_flag(_regoCountryCode(a.reg), { h: 11 })}${esc(a.reg)}</div><div class="fl-sub">${esc(a.type)}</div></div>
@@ -5285,12 +5285,13 @@ function _flownFlightsHtml(all) {
           const route = f.from_iata || f.to_iata ? `${esc(f.from_iata || '?')} → ${esc(f.to_iata || '?')}` : '';
           const sub = [f.airline_name, _flownType(f)].filter(Boolean).join(' · ');
           const reg = f.registration ? `${_flag(_regoCountryCode(f.registration), { h: 11 })}${esc(f.registration)}`
-            : f.awaiting ? `<span class="fl-up-tag">${esc(f.date >= _flownToday() ? _flz('Upcoming', '待飞') : _flz('Checking', '待查'))}</span>`
+            : f.date >= _flownToday() ? `<span class="fl-up-tag">TBC</span>`                      // not flown yet: the registration is still to be confirmed
+            : f.awaiting ? `<span class="fl-up-tag">${esc(_flz('Checking', '待查'))}</span>`
             : (_flownEdit ? `<span class="fl-noreg">+ ${esc(_flz('rego', '注册号'))}</span>` : `<span class="fl-sub">—</span>`);
           if (_flownEdit && _flownEditId === f.id) return _flownForm(f);
-          return `<div class="fl-row${_flownEdit ? ' act' : ''}${f.awaiting ? ' fl-up' : ''}"${_flownEdit ? ` onclick="flownEdit(${f.id})"` : ''}>
+          return `<div class="fl-row${_flownEdit ? ' act' : ''}${f.awaiting || (!f.registration && f.date >= _flownToday()) ? ' fl-up' : ''}"${_flownEdit ? ` onclick="flownEdit(${f.id})"` : ''}>
             <div class="fl-date">${_flownDate(f.date)}</div>
-            <div><div class="fl-fn">${_srchLogoWithFallback(f.airline_icao, f.airline_name, 16, '')}${esc(f.flight_number || '—')}<span class="fl-route">${route}</span></div><div class="fl-sub">${esc(sub)}</div></div>
+            <div><div class="fl-fn">${_srchLogoWithFallback(f.airline_icao, f.airline_name, 16, '', f.flight_number)}${esc(f.flight_number || '—')}<span class="fl-route">${route}</span></div><div class="fl-sub">${esc(sub)}</div></div>
             <div class="fl-reg">${reg}${_flownEdit ? '<span class="fl-pen">✎</span>' : ''}</div></div>`;
         }).join('');
       }).join('');
@@ -8328,13 +8329,30 @@ function _srchCols(cards) {
   return `<div class="srch-col-wrap">${cols.map(c => `<div class="srch-col">${c.html.join('')}</div>`).join('')}</div>`;
 }
 
-function _srchLogoWithFallback(icao, name, size, fallbackHtml) {
+// A logo that fails to load (a cold server fetch under a burst of requests) is tried once more before it is given up on.
+function _logoErr(img) {
+  if (!img.dataset.retry) {
+    img.dataset.retry = '1';
+    setTimeout(() => { img.src = img.src + (img.src.includes('?') ? '&' : '?') + 'r=1'; }, 1500);
+    return;
+  }
+  img.style.display = 'none'; if (img.nextElementSibling) img.nextElementSibling.style.display = 'inline-flex';
+}
+
+// The airline code a flight number starts with: "QFA465" -> QFA (ICAO), "QF465" -> QF (IATA). Used when a flight has no ICAO code.
+function _fnAirlineCode(fn) {
+  const m = /^([A-Z]{3}|[A-Z0-9]{2})\d/.exec((fn || '').replace(/\s+/g, '').toUpperCase());
+  return m ? m[1] : '';
+}
+
+function _srchLogoWithFallback(icao, name, size, fallbackHtml, flightNumber) {
+  icao = icao || _fnAirlineCode(flightNumber);
   const src = icao
     ? `/api/airline-logo/${encodeURIComponent(icao)}?v=${_LOGO_V}`
     : `/api/airline-logo-name/${encodeURIComponent((name||'').replace(/\s*\(.*?\)/g,'').trim())}?v=${_LOGO_V}`;
   if (!src) return fallbackHtml;
   return `<span style="display:inline-flex;align-items:center;flex-shrink:0">` +
-    `<img src="${src}" loading="lazy" alt="" style="height:${size}px;max-width:${size*2}px;object-fit:contain" onerror="this.style.display='none';this.nextElementSibling.style.display='inline-flex'">` +
+    `<img src="${src}" loading="lazy" alt="" style="height:${size}px;max-width:${size*2}px;object-fit:contain" onerror="_logoErr(this)">` +
     `<span style="display:none">${fallbackHtml}</span>` +
     `</span>`;
 }

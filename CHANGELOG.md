@@ -2,6 +2,15 @@
 
 Versioning: a **major** release is x.y0 (2.10, 2.20...) and re-offers the in-app tour once; point releases (2.11, 2.12...) are fixes and polish and do not.
 
+## 2.22 — since 2.21
+
+### Added
+- **TBC pill in Flown** — a flight dated today or later with no registration shows a dimmed row and a "TBC" pill where the registration goes.
+
+### Fixed
+- **Airline tail logos that sometimes did not load** — a logo that fails is tried once more (in the page and when the server downloads it), instead of staying blank until a reload.
+- **Logos for flights without an airline ICAO code** now use the code at the start of the flight number (IATA, e.g. TW502 → TW) before falling back to a name search.
+
 ## 2.21 — since 2.20
 
 ### Added
