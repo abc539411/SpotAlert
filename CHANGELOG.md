@@ -2,6 +2,12 @@
 
 Versioning: a **major** release is x.y0 (2.10, 2.20...) and re-offers the in-app tour once; point releases (2.11, 2.12...) are fixes and polish and do not.
 
+## 2.24 — since 2.23
+
+### Changed
+- **Flown** — flights still to come are greyed out completely (logo included); the Aircraft card's airline headers carry the airline's tail logo; on phones the flights listed under an aircraft show airport codes.
+- **Fleet** — a Viking Air Twin Otter is shown as De Havilland, and the Mitsubishi-named CRJ types as Bombardier (badge and heading).
+
 ## 2.23 — since 2.22
 
 ### Added

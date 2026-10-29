@@ -5222,7 +5222,7 @@ async function flownLoad(force) {
 // Airport as its shortened name ("Sydney"); falls back to the IATA code when the name is not on file
 function _flownAp(code) {
   const n = (_flown && _flown.airports || {})[code];
-  return esc(n ? (_airportDisplayName(n) || code) : (code || '?'));
+  return esc(n && window.innerWidth >= 768 ? (_airportDisplayName(n) || code) : (code || '?'));       // phones: the airport code
 }
 
 function _flownDate(iso) {
@@ -5238,9 +5238,9 @@ function flownToggleAc(reg) { if (_flownOpenAc.has(reg)) _flownOpenAc.delete(reg
 function _flownToday() { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }
 function _flownType(f) { const n = f.type_name === '()' ? '' : (f.type_name || ''); return f.type_code || n; }
 
-function _flownGroupHead(key, title, count) {
+function _flownGroupHead(key, title, count, logoHtml) {
   const open = !_flownFold.has(key);
-  return `<div class="fl-year fl-fold" onclick="flownToggleFold('${esc(key)}')"><span class="fl-arrow">${open ? '▾' : '▸'}</span>${esc(title)}<span class="fl-group-n">${count}</span></div>`;
+  return `<div class="fl-year fl-fold" onclick="flownToggleFold('${esc(key)}')"><span class="fl-arrow">${open ? '▾' : '▸'}</span>${logoHtml || ''}${esc(title)}<span class="fl-group-n">${count}</span></div>`;
 }
 
 function _flownAircraftHtml(all) {
@@ -5262,7 +5262,8 @@ function _flownAircraftHtml(all) {
     return list.map(g => {
       g.items.sort((a, b) => b.n - a.n || (a.last < b.last ? 1 : -1));
       const fk = 'a:' + g.key;
-      let h = _flownGroupHead(fk, g.title, g.items.length);
+      const logo = /^[A-Z0-9]{2,4}$/.test(g.key) ? `<span class="fl-grp-logo">${_srchLogoWithFallback(g.key, g.title, 16, '')}</span>` : '';       // the airline's tail
+      let h = _flownGroupHead(fk, g.title, g.items.length, logo);
       if (_flownFold.has(fk)) return h;
       return h + g.items.map(a => {
         const open = _flownOpenAc.has(a.reg);
@@ -5570,6 +5571,14 @@ function _fleetRender() {
   }
 }
 
+// FR24's type names that carry a builder we show under another name (Viking Air builds the Twin Otter; the CRJ is a Bombardier)
+function _fltMfrFallback(typeFull) {
+  const t = typeFull || '';
+  if (/^viking\b/i.test(t)) return 'De Havilland';
+  if (/^mitsubishi\s+crj/i.test(t)) return 'Bombardier';
+  return '';
+}
+
 function _fleetCardHtml(card, idx) {
   const have = card.aircraft.filter(a => a.photos > 0).length;
   const total = card.aircraft.length;
@@ -5590,9 +5599,10 @@ function _fleetCardHtml(card, idx) {
   const rows = groups.map(g => {
     const key = card.icao + '-' + g.type_code;
     const open = !!_fleetExpanded[key];
-    const mfrCls = (g.manufacturer || '').toLowerCase().replace(/\s+/g, '-');
-    const badge = g.manufacturer ? `<span class="mfr mfr-${mfrCls}" data-ext-name="${esc(g.manufacturer)}">${esc(_mfrDisp(g.manufacturer))}</span>` : '';
-    const typeName = g.type_full.replace(/^(airbus|boeing|embraer|bombardier|atr|mcdonnell douglas|lockheed)\s+/i, '').trim() || g.type_code;
+    const mfr = g.manufacturer || _fltMfrFallback(g.type_full);       // cards fetched before these were recognised have no manufacturer
+    const mfrCls = mfr.toLowerCase().replace(/\s+/g, '-');
+    const badge = mfr ? `<span class="mfr mfr-${mfrCls}" data-ext-name="${esc(mfr)}">${esc(_mfrDisp(mfr))}</span>` : '';
+    const typeName = g.type_full.replace(/^(airbus|boeing|embraer|bombardier|atr|mcdonnell douglas|lockheed|viking|mitsubishi|de havilland canada|de havilland)\s+/i, '').trim() || g.type_code;
     const grpHave = g.aircraft.filter(a => a.photos > 0).length;
     const header = `<div class="flt-type-hd" onclick="_fleetToggleType('${key}')">
       <span id="flt-a-${key}" class="flt-type-arrow">${open ? '▾' : '▸'}</span>

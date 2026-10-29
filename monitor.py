@@ -274,12 +274,14 @@ def _safe_get(d: dict, *keys, default="N/A"):
 
 _MFR_KEYWORDS = [
     ('de havilland', 'De Havilland'),
+    ('viking', 'De Havilland'),            # Viking Air builds the DHC-6 Twin Otter (De Havilland Canada's type certificates)
     ('mcdonnell', 'McDonnell Douglas'),
     ('lockheed', 'Lockheed'),
     ('boeing', 'Boeing'),
     ('airbus', 'Airbus'),
     ('embraer', 'Embraer'),
     ('bombardier', 'Bombardier'),
+    ('crj', 'Bombardier'),                 # "Mitsubishi CRJ-200LR": the CRJ is a Bombardier design
     ('cessna', 'Cessna'),
     ('gulfstream', 'Gulfstream'),
     ('dassault', 'Dassault'),
