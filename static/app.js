@@ -759,6 +759,7 @@ function _prefetchMfrNames() {
 // alone misses them. Fire a per-name lookup too; _translateNamesForZh()
 // already no-ops for anything already cached/in-flight, so this stays cheap.
 function _mfrDisp(name) {
+  if (/^general atomics/i.test(name || '')) name = 'General Atomics';      // the catalogue says "GENERAL ATOMICS AERONAUTICAL SYSTEMS"
   _prefetchMfrNames();
   if (name) _translateNamesForZh([name]);
   return tExternalName(name);
@@ -6133,7 +6134,7 @@ function _colShowSessionPopover(row, pin) {
       content.innerHTML = header + '<div class="col-sp-empty">No tagged aircraft this session</div>';
     } else {
       const rows = aircraft.map(a => {
-        const badge = a.manufacturer ? `<span class="mfr mfr-${a.manufacturer.toLowerCase().replace(/\s+/g,'-')}">${a.manufacturer}</span>` : '';
+        const badge = a.manufacturer ? `<span class="mfr mfr-${a.manufacturer.toLowerCase().replace(/\s+/g,'-')}">${esc(_mfrDisp(a.manufacturer))}</span>` : '';
         const tagHtml = a.tags.map(t => `<span class="col-sp-tag ${_colTagClass(t)}">${t}</span>`).join('');
         const clickable = _appRole === 'controller' && a.reg;
         const clickCls  = clickable ? ' col-sp-row-clickable' : '';
@@ -6197,7 +6198,7 @@ function _colInitSessionPopover() {
             const visibleTags = _sessionFilterTags ? a.tags.filter(t => _sessionFilterTags.has(t)) : a.tags;
             const tagHtml = visibleTags.map(t => `<span class="col-sp-tag ${_colTagClass(t)}">${esc(tColKeyword(t))}</span>`).join('');
             const notesHtml = (a.notes && a.tags.includes('Special Livery'))
-              ? `<span style="font-size:11px;color:var(--dim);margin-right:2px">${esc(tLiveryName(a.notes))}</span>` : '';
+              ? `<span class="col-sp-notes" style="font-size:11px;color:var(--dim);margin-right:2px">${esc(tLiveryName(a.notes))}</span>` : '';
             const parts = [a.aircraft_type ? esc(a.aircraft_type) : '', airlineDisp].filter(Boolean).join('<span class="col-sp-dot">·</span>');
             const clickable = _appRole === 'controller' && a.reg;
             const clickCls  = clickable ? ' col-sp-row-clickable' : '';
@@ -6208,7 +6209,7 @@ function _colInitSessionPopover() {
               return `<div class="col-sp-row col-sp-row-m${clickCls}"${clickAttr}>
                 <div class="col-sp-m-row1"><span class="col-sp-reg">${esc(a.reg)}</span>${badge}</div>
                 <div class="col-sp-m-row2">${parts}</div>
-                <div class="col-sp-tag-group">${tagHtml}${notesHtml}</div>
+                <div class="col-sp-tag-group"><span class="col-sp-tags">${tagHtml}</span>${notesHtml}</div>
               </div>`;
             }
             return `<div class="col-sp-row${clickCls}"${clickAttr}>
@@ -6216,7 +6217,8 @@ function _colInitSessionPopover() {
               <div class="col-sp-tag-group">${notesHtml}${tagHtml}</div>
             </div>`;
           }).join('');
-          expand.innerHTML = `<div class="col-expand-body"><div class="col-sp-aircraft">${rows}</div></div>`;
+          const head = `<div class="dc-hd" style="margin-bottom:6px"><span class="bd-sec-t">${esc(tt('Aircraft'))}</span><span class="dc-n">${esc(tAircraftN(aircraft.length))}</span></div>`;
+          expand.innerHTML = `<div class="col-expand-body">${head}<div class="col-sp-aircraft">${rows}</div></div>`;
         }
         if (window.twemoji) twemoji.parse(expand, {folder:'svg',ext:'.svg'});
       };
@@ -6261,6 +6263,36 @@ function _colExSection(label, pills) {
   return `<div class="col-ex-section"><div class="col-ap-label">${tt(label)}</div><div class="col-ex-pills">${pills||'<span class="col-sp-empty">No data</span>'}</div></div>`;
 }
 
+// Rows (the Spotted / Possible Equipment look) for the Top Airports / Airlines / Aircraft Types lists of an expanded Collection row:
+// name at the left, the photo count as an Nx pill right after it, the code dimmed at the right. One set of columns per list, so the pills line up.
+function _colExRow(leftHtml, count, code) {
+  return `<div class="bd-trig-row spot-row col-ex-row"><span class="bd-trig-reg">${leftHtml}</span>` +
+    `<span class="bd-trig-n" title="${esc(tPhotosN(count))}">${count.toLocaleString()}x</span><span class="col-ex-code">${esc(code || '')}</span></div>`;
+}
+function _colExRows(label, rows) {
+  return `<div class="col-ex-section"><div class="dc-hd" style="margin-bottom:6px"><span class="bd-sec-t">${esc(tt(label))}</span></div>` +
+    `<div class="bd-trig col-ex-rows">${rows || '<span class="col-sp-empty">No data</span>'}</div></div>`;
+}
+function _colExApRows(list) {
+  return (list || []).map(a => {
+    const nm = a.full_name ? (_airportDisplayName(a.full_name) || a.iata) : a.iata;      // shortened name in white, the code in the grey text
+    return _colExRow(`${a.flag || ''}<span class="spot-ap">${esc(nm)}</span>`, a.photos, a.iata);
+  }).join('');
+}
+function _colExAlRows(list) {
+  return (list || []).map(a => {
+    const code = _colExAirlineCode(a.name), nm = (a.name || '').replace(/\s*\([^)]*\)\s*$/, '').trim();
+    return _colExRow(`${_srchLogoWithFallback(/^[A-Z0-9]{2,4}$/.test(code) ? code : '', nm, 14, '')}<span class="spot-ap" data-ext-name="${esc(nm)}">${esc(tExternalName(nm))}</span>`, a.photos, code);
+  }).join('');
+}
+function _colExTyRows(list) {
+  return (list || []).map(t => {
+    const badge = mfrBadge(t.manufacturer) || (t.manufacturer ? `<span class="mfr mfr-${t.manufacturer.toLowerCase().replace(/\s+/g, '-')}" data-ext-name="${esc(t.manufacturer)}">${esc(_mfrDisp(t.manufacturer))}</span>` : '');
+    return _colExRow(`${badge}<span class="spot-ap">${esc(t.name)}</span>`, t.photos, '');
+  }).join('');
+}
+function _colExFinish(expand) { if (window.twemoji) twemoji.parse(expand, {folder:'svg',ext:'.svg'}); }
+
 function _colInitAirlinePopover() {
   const panel = $('col-panel-airlines');
   if (!panel) return;
@@ -6271,9 +6303,8 @@ function _colInitAirlinePopover() {
     if (!airline) return;
     _colToggleExpand(row, expand => {
       const render = d => {
-        const apPills = (d.airports||[]).map(a => _colExPill(a.iata, a.photos)).join('');
-        const tyPills = (d.types||[]).map(t => _colExTypePill(t.name, t.photos, t.manufacturer)).join('');
-        expand.innerHTML = `<div class="col-expand-body">${_colExSection('Top Airports', apPills)}<div class="col-ap-divider"></div>${_colExSection('Top Aircraft Types', tyPills)}</div>`;
+        expand.innerHTML = `<div class="col-expand-body">${_colExRows('Top Airports', _colExApRows(d.airports))}<div class="col-ap-divider"></div>${_colExRows('Top Aircraft Types', _colExTyRows(d.types))}</div>`;
+        _colExFinish(expand);
       };
       if (_colApCache[airline]) { render(_colApCache[airline]); return; }
       api(`/catalog-stats/airline?airline=${encodeURIComponent(airline)}`)
@@ -6293,9 +6324,9 @@ function _colInitAirportPopover() {
     if (!iata) return;
     _colToggleExpand(row, expand => {
       const render = d => {
-        const alPills = (d.airlines||[]).map(a => _colExPill(_colExAirlineCode(a.name), a.photos)).join('');
-        const tyPills = (d.types||[]).map(t => _colExTypePill(t.name, t.photos, t.manufacturer)).join('');
-        expand.innerHTML = `<div class="col-expand-body">${_colExSection('Top Airlines', alPills)}<div class="col-ap-divider"></div>${_colExSection('Top Aircraft Types', tyPills)}</div>`;
+        _translateNamesForZh((d.airlines||[]).map(a => (a.name || '').replace(/\s*\([^)]*\)\s*$/, '').trim()).filter(Boolean));
+        expand.innerHTML = `<div class="col-expand-body">${_colExRows('Top Airlines', _colExAlRows(d.airlines))}<div class="col-ap-divider"></div>${_colExRows('Top Aircraft Types', _colExTyRows(d.types))}</div>`;
+        _colExFinish(expand);
       };
       if (_colArppCache[iata]) { render(_colArppCache[iata]); return; }
       api(`/catalog-stats/airport?airport=${encodeURIComponent(iata)}`)
@@ -6315,9 +6346,9 @@ function _colInitTypePopover() {
     if (!family) return;
     _colToggleExpand(row, expand => {
       const render = d => {
-        const alPills = (d.airlines||[]).map(a => _colExPill(_colExAirlineCode(a.name), a.photos)).join('');
-        const apPills = (d.airports||[]).map(a => _colExPill(a.iata, a.photos)).join('');
-        expand.innerHTML = `<div class="col-expand-body">${_colExSection('Top Airlines', alPills)}<div class="col-ap-divider"></div>${_colExSection('Top Airports', apPills)}</div>`;
+        _translateNamesForZh((d.airlines||[]).map(a => (a.name || '').replace(/\s*\([^)]*\)\s*$/, '').trim()).filter(Boolean));
+        expand.innerHTML = `<div class="col-expand-body">${_colExRows('Top Airlines', _colExAlRows(d.airlines))}<div class="col-ap-divider"></div>${_colExRows('Top Airports', _colExApRows(d.airports))}</div>`;
+        _colExFinish(expand);
       };
       if (_colTyCache[family]) { render(_colTyCache[family]); return; }
       api(`/catalog-stats/type?family=${encodeURIComponent(family)}`)
@@ -6369,26 +6400,24 @@ function _colInitRegoPopover() {
             expand.innerHTML = '<div class="col-expand-body"><div class="col-sp-empty">No sessions found</div></div>';
             return;
           }
-          const pills = d.sessions.map(s => {
-            const codePart = s.flag
-              ? `<span style="display:inline-flex;align-items:center;gap:3px">${s.flag}${esc(s.iata)}</span>`
-              : esc(s.iata);
+          const clickable = _appRole === 'controller';
+          const totalPhotos = d.sessions.reduce((n, s) => n + (s.photos || 0), 0);
+          const rows = d.sessions.map(s => {
             const tags = s.tags || [];
-            const matched = tags.length && (_sessionFilterTags ? tags.some(t => _sessionFilterTags.has(t)) : tags.length > 0);
-            const hlClass = matched ? ' col-ex-pill-hl' : '';
-            const clickable = _appRole === 'controller';
-            const clickAttrs = clickable
-              ? ` class="col-ex-pill${hlClass} col-ex-pill-clickable" onclick="_spOpenPhotos('${esc(reg)}','${esc(s.iata)}','${esc(s.date)}')"`
-              : ` class="col-ex-pill${hlClass}"`;
-            return `<span${clickAttrs}>` +
-              `<span class="col-ex-pill-code">${codePart}</span>` +
-              `<span class="col-ex-pill-sep"></span>` +
-              `<span class="col-ex-pill-count">${_colShortDate(s.date)}</span>` +
-              `<span class="col-ex-pill-sep"></span>` +
-              `<span class="col-ex-pill-count">${s.photos.toLocaleString()}</span>` +
-              `</span>`;
+            const visibleTags = _sessionFilterTags ? tags.filter(t => _sessionFilterTags.has(t)) : tags;       // the same tags the session list shows
+            const tagHtml = visibleTags.map(t => `<span class="col-sp-tag ${_colTagClass(t)}">${esc(tColKeyword(t))}</span>`).join('');
+            const livery = s.notes && tags.includes('Special Livery') ? `<span class="bd-trig-lv col-rego-livery">${esc(tLiveryName(s.notes))}</span>` : '';
+            const aptName = window.innerWidth >= 768 && s.name ? (_airportDisplayName(s.name) || s.iata) : s.iata;      // PC: shortened name; phones: the code
+            const click = clickable ? ` onclick="_spOpenPhotos('${esc(reg)}','${esc(s.iata)}','${esc(s.date)}')"` : ' style="cursor:default"';
+            return `<div class="bd-trig-row spot-row"${click}>` +
+              `<span class="bd-trig-d">${esc(_colShortDate(s.date))}</span>` +
+              `<span class="bd-trig-reg" title="${esc(s.iata)}">${s.flag || ''}<span class="spot-ap">${esc(aptName)}</span></span>` +
+              `<span class="bd-trig-n" title="${esc(tPhotosN(s.photos))}">${s.photos}x</span>` +
+              `<span class="bd-trig-right">${livery}${tagHtml ? `<span class="col-sp-tag-group" style="margin-left:0">${tagHtml}</span>` : ''}</span>` +
+              `</div>`;
           }).join('');
-          expand.innerHTML = `<div class="col-expand-body">${_colExSection('Sessions', pills)}</div>`;
+          const head = `<div class="dc-hd" style="margin-bottom:6px"><span class="bd-sec-t">${esc(tt('Sessions'))}</span><span class="dc-n">${esc(tPhotosN(totalPhotos))}</span></div>`;
+          expand.innerHTML = `<div class="col-expand-body">${head}<div class="bd-trig col-rego-sess${d.sessions.some(s => s.notes && (s.tags || []).includes('Special Livery')) ? ' col-rego-tall' : ''}">${rows}</div></div>`;
           if (window.twemoji) twemoji.parse(expand, {folder:'svg',ext:'.svg'});
         };
         if (_colRegoCache[reg]) { render(_colRegoCache[reg]); return; }
@@ -7877,6 +7906,7 @@ function stTagsToggle(btn) {
 
 // ── Search tab ───────────────────────────────────────────────────────────────
 let _srchCatApNames = {};     // IATA → short airport name, from autocomplete
+let _srchCatApCc = {};        // IATA → ISO country code, from autocomplete (for the flag)
 let _srchTabInited  = false;  // dropdowns created once per page load
 let _srchFiltersTs  = 0;      // epoch ms when fl+rt filters were last fetched
 let _srchCheckMs    = null;   // check interval in ms, loaded lazily from settings
@@ -7951,6 +7981,7 @@ async function _srchInit() {
     // Airports — show shortened full name, keep IATA as value for API matching
     await _translateNamesForZh((d.airports || []).map(ap => ap.full_name).filter(Boolean));
     (d.airports || []).forEach(ap => {
+      if (ap.country_code) _srchCatApCc[ap.iata] = ap.country_code;
       _srchCatApNames[ap.iata] = _airportDisplayName(ap.full_name || '') || ap.iata;
     });
     _srchDDSetOptions('srch-dd-cat-airport', (d.airports || []).map(ap => ({
@@ -7959,7 +7990,7 @@ async function _srchInit() {
     })));
 
     // Keywords
-    _srchDDSetOptions('srch-dd-cat-keyword', d.keywords || []);
+    _srchDDSetOptions('srch-dd-cat-keyword', (d.keywords || []).map(k => ({ value: k, label: k === 'Flown' ? tt('Flown') : k })));   // 'Flown' is not a catalogue keyword: it shows only aircraft you have flown
 
     $('srch-status').textContent = tt('Enter a registration or select a filter.');
   } catch (e) {
@@ -8051,7 +8082,7 @@ async function _srchExec() {
       const airlineName = (r.airline || '').replace(/\s*\([^)]*\)\s*$/, '').trim();
       const logo = airlineName ? _srchLogoWithFallback(airlineIcao, airlineName, 20, '') : '';
       const rows = r.sessions.map(s => {
-        const cc       = _airportCountry(s.airport);
+        const cc       = _airportCountry(s.airport) || _srchCatApCc[s.airport] || '';
         const aflag    = cc ? _flag(cc, {h:11}) : '';
         const apName   = _srchCatApNames[s.airport] || s.airport;
         const kwPills  = s.keywords.map(k => `<span class="col-sp-tag ${_colTagClass(k)}">${esc(tColKeyword(k))}</span>`).join('');

@@ -1986,17 +1986,18 @@
         overflow: visible; text-overflow: clip; white-space: normal;
       }
       /* Session popover: 3-row aircraft entries, all left-aligned */
+      /* two lines like the Feed's Spotted and the Board's Possible Equipment rows: registration + manufacturer over type · airline, the tag and livery at the right */
       .col-sp-row-m {
-        flex-direction: column !important; align-items: flex-start !important; gap: 3px;
-        text-align: left !important; width: 100%;
+        display: grid !important; grid-template-columns: minmax(0, 1fr) auto; column-gap: 10px; row-gap: 2px; align-items: center; width: 100%;
       }
-      .col-sp-row-m > * { margin: 0 !important; align-self: flex-start !important; text-align: left !important; }
-      .col-sp-m-row1 { display: flex; align-items: center; gap: 6px; width: 100%; }
-      .col-sp-m-row2 { font-size: 11px; color: var(--dim); width: 100%; }
+      .col-sp-row-m > * { margin: 0 !important; }
+      .col-sp-m-row1 { display: flex; align-items: center; gap: 6px; grid-column: 1; grid-row: 1; min-width: 0; }
+      .col-sp-m-row2 { grid-column: 1; grid-row: 2; font-size: 11px; color: var(--dim); min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
       .col-sp-row-m .col-sp-tag-group {
-        margin-left: 0 !important; width: 100%;
-        justify-content: flex-start !important; text-align: left;
+        grid-column: 2; grid-row: 1 / span 2; flex-direction: column; align-items: flex-end; gap: 3px; max-width: 150px; min-width: 0; text-align: right;
       }
+      .col-sp-row-m .col-sp-tags { display: flex; align-items: center; justify-content: flex-end; gap: 4px; }   /* several tags share one line */
+      .col-sp-row-m .col-sp-tag-group > .col-sp-notes { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; font-style: italic; }   /* one line, so every row stays two lines tall */
       /* Catalogue session mini-cards: 2 stacked rows, left-aligned */
       .srch-fl-row-m {
         display: flex !important; flex-direction: column !important; align-items: flex-start !important;
@@ -2068,7 +2069,7 @@
          rule that just repeats that value is invisible, hence the accent
          tint + border here instead. */
       .srch-fl-row-clickable:hover { background: rgba(59,130,246,0.15); border-color: var(--accent); }
-      .col-sp-row-clickable:hover { background: rgba(59,130,246,0.15); }
+      .col-sp-row-clickable:hover { border-color: var(--accent); }
       .flt-rego-pill-clickable:hover { border-color: var(--accent); background: rgba(34,197,94,0.28); }
     }
     .sp-photos-overlay { display: none; position: fixed; inset: 0; z-index: 500; background: rgba(0,0,0,.8); align-items: center; justify-content: center; padding: 20px; }
@@ -2183,9 +2184,8 @@
     .col-sp-title { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: var(--dim); }
     .col-sp-close-btn { background: none; border: none; color: var(--dim); font-size: 13px; cursor: pointer; padding: 0 2px; line-height: 1; }
     .col-sp-close-btn:hover { color: var(--text); }
-    .col-sp-aircraft { display: flex; flex-direction: column; gap: 8px; }
-    .col-sp-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; padding: 6px 0; border-bottom: 1px solid var(--border); }
-    .col-sp-row:last-child { border-bottom: none; }
+    .col-sp-aircraft { display: flex; flex-direction: column; gap: 6px; }   /* the card itself scrolls */
+    .col-sp-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; padding: 7px 10px; flex-shrink: 0; background: var(--surface2); border: 1px solid var(--border); border-radius: 7px; }   /* the Feed's Spotted row look */
     .col-sp-main { display: flex; align-items: center; gap: 6px; }
     .col-sp-tag-group { display: flex; align-items: center; gap: 4px; flex-shrink: 0; margin-left: auto; }
     .col-sp-reg { font-size: 12px; font-weight: 700; color: var(--text); white-space: nowrap; flex-shrink: 0; }
@@ -2369,6 +2369,25 @@
     .spot-row .bd-trig-reg { min-width: 0; display: inline-flex; align-items: center; gap: 4px; }
     .spot-row .spot-ap { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .spot-row .bd-trig-right { max-width: 190px; }
+    /* one set of columns for the whole expanded card (date | airport | Nx | livery + tags), so the Nx pills line up whatever the airport names' lengths */
+    .col-rego-sess { display: grid; grid-template-columns: minmax(70px, max-content) max-content auto minmax(0, 1fr); row-gap: 6px; }
+    .col-rego-sess .spot-row { display: grid; grid-template-columns: subgrid; grid-column: 1 / -1; column-gap: 10px; }
+    .col-rego-sess .spot-row .bd-trig-n { justify-self: start; }
+    /* Top Airports / Airlines / Aircraft Types lists: name | Nx | code, shared columns per list */
+    .col-ex-rows { display: grid; grid-template-columns: minmax(0, max-content) auto minmax(0, 1fr); row-gap: 6px; }
+    .col-ex-rows .spot-row { display: grid; grid-template-columns: subgrid; grid-column: 1 / -1; column-gap: 10px; cursor: default; padding-left: 13px; }
+    .col-ex-rows .spot-row .bd-trig-n { justify-self: start; }
+    .col-ex-rows .spot-row:hover { border-color: var(--border); }
+    .col-ex-code { justify-self: end; font-size: 11px; color: var(--dim); }
+    .col-ex-rows .spot-row .bd-trig-reg { gap: 6px; }
+    .col-rego-sess { container-type: inline-size; container-name: regosess; }
+    .col-rego-sess .spot-row .bd-trig-right { max-width: none; gap: 8px; }   /* livery name, tags and photo count all sit at the right */
+    .col-rego-sess .col-rego-livery { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    @container regosess (max-width: 540px) {      /* narrow (phones, tight columns): the livery name drops to its own line under the tag and count */
+      .col-rego-sess .spot-row .bd-trig-right { flex-direction: row; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 2px 8px; max-width: none; }
+      .col-rego-sess .spot-row .bd-trig-right .col-rego-livery { order: 3; flex-basis: 100%; text-align: right; }
+      .col-rego-tall .spot-row { min-height: 42.5px; box-sizing: border-box; }   /* one row needs two lines, so every row in the card is two lines tall */
+    }
     .spot-row .bd-trig-right { justify-content: flex-end; min-width: 0; }
     .spot-row .bd-trig-lv { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .bd-sec-t, .dc .lbl { font-size: 10px; letter-spacing: .07em; text-transform: uppercase; color: var(--dim); }

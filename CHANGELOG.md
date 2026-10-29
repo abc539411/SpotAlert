@@ -2,6 +2,16 @@
 
 Versioning: a **major** release is x.y0 (2.10, 2.20...) and re-offers the in-app tour once; point releases (2.11, 2.12...) are fixes and polish and do not.
 
+## 2.23 — since 2.22
+
+### Added
+- **"Flown" keyword in Search → Catalogue** (Controllers and Pilots) — pick it in the Keyword list to show only the catalogue aircraft you have flown on. It is not a real Lightroom keyword and the catalogue is never changed; it combines with the other filters.
+- **Collection → Summary: expanded rows use the new row style.** The sessions under Most Photos, Most Sessions and Airport Hoppers, and the aircraft inside a session, are rows like the Feed's Spotted list, with the airport flag and name, the photo count as an `Nx` pill, the livery name and the keyword tags. The Top Airlines / Top Airports / Top Aircraft Types lists are rows too (name, `Nx`, dimmed code). On phones every row of a card is as tall as its tallest, and several tags share one line.
+
+### Fixed
+- Search → Catalogue session rows now show the airport's country flag for every airport (Copenhagen, Osaka Kansai and Helsinki were missing one).
+- A missing aircraft manufacturer (for example MD11) is filled in from the aircraft type, and "General Atomics Aeronautical Systems" is shown as "General Atomics".
+
 ## 2.22 — since 2.21
 
 ### Added

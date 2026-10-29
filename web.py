@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, List as _List, Optional
 import os as _os
 
-VERSION = "2.22"
+VERSION = "2.23"
 _PROCESS_START_TS = int(time.time())
 
 
@@ -2934,7 +2934,8 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
             con = _sq.connect(str(cat))
             rows = con.execute("""
                 SELECT DATE(img.captureTime), ap.internalValue, COUNT(DISTINCT img.id_local),
-                       GROUP_CONCAT(DISTINCT kw.name)
+                       GROUP_CONCAT(DISTINCT kw.name),
+                       MAX(CASE WHEN nt_spec.id_local IS NOT NULL THEN nt.internalValue END)
                 FROM Adobe_images img
                 JOIN AgSearchablePhotoProperty reg ON reg.photo = img.id_local
                 JOIN AgPhotoPropertySpec reg_spec ON reg_spec.id_local = reg.propertySpec
@@ -2944,17 +2945,20 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                     AND ap_spec.key = 'airport_iata' AND ap_spec.sourcePlugin = ?
                 LEFT JOIN AgLibraryKeywordImage ki ON ki.image = img.id_local
                 LEFT JOIN AgLibraryKeyword kw ON kw.id_local = ki.tag AND kw.name IS NOT NULL
+                LEFT JOIN AgSearchablePhotoProperty nt ON nt.photo = img.id_local
+                LEFT JOIN AgPhotoPropertySpec nt_spec ON nt_spec.id_local = nt.propertySpec
+                    AND nt_spec.key = 'aircraft_notes' AND nt_spec.sourcePlugin = ?
                 WHERE reg.internalValue = ? AND ap.internalValue IS NOT NULL
                 GROUP BY DATE(img.captureTime), ap.internalValue
                 ORDER BY DATE(img.captureTime) DESC
-            """, (_COL_PLUGIN, _COL_PLUGIN, rego)).fetchall()
+            """, (_COL_PLUGIN, _COL_PLUGIN, _COL_PLUGIN, rego)).fetchall()
             con.close()
         except Exception: return JSONResponse({'sessions': []})
         sessions = []
-        for date_str, iata, photos, kw_csv in rows:
+        for date_str, iata, photos, kw_csv, notes in rows:
             flag, full_name = _col_airport_flag_and_name(iata or '')
             tags = [t.strip() for t in (kw_csv or '').split(',') if t.strip()]
-            sessions.append({'date': date_str, 'iata': iata, 'flag': flag, 'photos': photos, 'tags': tags})
+            sessions.append({'date': date_str, 'iata': iata, 'flag': flag, 'name': full_name or '', 'photos': photos, 'tags': tags, 'notes': notes or ''})
         return JSONResponse({'sessions': sessions})
 
     # Controller-only session-photo preview — read-only by construction: the
@@ -3254,7 +3258,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
             if not tags: continue
             if filter_set and not any(t in filter_set for t in tags): continue
             aircraft.append({'reg': reg, 'airline': airline or '', 'aircraft_type': atype or '',
-                             'manufacturer': manufacturer or '', 'notes': notes or '',
+                             'manufacturer': manufacturer or _search_mfr(atype or ''), 'notes': notes or '',
                              'tags': tags, 'priority': min((PRIORITY.get(t, 99) for t in tags), default=99)})
         aircraft.sort(key=lambda a: (a['priority'], a['reg']))
         return JSONResponse({'aircraft': aircraft})
@@ -3306,9 +3310,27 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         per-user catalog rework."""
         return _resolve_catalog_path(user)
 
+    _mfr_by_type: dict = {}
+
     def _search_mfr(type_str: str) -> str:
+        """Manufacturer of an aircraft type: from a model name ("Boeing 737") or, for an ICAO code like MD11, the aircraft_types table."""
         from monitor import _derive_manufacturer
-        return _derive_manufacturer(type_str or '') or ''
+        t = (type_str or '').strip()
+        m = _derive_manufacturer(t)
+        if m or not t:
+            return m or ''
+        key = t.upper()
+        if key not in _mfr_by_type:
+            val = ''
+            try:
+                with app.state.store._connect() as conn:
+                    row = conn.execute("SELECT manufacturer FROM aircraft_types WHERE icao = ?", (key,)).fetchone()
+                if row and row[0]:
+                    val = _derive_manufacturer(row[0]) or row[0].title()
+            except Exception:
+                pass
+            _mfr_by_type[key] = val
+        return _mfr_by_type[key]
 
     def _search_family(type_str: str) -> str:
         """Group aircraft types into families (e.g. B738, B739 → B737)."""
@@ -3649,7 +3671,16 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                         rows[a] = info.get('name', a)
             except Exception:
                 pass
-        return [{'iata': a, 'full_name': rows.get(a, a)} for a in iatas]
+        cc: dict = {}                      # ISO country per airport, for the flag beside its name
+        try:
+            import airportsdata as _ad
+            _ap = _ad.load('IATA')
+            cc = {a: (_ap.get(a) or {}).get('country', '').lower() for a in iatas}
+        except Exception:
+            pass
+        return [{'iata': a, 'full_name': rows.get(a, a), 'country_code': cc.get(a, '')} for a in iatas]
+
+    _SEARCH_FLOWN_KW = "Flown"      # pseudo keyword in Search > Catalogue: keeps only the registrations in the user's Flown list
 
     @app.get("/api/search/autocomplete")
     async def search_autocomplete(user=Depends(_auth_current_user)):
@@ -3723,6 +3754,8 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                 ORDER BY kw.name
             """).fetchall() if r[0] and r[0] not in _SEARCH_SKIP_KW]
             con.close()
+            if user.role in ("controller", "pilot"):
+                keywords.insert(0, _SEARCH_FLOWN_KW)            # not a catalogue keyword: shows only aircraft you have flown
         except Exception as exc:
             log.warning("search autocomplete error: %s", exc)
             return JSONResponse({'registrations': [], 'types': [], 'airlines': [], 'airports': [], 'keywords': []})
@@ -3756,6 +3789,8 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         rego          = rego.strip()
         if not any([rego, types, airlines, manufacturers, airports, keywords]):
             return JSONResponse({'results': [], 'total': 0})
+        only_flown = _SEARCH_FLOWN_KW in keywords and user.role in ("controller", "pilot")
+        keywords = [k for k in keywords if k != _SEARCH_FLOWN_KW]
 
         cat_path = _search_catalog_path(user)
         if not cat_path or not _os.path.exists(cat_path):
@@ -3763,7 +3798,7 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
 
         PLUGIN = _SEARCH_PLUGIN
         try:
-            import sqlite3 as _sq
+            import sqlite3 as _sq, re as _re_s
             con = _sq.connect(f"file:{cat_path}?mode=ro", uri=True)
 
             _prop_subq = lambda key: f"""(
@@ -3814,6 +3849,10 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                 WHERE {' AND '.join(where)}
             """, params).fetchall()
             regs = [r[0] for r in matched]
+            if only_flown:
+                _canon = lambda s: _re_s.sub(r"[^A-Z0-9]", "", (s or "").upper())
+                flown = {_canon(f["registration"]) for f in app.state.control_store.flown_list(user.user_id) if f["registration"]}
+                regs = [r for r in regs if _canon(r) in flown]
 
             rows = []
             if regs:
