@@ -114,6 +114,11 @@ class ControlStore:
                 )
             """)
             conn.execute("CREATE INDEX IF NOT EXISTS idx_flown_user_date ON flown_flights(user_id, flight_date)")
+            # Upcoming flights added by hand: auto_state 'pending' (first FR24 check due) / 'retry' (one more try due) / '' (nothing to do).
+            _fl_cols = {row[1] for row in conn.execute("PRAGMA table_info(flown_flights)").fetchall()}
+            if "auto_state" not in _fl_cols:
+                conn.execute("ALTER TABLE flown_flights ADD COLUMN auto_state TEXT NOT NULL DEFAULT ''")
+                conn.execute("ALTER TABLE flown_flights ADD COLUMN auto_due_ts INTEGER NOT NULL DEFAULT 0")
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS fleet_cards (
                     owner_user_id TEXT NOT NULL,
@@ -433,6 +438,44 @@ class ControlStore:
     _FLOWN_FIELDS = ("number", "airline_name", "airline_iata", "airline_icao", "from_iata", "to_iata",
                      "type_name", "type_code", "registration", "seat", "note")
 
+    @staticmethod
+    def _flown_first_check_ts(flight_date: str) -> int:
+        """When an upcoming flight is first checked on FR24: 00:00 UTC two days after its date, so every time zone has finished
+        that day and the flight has been over for at least a day."""
+        import datetime as _dt
+        d = _dt.datetime.strptime(flight_date, "%Y-%m-%d").replace(tzinfo=_dt.timezone.utc)
+        return int((d + _dt.timedelta(days=2)).timestamp())
+
+    def flown_due(self, now: Optional[int] = None) -> List[dict]:
+        with self._connect() as conn:
+            rows = conn.execute("SELECT * FROM flown_flights WHERE auto_state IN ('pending','retry') AND auto_due_ts <= ?",
+                                (int(now if now is not None else time.time()),)).fetchall()
+        return [dict(r) for r in rows]
+
+    def flown_auto_result(self, flight_id: int, hit: Optional[dict]) -> None:
+        """Record one FR24 check of an upcoming flight. A hit with a registration fills the blank fields and ends it; anything
+        else schedules the single retry a day later, and a failed retry just leaves the flight as it is."""
+        now = int(time.time())
+        with self._connect() as conn:
+            ex = conn.execute("SELECT * FROM flown_flights WHERE id = ?", (flight_id,)).fetchone()
+            if not ex or ex["auto_state"] not in ("pending", "retry"):
+                return
+            if hit and hit.get("registration"):
+                sets, params = ["auto_state = ''", "auto_due_ts = 0", "updated_ts = ?"], [now]
+                for f in ("registration", "type_code", "type_name", "airline_name"):
+                    if not ex[f] and hit.get(f):
+                        sets.append(f + " = ?"); params.append(hit[f])
+                f_, t_ = ex["from_iata"] or hit.get("from_iata") or "", ex["to_iata"] or hit.get("to_iata") or ""
+                if (f_, t_) != (ex["from_iata"], ex["to_iata"]) and not conn.execute(
+                        "SELECT 1 FROM flown_flights WHERE user_id = ? AND flight_date = ? AND from_iata = ? AND to_iata = ? AND number = ? AND id != ?",
+                        (ex["user_id"], ex["flight_date"], f_, t_, ex["number"], flight_id)).fetchone():
+                    sets += ["from_iata = ?", "to_iata = ?"]; params += [f_, t_]
+                conn.execute("UPDATE flown_flights SET " + ", ".join(sets) + " WHERE id = ?", params + [flight_id])
+            elif ex["auto_state"] == "pending":
+                conn.execute("UPDATE flown_flights SET auto_state = 'retry', auto_due_ts = ? WHERE id = ?", (now + 86400, flight_id))
+            else:
+                conn.execute("UPDATE flown_flights SET auto_state = '', auto_due_ts = 0 WHERE id = ?", (flight_id,))
+
     def flown_list(self, user_id: str) -> List[dict]:
         with self._connect() as conn:
             rows = conn.execute("SELECT * FROM flown_flights WHERE user_id = ? ORDER BY flight_date DESC, id DESC", (user_id,)).fetchall()
@@ -481,15 +524,17 @@ class ControlStore:
             dup = conn.execute(
                 "SELECT id FROM flown_flights WHERE user_id = ? AND flight_date = ? AND from_iata = ? AND to_iata = ? AND number = ?",
                 (user_id, row["date"], row["from_iata"], row["to_iata"], row["number"])).fetchone()
+            upcoming = not row["registration"] and self._flown_first_check_ts(row["date"]) > now
             if flight_id is None:
                 if dup:
                     return None
                 cur = conn.execute(
                     "INSERT INTO flown_flights (user_id, flight_date, number, airline_name, airline_iata, airline_icao, from_iata, to_iata, "
-                    "type_name, type_code, registration, seat, note, source, edited, created_ts, updated_ts) "
-                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'manual',1,?,?)",
+                    "type_name, type_code, registration, seat, note, source, edited, created_ts, updated_ts, auto_state, auto_due_ts) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'manual',1,?,?,?,?)",
                     (user_id, row["date"], row["number"], row["airline_name"], row["airline_iata"], row["airline_icao"], row["from_iata"],
-                     row["to_iata"], row["type_name"], row["type_code"], row["registration"], row["seat"], row["note"], now, now))
+                     row["to_iata"], row["type_name"], row["type_code"], row["registration"], row["seat"], row["note"], now, now,
+                     "pending" if upcoming else "", self._flown_first_check_ts(row["date"]) if upcoming else 0))
                 return cur.lastrowid
             own = conn.execute("SELECT id FROM flown_flights WHERE id = ? AND user_id = ?", (flight_id, user_id)).fetchone()
             if not own or (dup and dup["id"] != flight_id):
@@ -499,6 +544,11 @@ class ControlStore:
                 "to_iata = ?, type_name = ?, type_code = ?, registration = ?, seat = ?, note = ?, edited = 1, updated_ts = ? WHERE id = ?",
                 (row["date"], row["number"], row["airline_name"], row["airline_iata"], row["airline_icao"], row["from_iata"], row["to_iata"],
                  row["type_name"], row["type_code"], row["registration"], row["seat"], row["note"], now, flight_id))
+            if row["registration"]:                                   # typed by hand: nothing left to look up
+                conn.execute("UPDATE flown_flights SET auto_state = '', auto_due_ts = 0 WHERE id = ?", (flight_id,))
+            else:                                                     # a pending flight whose date moved is checked for the new date
+                conn.execute("UPDATE flown_flights SET auto_due_ts = ? WHERE id = ? AND auto_state = 'pending'",
+                             (self._flown_first_check_ts(row["date"]), flight_id))
             return flight_id
 
     def flown_delete(self, user_id: str, flight_id: int) -> bool:

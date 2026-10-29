@@ -5234,6 +5234,7 @@ function flownToggleFold(key) { if (_flownFold.has(key)) _flownFold.delete(key);
 function flownToggleAc(reg) { if (_flownOpenAc.has(reg)) _flownOpenAc.delete(reg); else _flownOpenAc.add(reg); flownRender(); }
 
 // Aircraft type is shown as its ICAO code (B738); rows that only have a name keep the name, and the "()" placeholder shows nothing
+function _flownToday() { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }
 function _flownType(f) { const n = f.type_name === '()' ? '' : (f.type_name || ''); return f.type_code || n; }
 
 function _flownGroupHead(key, title, count) {
@@ -5284,9 +5285,10 @@ function _flownFlightsHtml(all) {
           const route = f.from_iata || f.to_iata ? `${esc(f.from_iata || '?')} → ${esc(f.to_iata || '?')}` : '';
           const sub = [f.airline_name, _flownType(f)].filter(Boolean).join(' · ');
           const reg = f.registration ? `${_flag(_regoCountryCode(f.registration), { h: 11 })}${esc(f.registration)}`
+            : f.awaiting ? `<span class="fl-up-tag">${esc(f.date >= _flownToday() ? _flz('Upcoming', '待飞') : _flz('Checking', '待查'))}</span>`
             : (_flownEdit ? `<span class="fl-noreg">+ ${esc(_flz('rego', '注册号'))}</span>` : `<span class="fl-sub">—</span>`);
           if (_flownEdit && _flownEditId === f.id) return _flownForm(f);
-          return `<div class="fl-row${_flownEdit ? ' act' : ''}"${_flownEdit ? ` onclick="flownEdit(${f.id})"` : ''}>
+          return `<div class="fl-row${_flownEdit ? ' act' : ''}${f.awaiting ? ' fl-up' : ''}"${_flownEdit ? ` onclick="flownEdit(${f.id})"` : ''}>
             <div class="fl-date">${_flownDate(f.date)}</div>
             <div><div class="fl-fn">${_srchLogoWithFallback(f.airline_icao, f.airline_name, 16, '')}${esc(f.flight_number || '—')}<span class="fl-route">${route}</span></div><div class="fl-sub">${esc(sub)}</div></div>
             <div class="fl-reg">${reg}${_flownEdit ? '<span class="fl-pen">✎</span>' : ''}</div></div>`;
@@ -5370,7 +5372,8 @@ async function flownLookup() {
     if (!r.found) { hint.textContent = _flz('FR24 has no record of that flight on that date (it only keeps about two weeks).', 'FR24 没有该日期该航班的记录（只保留约两周）。'); return; }
     const x = r.flight, set = (id, v) => { const el = $(id); if (el && !el.value.trim() && v) el.value = v; };
     set('fl-airline', x.airline_name); set('fl-from', x.from_iata); set('fl-to', x.to_iata); set('fl-reg', x.registration); set('fl-type', x.type_code || x.type_name);
-    hint.textContent = _flz('Filled in from FR24. Check it, then Save.', '已从 FR24 补全，请核对后保存。');
+    hint.textContent = r.recent ? _flz('Only the route and airline are filled in, from this flight\'s latest flight. Check it, then Save.', '仅补全航线和航空公司，取自该航班的最近一次飞行。请核对后保存。')
+      : _flz('Filled in from FR24. Check it, then Save.', '已从 FR24 补全，请核对后保存。');
   } catch (e) {
     let msg = e.message; try { msg = JSON.parse(e.message).detail || msg; } catch (x) {}
     hint.textContent = msg;

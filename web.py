@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, List as _List, Optional
 import os as _os
 
-VERSION = "2.20"
+VERSION = "2.21"
 _PROCESS_START_TS = int(time.time())
 
 
@@ -873,6 +873,8 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         _col_start_bg_refresh()
         # Fleet cards: refresh any stale cards on startup, then every 7 days
         _thr.Thread(target=_fleet_bg_refresh_loop, daemon=True).start()
+        # Flown: upcoming flights get their registration from FR24 once they are over
+        _thr.Thread(target=_flown_auto_loop, daemon=True).start()
 
     # ── Auth / airport-selection routes ─────────────────────────────────────
 
@@ -4032,7 +4034,8 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
                         "number": r["number"], "airline_name": r["airline_name"], "airline_iata": r["airline_iata"],
                         "airline_icao": r["airline_icao"] or i2c.get(r["airline_iata"], ""), "from_iata": r["from_iata"], "to_iata": r["to_iata"],
                         "type_name": r["type_name"], "type_code": r["type_code"], "registration": r["registration"],
-                        "seat": r["seat"], "note": r["note"], "source": r["source"], "edited": bool(r["edited"])})
+                        "seat": r["seat"], "note": r["note"], "source": r["source"], "edited": bool(r["edited"]),
+                        "awaiting": r["auto_state"] in ("pending", "retry")})
         regs = {r["registration"] for r in out if r["registration"]}
         airports = {}                                           # IATA -> name, from the airports table only (no FR24 lookups)
         for code in {c for r in out for c in (r["from_iata"], r["to_iata"]) if c}:
@@ -4045,6 +4048,44 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         return {"flights": out, "airports": airports, "summary": {"total": len(out), "with_registration": sum(1 for r in out if r["registration"]),
                                             "aircraft": len(regs), "first": out[-1]["date"] if out else None,
                                             "last": out[0]["date"] if out else None}}
+
+    def _flown_find(iata: str, icao: str, number: str, date: str) -> Optional[dict]:
+        """FR24 history for a flight number on a date (by IATA then ICAO prefix); None when it has no such flight."""
+        for q in dict.fromkeys(c + number for c in (iata, icao) if c):
+            for page in (1, 2, 3, 4):
+                resp = app.state.fr_api.get_flight_by_number(q, page)
+                entries = resp.get("data") or []
+                hit = _flown.pick_flight(entries, date)
+                if hit:
+                    return hit
+                if not entries or not (resp.get("page") or {}).get("more"):
+                    break
+        return None
+
+    def _flown_find_recent(iata: str, icao: str, number: str) -> Optional[dict]:
+        for q in dict.fromkeys(c + number for c in (iata, icao) if c):
+            hit = _flown.pick_recent(app.state.fr_api.get_flight_by_number(q, 1).get("data") or [], time.time())
+            if hit:
+                return hit
+        return None
+
+    def _flown_auto_loop() -> None:
+        """Hourly: look up the registration of upcoming flights whose check is due (a day after the flight; one retry a day
+        later if that finds nothing)."""
+        import time as _time
+        while True:
+            try:
+                if app.state.fr_api:
+                    for r in app.state.control_store.flown_due():
+                        try:
+                            hit = _flown_find(r["airline_iata"], r["airline_icao"], r["number"], r["flight_date"])
+                        except Exception as exc:
+                            log.warning("Flown auto-check of %s failed: %s", r["number"], exc)
+                            continue                              # FR24 down: not counted as an attempt
+                        app.state.control_store.flown_auto_result(r["id"], hit)
+            except Exception as exc:
+                log.warning("Flown auto-check loop: %s", exc)
+            _time.sleep(3600)
 
     @app.get("/api/flown")
     async def get_flown(user=Depends(_auth_require_role("controller", "pilot"))):
@@ -4100,23 +4141,17 @@ def create_app(cfgs=None, control_store=None, fr_api=None, data_dir=None) -> Fas
         if not app.state.fr_api:
             raise HTTPException(503, "FlightRadar24 is not available")
 
-        def _search():
-            for q in dict.fromkeys(c + number for c in (iata, icao) if c):
-                for page in (1, 2, 3, 4):
-                    resp = app.state.fr_api.get_flight_by_number(q, page)
-                    entries = resp.get("data") or []
-                    hit = _flown.pick_flight(entries, date)
-                    if hit:
-                        return hit
-                    if not entries or not (resp.get("page") or {}).get("more"):
-                        break
-            return None
-        try:
-            hit = await asyncio.to_thread(_search)
+        try:                                             # FR24 history is about two weeks, and a future flight has no aircraft yet: only the usual route is filled in
+            import datetime as _dtm
+            days = (_dtm.date.fromisoformat(date) - _dtm.date.today()).days
+            far = days > 0 or days < -14
+            hit = await asyncio.to_thread(_flown_find_recent, iata, icao, number) if far else await asyncio.to_thread(_flown_find, iata, icao, number, date)
+        except ValueError:
+            raise HTTPException(400, "Date must look like 2026-10-28")
         except Exception as exc:
             log.warning("Flown lookup failed: %s", exc)
             raise HTTPException(502, "FlightRadar24 did not answer; try again in a moment")
-        return JSONResponse({"found": bool(hit), "flight": hit})
+        return JSONResponse({"found": bool(hit), "flight": hit, "recent": bool(hit) and far})
 
     @app.post("/api/flown/import")
     async def import_flown(file: UploadFile = File(...), user=Depends(_auth_require_role("controller", "pilot"))):

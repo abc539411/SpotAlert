@@ -2,6 +2,15 @@
 
 Versioning: a **major** release is x.y0 (2.10, 2.20...) and re-offers the in-app tour once; point releases (2.11, 2.12...) are fixes and polish and do not.
 
+## 2.21 — since 2.20
+
+### Added
+- **Upcoming flights in Flown** — add a flight with a future date and it shows dimmed with an "Upcoming" tag. A day after the flight, the app looks up its registration on FR24 and fills it in (and the aircraft type, plus any blank route or airline); if FR24 has nothing it tries once more a day later, then leaves the flight as it is. Only flights you added as upcoming are checked; imports and flights you edited are never touched.
+
+### Changed
+- **Look up on FR24** for a flight that has not happened yet, or one more than 14 days ago (beyond FR24's history), fills only the origin, destination and airline, taken from that flight number's latest flight.
+- Look up on FR24 drops a livery in brackets from the airline name ("Sichuan Airlines (Panda Route Livery)" becomes "Sichuan Airlines").
+
 ## 2.20 — since 2.13
 
 ### Added

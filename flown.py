@@ -168,7 +168,33 @@ def pick_flight(entries: List[dict], date_iso: str) -> Optional[dict]:
             model = ac.get("model") or {}
             return {"from_iata": code("origin"), "to_iata": code("destination"),
                     "registration": norm_reg(ac.get("registration")), "type_code": (model.get("code") or "").upper(),
-                    "type_name": model.get("text") or "", "airline_name": (e.get("airline") or {}).get("name") or ""}
+                    "type_name": model.get("text") or "", "airline_name": _airline_name(e)}
         except (AttributeError, TypeError):
             continue
     return None
+
+
+def pick_recent(entries: List[dict], now_ts: float) -> Optional[dict]:
+    """For a date FR24 does not cover: the route and airline of the flight number's most recent departure (the latest one
+    that has already left, else the earliest listed). Only from / to / airline, since the aircraft changes from day to day."""
+    best = None
+    for e in entries or []:
+        try:
+            t = e.get("time") or {}
+            ts = (t.get("real") or {}).get("departure") or (t.get("scheduled") or {}).get("departure")
+            if not isinstance(ts, (int, float)):
+                continue
+            ap = e.get("airport") or {}
+            code = lambda k: (((ap.get(k) or {}).get("code") or {}).get("iata") or "").upper()
+            hit = {"from_iata": code("origin"), "to_iata": code("destination"), "airline_name": _airline_name(e)}
+            past = ts <= now_ts
+            if best is None or (past, ts if past else -ts) > (best[0], best[1]):
+                best = (past, ts if past else -ts, hit)
+        except (AttributeError, TypeError):
+            continue
+    return best[2] if best else None
+
+
+def _airline_name(e: dict) -> str:
+    """FR24's airline name without a trailing bracket ("Sichuan Airlines (Panda Route Livery)" -> "Sichuan Airlines")."""
+    return re.sub(r"\s*\([^()]*\)\s*$", "", (e.get("airline") or {}).get("name") or "").strip()
